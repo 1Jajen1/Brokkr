@@ -1,7 +1,7 @@
 module Main (main) where
 
-import LCraft (someFunc)
+import LCraft (startServer)
 
 
 main :: IO ()
-main = someFunc
+main = startServer
