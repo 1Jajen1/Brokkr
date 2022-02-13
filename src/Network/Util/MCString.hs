@@ -7,4 +7,4 @@ import Util.Binary
 import Network.Util.SizePrefixed
 
 newtype MCString = MCString Text
-  deriving FromBinary via (ByteSizePrefixed Text)
+  deriving (FromBinary,ToBinary) via (ByteSizePrefixed Text)

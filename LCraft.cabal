@@ -24,6 +24,8 @@ common common-options
                      , mason
                      , network
                      , network-simple
+                     , template-haskell
+                     , uuid
   
   ghc-options:         -Wall
                        -Wcompat
@@ -48,8 +50,12 @@ library
                      , Network.Effect.Network.Effect
                      , Network.Effect.Network.IO
                      , Network.Effect.Packet
+                     , Network.Handler.Login
+                     , Network.Packet.Client.Login
                      , Network.Packet.Server.Handshake
+                     , Network.Packet.Server.Login
                      , Network.Util.MCString
+                     , Network.Util.Packet
                      , Network.Util.SizePrefixed
                      , Network.Util.VarNum
                      , Util.Binary

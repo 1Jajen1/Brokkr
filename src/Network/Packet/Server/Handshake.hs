@@ -30,7 +30,7 @@ newtype ProtocolVersion = PV Int32
   deriving FromBinary via VarInt
 
 instance Show ProtocolVersion where
-  show (PV i) = show i -- TODO
+  show (PV i) = prettyVersion i
 
 newtype ServerAddress = SA Text
   deriving FromBinary via MCString
@@ -59,3 +59,7 @@ pattern Login :: NextState
 pattern Login = NS 2
 
 {-# COMPLETE Status, Login #-}
+
+prettyVersion :: Int32 -> String
+prettyVersion 757 = "1.18.1"
+prettyVersion n = show n

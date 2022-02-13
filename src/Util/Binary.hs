@@ -14,6 +14,7 @@ import GHC.Float
 import Util.Flatparse
 import Util.ByteOrder
 import qualified Mason.Builder as B
+import Data.UUID
 
 class FromBinary (a :: Type) where
   get :: Parser Void a
@@ -108,4 +109,13 @@ instance FromBinary Text where
 
 instance ToBinary Text where
   put = B.encodeUtf8Builder
+  {-# INLINE put #-}
+
+instance FromBinary UUID where
+  get = fromWords64 <$> get <*> get
+  {-# INLINE get #-}
+
+instance ToBinary UUID where
+  put uid = case toWords64 uid of
+    (w1, w2) -> put w1 <> put w2
   {-# INLINE put #-}

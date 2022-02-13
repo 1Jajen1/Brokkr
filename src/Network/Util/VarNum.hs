@@ -1,6 +1,7 @@
 {-# LANGUAGE UnboxedTuples #-}
 module Network.Util.VarNum (
   VarInt(..)
+, writeVarNumInternal -- TODO ...
 ) where
 
 import Data.Int
@@ -45,12 +46,15 @@ readVarNum f maxSz = go 0 0
 writeVarNum :: Int -> (a -> Word64) -> a -> B.Builder
 writeVarNum maxSz f = \a -> B.primBounded varNumPrim a
   where
-    go :: Word64 -> Ptr Word8 -> IO (Ptr Word8)
-    go !n !ptr | n < unsafeShiftL 2 7 = do
-                    writeOffPtr ptr 0 (fromIntegral n)
-                    pure $ advancePtr ptr 1
-                | otherwise = do
-                    writeOffPtr ptr 0 . fromIntegral $ setBit (n .&. 127) 7
-                    go (unsafeShiftR n 7) (advancePtr ptr 1)
-    varNumPrim = Prim.boundedPrim maxSz $ \a ptr -> go (f a) ptr
+    varNumPrim = Prim.boundedPrim maxSz $ \a ptr -> writeVarNumInternal (f a) ptr
 {-# INLINE writeVarNum #-}
+
+-- TODO
+writeVarNumInternal :: Word64 -> Ptr Word8 -> IO (Ptr Word8)
+writeVarNumInternal !n !ptr
+  | n < unsafeShiftL 2 7 = do
+      writeOffPtr ptr 0 (fromIntegral n)
+      pure $ advancePtr ptr 1
+  | otherwise = do
+      writeOffPtr ptr 0 . fromIntegral $ setBit (n .&. 127) 7
+      writeVarNumInternal (unsafeShiftR n 7) (advancePtr ptr 1)
