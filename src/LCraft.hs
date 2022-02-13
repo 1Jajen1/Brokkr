@@ -77,6 +77,14 @@ NBT parser:
     - The second step can be done using builder structs (just a builder on a ptr and later read from the storable)
   Custom allocator here since values are increadibly short lived and can be freed as soon as the builders are done, no need to trouble the gc here.
 
+Main game loop: Command -> State -> [Event]
+After the game loop [Event] -> Network packets and State -> [Event] -> State. Use dataToTag for filters and specialized datastructures.
+Queues or just buffers for command/event storage. Queues are overkill I think because I read out all items in frequent intervals rather than
+trying to empty it as fast as possible. So backpressure concepts etc are all useless and not wanted here. So just go for smth like an array list...
+Concurrency during a tick is going to be "fun". Need to avoid races when reading state, but stm is a little slow for hot loops. State technically changes
+during a tick, just not unobservably through mutability. Events are state changes and thus to prevent races state access has to consider Events that change said state.
+There are probably some smart ways to avoid needing locks: E.g. group commands by location to avoid having to lock chunks
+
 Task list:
   - Do network stuff
     - Setup framework for parsing packets and sending them
