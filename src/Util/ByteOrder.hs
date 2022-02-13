@@ -7,6 +7,7 @@ import Data.Word
 import GHC.ByteOrder
 import Unsafe.Coerce
 
+-- TODO Names ...
 toBE :: ByteSwap a => a -> a
 toBE = case targetByteOrder of
   BigEndian -> id

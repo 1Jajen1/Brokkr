@@ -3,4 +3,8 @@ source-repository-package
   location: git@github.com:arybczak/effectful.git
   subdir: effectful-core
 
+source-repository-package
+  type: git
+  location: git@github.com:1Jajen1/mason.git
+
 packages: ./LCraft.cabal

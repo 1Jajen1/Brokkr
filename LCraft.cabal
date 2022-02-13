@@ -21,6 +21,7 @@ common common-options
                      , text ^>= 2.0
                      , flatparse
                      , bytestring
+                     , mason
                      , network
                      , network-simple
   
@@ -52,8 +53,6 @@ library
                      , Network.Util.SizePrefixed
                      , Network.Util.VarNum
                      , Util.Binary
-                     , Util.Builder
-                     , Util.Builder.Internal
                      , Util.ByteOrder
                      , Util.Flatparse
 executable LCraft
