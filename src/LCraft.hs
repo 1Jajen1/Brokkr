@@ -86,16 +86,16 @@ during a tick, just not unobservably through mutability. Events are state change
 There are probably some smart ways to avoid needing locks: E.g. group commands by location to avoid having to lock chunks
 
 Task list:
-  - Do network stuff
-    - Setup framework for parsing packets and sending them
-    - Initial custom builder implementation
-      - Start simple here ...
-    - Be able to respond to handshakes
+||  - Do network stuff
+||    - Setup framework for parsing packets and sending them
+||    - Initial custom builder implementation
+||      - Start simple here ...
+||    - Be able to respond to handshakes
   - Expand to have state on a connection and have some management state for the connection
     - Initially mutable, but later immutable as soon as the player joins
   - Implement command queue
     - Again start simple, tweak later
-  - Start on the login sequence
+||  - Start on the login sequence
     - Just make up data for now
     - Add first PlayerJoinCommand
       - Although I may be able to async that action

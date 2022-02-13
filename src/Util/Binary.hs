@@ -1,6 +1,7 @@
 module Util.Binary (
   FromBinary(..)
 , ToBinary(..)
+, SizePrefixed(..)
 ) where
 
 import Data.Kind
@@ -15,6 +16,10 @@ import Util.Flatparse
 import Util.ByteOrder
 import qualified Mason.Builder as B
 import Data.UUID
+import qualified Data.Vector.Storable as S
+import qualified Foreign.Storable as S
+import qualified Data.ByteString.Internal as BS
+import Data.Coerce
 
 class FromBinary (a :: Type) where
   get :: Parser Void a
@@ -118,4 +123,21 @@ instance FromBinary UUID where
 instance ToBinary UUID where
   put uid = case toWords64 uid of
     (w1, w2) -> put w1 <> put w2
+  {-# INLINE put #-}
+
+newtype SizePrefixed (pre :: Type) (a :: Type) = SizePrefixed a
+
+-- TODO This retains the entire ByteString that contains the fptr in memory, is this a problem? Are there cases where it is?
+instance (FromBinary pre, Integral pre, S.Storable a) => FromBinary (SizePrefixed pre (S.Vector a)) where
+  get = do
+    len <- fromIntegral <$> get @pre
+    let aSz = S.sizeOf @a undefined
+    BS.BS fptr _ <- takeN (len * aSz)
+    pure . SizePrefixed $ S.unsafeFromForeignPtr0 (coerce fptr) len
+  {-# INLINE get #-}
+
+instance (ToBinary pre, Integral pre, S.Storable a) => ToBinary (SizePrefixed pre (S.Vector a)) where
+  put (SizePrefixed vec) =
+    let (fptr, len) = S.unsafeToForeignPtr0 vec
+    in put (fromIntegral @_ @pre len) <> B.byteString (BS.BS (coerce fptr) (len * S.sizeOf @a undefined))
   {-# INLINE put #-}

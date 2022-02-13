@@ -26,6 +26,8 @@ common common-options
                      , network-simple
                      , template-haskell
                      , uuid
+                     , vector
+                     , containers
   
   ghc-options:         -Wall
                        -Wcompat
