@@ -33,6 +33,7 @@ import Prelude hiding (succ)
 import Control.Applicative
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import GHC.Generics
 
 data Tag =
     TagEnd
@@ -48,10 +49,12 @@ data Tag =
   | TagCompound !(Map Text Tag)
   | TagIntArray !(S.Vector Int32)
   | TagLongArray !(S.Vector Int64)
-  deriving stock Show
+  deriving stock (Eq, Show, Generic)
+        
 
 tagId :: Tag -> Int
 tagId !tag = (I# (dataToTag# tag))
+{-# INLINE tagId #-}
 
 tagFromId :: Int8 -> Parser Void Tag
 tagFromId = \case
@@ -77,6 +80,7 @@ tagFromId = \case
   11 -> TagIntArray . coerce <$> get @(SizePrefixed Int32 (S.Vector Int32))
   12 -> TagLongArray . coerce <$> get @(SizePrefixed Int32 (S.Vector Int64))
   _ -> FlatParse.Basic.empty
+{-# INLINE tagFromId #-}
 
 instance ToBinary Tag where
   put tag = case tag of
@@ -98,6 +102,7 @@ instance ToBinary Tag where
     TagCompound c -> foldMapWithKey (\n t -> put $ NBT n t) c <> B.int8 0
     TagIntArray arr -> put (SizePrefixed @Int32 arr)
     TagLongArray arr -> put (SizePrefixed @Int32 arr)
+  {-# INLINE put #-}
 
 newtype NBTString = NBTString Text
 
@@ -113,9 +118,10 @@ instance ToBinary NBTString where
     let bs = T.encodeUtf8 str
         len = BS.length bs
     in put @Word16 (fromIntegral len) <> B.byteString bs
+  {-# INLINE put #-}
 
 data NBT = NBT !Text !Tag
-  deriving stock Show
+  deriving stock (Eq, Show, Generic)
 
 instance FromBinary NBT where
   get = do
@@ -176,6 +182,10 @@ all instances will be handwritten!
 -- FromNBT
 class FromNBT a where
   parseNBT :: Tag -> NBTParser a
+
+instance FromNBT Tag where
+  parseNBT = pure
+  {-# INLINE parseNBT #-}
 
 instance FromNBT Bool where
   parseNBT = \case
@@ -253,6 +263,10 @@ class ToNBT a where
   -- TODO Think about this some more once I have benchmarks, not worth doing this without proof that it is faster (tho it likely is but meh)
   -- Also NBT encoding usually happens for writing to files not network, so we don't need max perf anyway, it just has to be fast enough
 
+instance ToNBT Tag where
+  toNBT = id
+  {-# INLINE toNBT #-}
+
 instance ToNBT Bool where
   toNBT False = TagByte 0
   toNBT True = TagByte 1
@@ -329,6 +343,8 @@ compound :: [(Text, Tag)] -> Tag
 compound = TagCompound . fromList
 {-# INLINE compound #-}
 
-(.=) :: Text -> Tag -> (Text, Tag)
-(.=) = (,)
+(.=) :: ToNBT a => Text -> a -> (Text, Tag)
+k .= v = (k, toNBT v)
 {-# INLINE (.=) #-}
+
+infixr 8 .=

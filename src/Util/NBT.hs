@@ -5,6 +5,7 @@ module Util.NBT (
 , withCompound
 , (.:), (.:?), (.!=)
 , compound, (.=)
+, runParser
 ) where
 
 import Util.NBT.Internal

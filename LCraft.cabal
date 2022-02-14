@@ -47,7 +47,7 @@ library
   import:              common-options
   hs-source-dirs:      src
   exposed-modules:     LCraft
-  other-modules:       Network
+                     , Network
                      , Network.Effect.Network
                      , Network.Effect.Network.Effect
                      , Network.Effect.Network.IO
@@ -63,6 +63,8 @@ library
                      , Util.Binary
                      , Util.ByteOrder
                      , Util.Flatparse
+                     , Util.NBT
+                     , Util.NBT.Internal
 executable LCraft
   import:              common-options
   hs-source-dirs:      app
@@ -76,7 +78,19 @@ test-suite LCraft-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
+  other-modules:       Util.NBTSpec
+  build-tool-depends:  sydtest-discover:sydtest-discover
   build-depends:       LCraft
+                     , sydtest
+                     , validity
+                     , genvalidity
+                     , genvalidity-sydtest
+                     , genvalidity-text
+                     , genvalidity-vector
+                     , genvalidity-containers
+                     , QuickCheck
+                     , zlib
+                     , directory
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N
