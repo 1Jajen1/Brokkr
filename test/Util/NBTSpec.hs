@@ -90,6 +90,10 @@ spec = do
     describe "(.=)" $ do
       it "should produce the correct tuple" $ forAllValid @(Text, Tag) $ \(key, val) ->
         (key .= val) `shouldBe` (key, val)
+  describe "NBT" $ do
+    eqSpec @NBT
+  describe "Tag" $ do
+    eqSpec @Tag
 
 instance GenValid NBT where
 instance GenValid Tag where

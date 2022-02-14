@@ -35,6 +35,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe
 import GHC.Generics
 
+-- | Content of a NBT
 data Tag =
     TagEnd
   | TagByte !Int8
@@ -50,12 +51,24 @@ data Tag =
   | TagIntArray !(S.Vector Int32)
   | TagLongArray !(S.Vector Int64)
   deriving stock (Eq, Show, Generic)
-        
 
+{- Note [Tag types]:
+
+Every NBT is prefixed by a single byte describing what Constructor the Tag following is.
+
+This is obtained via 'tagId' which internally uses 'dataToTag#' and thus has a few restrictions:
+- The argument has to be strict. 'tagId' thus needs the bang pattern.
+- The constructor order defines the tag type id. Thus changes to the Tag datatype need to
+  respect the NBT-specifications order. 
+
+-}
+
+-- | Get the tag type
 tagId :: Tag -> Int
 tagId !tag = (I# (dataToTag# tag))
 {-# INLINE tagId #-}
 
+-- | Parses a tag given a specific tag type
 tagFromId :: Int8 -> Parser Void Tag
 tagFromId = \case
   0 -> pure TagEnd
@@ -104,6 +117,10 @@ instance ToBinary Tag where
     TagLongArray arr -> put (SizePrefixed @Int32 arr)
   {-# INLINE put #-}
 
+-- | Newtype wrapper for 'Text' which implements 'FromBinary'/'ToBinary' for the NBTSpec
+--
+-- The NBT spec defines 'Text' encoding as a utf-8 bytestring with a length prefix using 2 bytes.
+-- This is in contrast to the network specification which uses a 'VarInt' prefix.
 newtype NBTString = NBTString Text
 
 instance FromBinary NBTString where
@@ -120,6 +137,12 @@ instance ToBinary NBTString where
     in put @Word16 (fromIntegral len) <> B.byteString bs
   {-# INLINE put #-}
 
+-- | Named-Binary-Tag's (NBT)
+--
+-- Minecrafts dataformat, primarily used for file storage and dynamic attributes in commands.
+--
+-- The original NBT specification can be found here: https://web.archive.org/web/20110723210920/http://www.minecraft.net/docs/NBT.txt
+-- An updated version with documentation can be seen here: https://wiki.vg/NBT
 data NBT = NBT !Text !Tag
   deriving stock (Eq, Show, Generic)
 
@@ -144,10 +167,13 @@ instance ToBinary NBT where
     in B.int8 (fromIntegral tid) <> put (NBTString n) <> put t
   {-# INLINE put #-}
 
--- Parsing into custom types
+-- | Custom Parser for NBT values
+--
+-- CPS'd parser, the first argument is the success continuation, the second the abort continuation
+-- Example: runParser p Just Nothing
 newtype NBTParser a = NBTParser { runParser :: forall r . (a -> r) -> r -> Tag -> r }
 
--- TODO Test laws. TODO Test this whole module...
+-- TODO Test laws.
 instance Functor NBTParser where
   fmap f p = NBTParser $ \succ absent tag -> runParser p (succ . f) absent tag
   {-# INLINE fmap #-}
@@ -170,7 +196,7 @@ instance Alternative NBTParser where
 
 instance MonadPlus NBTParser where
 
-{- Note: Why no default implementations via GHC.Generics?
+{- Note: [Why no default implementations via GHC.Generics?]
 
 Those are definitely possible however they slow down compile time quite a bit, are not as fast as handwritten instances and
 couple data to NBT format a little too much for my liking.
@@ -179,7 +205,10 @@ If this ever gets its own library then I'll probably add it together with th bas
 all instances will be handwritten!
 
 -}
--- FromNBT
+
+-- | A type which can be converted from NBT, but could also fail.
+--
+-- Use helpers such as 'withCompound' and '(.:)' to implement this class.
 class FromNBT a where
   parseNBT :: Tag -> NBTParser a
 
@@ -254,7 +283,9 @@ instance FromNBT (S.Vector Int64) where
     _ -> empty
   {-# INLINE parseNBT #-}
 
--- To NBT
+-- | A type which can be converted to NBT.
+--
+-- Use helpers such as 'compound' and '(.=)' to implement this class.
 class ToNBT a where
   toNBT :: a -> Tag
   -- TODO Think about what it takes to implement toEncoding similar to Aeson, the problem is that NBT is TagId Name Tag and JSON is Name Value
@@ -317,32 +348,56 @@ instance ToNBT (S.Vector Int64) where
   {-# INLINE toNBT #-}
 
 -- Utilities for implementing FromNBT
+
+-- | Create a 'NBTParser' which applies the inner function only if given a compound tag.
+--
+-- The resulting 'NBTParser' will only succeed if the given 'Tag' is a compound and the
+-- 'NBTParser' returned by the function succeeds.
 withCompound :: (Map Text Tag -> NBTParser a) -> Tag -> NBTParser a
 withCompound f = \case
   TagCompound m -> f m
   _ -> empty
 {-# INLINE withCompound #-}
 
+-- | Create a parser which tries to read a 'Tag' from a compound.
+--
+-- Succeeds only if the key is in the compound and the 'NBTParser' for 'a' given the value for
+-- the key succeeds.
+--
+-- If you need the key to be optional use '(.:?)' instead.
 (.:) :: FromNBT a => Map Text Tag -> Text -> NBTParser a
 m .: k = case Map.lookup k m of
   Just tag -> parseNBT tag
   Nothing -> empty
 {-# INLINE (.:) #-}
 
+-- | Create a parser which tries to read a 'Tag' from a compound.
+--
+-- Succeeds with Nothing if the key is not present, otherwise behaves like '(.:)'
+--
+-- If you want to provide a default value use '(.!=)'
 (.:?) :: FromNBT a => Map Text Tag -> Text -> NBTParser (Maybe a)
 m .:? k = case Map.lookup k m of
   Just tag -> Just <$> parseNBT tag
   Nothing -> pure Nothing
 {-# INLINE (.:?) #-}
 
+-- | Provide a default value to a 'NBTParser' returning a 'Maybe'.
+--
+-- Only provides the default if the initial parser succeeded with
+-- Nothing as a result.
 (.!=) :: NBTParser (Maybe a) -> a -> NBTParser a
 p .!= def = fromMaybe def <$> p
 {-# INLINE (.!=) #-}
 
+-- | Create a compound tag from a key-value list.
+--
+-- Use '(.=)' to simplify building such a list.
 compound :: [(Text, Tag)] -> Tag
 compound = TagCompound . fromList
 {-# INLINE compound #-}
 
+-- | Create a key value pair with any value that can be converted to 'NBT'
 (.=) :: ToNBT a => Text -> a -> (Text, Tag)
 k .= v = (k, toNBT v)
 {-# INLINE (.=) #-}
