@@ -21,6 +21,8 @@ import qualified Foreign.Storable as S
 import qualified Data.ByteString.Internal as BS
 import Data.Coerce
 
+-- TODO Test instances, just test roundtripping for now, add regression tests if something fails later on.
+
 class FromBinary (a :: Type) where
   get :: Parser Void a
 

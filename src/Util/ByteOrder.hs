@@ -7,17 +7,22 @@ import Data.Word
 import GHC.ByteOrder
 import Unsafe.Coerce
 
--- TODO Names ...
+-- | Swap byteorder if we are on a little endian system.
+--
+-- Minecraft Java Edition uses BigEndian everywhere thus we need this whenever parsing numbers
 toBE :: ByteSwap a => a -> a
 toBE = case targetByteOrder of
   BigEndian -> id
   LittleEndian -> swapBytes
 {-# INLINE toBE #-}
 
+-- | Swap byteorder if we are on a big endian system.
+--
+-- Mainly included for parity, not sure if I even need this.
 toLE :: ByteSwap a => a -> a
 toLE = case targetByteOrder of
   BigEndian -> swapBytes
-  LittleEndian -> swapBytes
+  LittleEndian -> id
 {-# INLINE toLE #-}
 
 class ByteSwap a where

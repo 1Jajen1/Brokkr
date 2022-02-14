@@ -78,7 +78,7 @@ test-suite LCraft-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  other-modules:       Util.NBTSpec
+  other-modules:       NBT.NBTSpec
   build-tool-depends:  sydtest-discover:sydtest-discover
   build-depends:       LCraft
                      , sydtest
@@ -89,18 +89,6 @@ test-suite LCraft-test
                      , genvalidity-vector
                      , genvalidity-containers
                      , QuickCheck
-                     , zlib
-  ghc-options:         -threaded
-                       -rtsopts
-                       -with-rtsopts=-N
-benchmark LCraft-benchmark
-  import:              common-options
-  type:                exitcode-stdio-1.0
-  hs-source-dirs:      benchmark
-  main-is:             Main.hs
-  other-modules:       Util.NBT
-  build-depends:       criterion
-                     , LCraft
                      , zlib
   ghc-options:         -threaded
                        -rtsopts

@@ -1,9 +1,9 @@
 {-# LANGUAGE PatternSynonyms #-}
 module Network.Packet.Server.Handshake (
   HandshakePacket(..)
-, ProtocolVersion
-, ServerAddress
-, ServerPort
+, ProtocolVersion(..)
+, ServerAddress(..)
+, ServerPort(..)
 , NextState
 , pattern Status
 , pattern Login
@@ -26,26 +26,29 @@ instance FromBinary HandshakePacket where
     _ -> empty
   {-# INLINE get #-}
 
+instance ToBinary HandshakePacket where
+  put (Handshake pv sa sp n) = put (VarInt 0) <> put pv <> put sa <> put sp <> put n
+
 newtype ProtocolVersion = PV Int32
-  deriving FromBinary via VarInt
+  deriving (FromBinary, ToBinary) via VarInt
 
 instance Show ProtocolVersion where
   show (PV i) = prettyVersion i
 
 newtype ServerAddress = SA Text
-  deriving FromBinary via MCString
+  deriving (FromBinary, ToBinary) via MCString
 
 instance Show ServerAddress where
   show (SA t) = show t -- TODO
 
 newtype ServerPort = SP Word16
-  deriving newtype FromBinary
+  deriving newtype (FromBinary, ToBinary)
 
 instance Show ServerPort where
   show (SP i) = show i -- TODO
 
 newtype NextState = NS Int32
-  deriving FromBinary via VarInt
+  deriving (FromBinary, ToBinary) via VarInt
 
 instance Show NextState where
   show = \case

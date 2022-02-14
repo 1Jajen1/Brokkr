@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings  #-}
 {-# OPTIONS_GHC -Wno-unused-imports -Wno-orphans -Wno-missing-export-lists #-}
-module Util.NBTSpec where
+module NBT.NBTSpec where
 
 import Test.Syd
 import Test.Syd.Validity
@@ -26,14 +26,13 @@ import qualified Data.Vector as V
 import Data.Int
 
 import Debug.Trace
-import System.Directory
 import Data.Text hiding (all)
 
 spec :: Spec
 spec = do
   describe "ByteString <-> NBT" $ do
     it "should parse a big nbt file" $ do
-      bs <- LBS.toStrict . GZip.decompress . LBS.fromStrict <$> BS.readFile "test/Util/NBT/bigtest.nbt"
+      bs <- LBS.toStrict . GZip.decompress . LBS.fromStrict <$> BS.readFile "test/NBT/bigtest.nbt"
       case FP.runParser (get @NBT) bs of
         -- Same size assertion since order may change so eq is not reliable
         FP.OK nbt "" -> BS.length (B.toStrictByteString (put nbt)) `shouldBe` (BS.length bs)

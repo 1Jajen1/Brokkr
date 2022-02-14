@@ -18,3 +18,7 @@ instance FromBinary LoginPacket where
       [|| loginStart ||]
     ])
     where loginStart = LoginStart . coerce <$> get @MCString
+
+instance ToBinary LoginPacket where
+  put x = packetId x <> case x of
+    LoginStart userName -> put (MCString userName)

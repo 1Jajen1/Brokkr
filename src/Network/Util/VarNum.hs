@@ -25,6 +25,7 @@ instance ToBinary VarInt where
   put (VarInt i32) = writeVarNum 5 fromIntegral i32
   {-# INLINE put #-}
 
+-- TODO Optimize this, quite a bit of potential here I think
 readVarNum :: (Word64 -> a) -> Int -> Parser e a
 readVarNum f maxSz = go 0 0
   where

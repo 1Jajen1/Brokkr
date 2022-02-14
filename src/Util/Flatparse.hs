@@ -36,8 +36,12 @@ anyWord64 = Parser $ \_ eob buf -> case 8# <=# minusAddr# eob buf of
     w -> OK# (W64# w) (plusAddr# buf 8#)
 {-# INLINE anyWord64 #-}
 
+-- | Read n bytes from the input.
+--
+-- The 'Bytestring' this function creates will keep the entire input in memory
+-- until it itself is released. 
 takeN :: Int -> Parser e ByteString
-takeN 0 = return mempty
+takeN 0 = pure mempty
 takeN nn@(I# n) = Parser $ \fp eob s ->
   let len = minusAddr# eob s
   in case len >=# n of
@@ -45,6 +49,10 @@ takeN nn@(I# n) = Parser $ \fp eob s ->
     _ -> Fail#
 {-# INLINE takeN #-}
 
+-- | Read the remaining bytes from the input.
+--
+-- The 'Bytestring' this function creates will keep the entire input in memory
+-- until it itself is released. 
 takeRemaining :: Parser e ByteString
 takeRemaining = Parser $ \fp eob s -> OK# (B.BS (ForeignPtr s fp) (I# (minusAddr# eob s))) eob
 {-# INLINE takeRemaining #-}

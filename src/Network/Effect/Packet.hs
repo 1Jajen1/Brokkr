@@ -4,6 +4,8 @@ module Network.Effect.Packet (
   readPacket
 , sendPacket
 , sendPackets
+-- internal
+, toStrictSizePrefixedByteString -- TODO Move to internal module
 ) where
   
 import qualified Effectful.State.Static.Local as S
