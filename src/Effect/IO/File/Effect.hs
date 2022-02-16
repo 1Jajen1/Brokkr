@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE PatternSynonyms #-}
-module Effect.File.Effect (
+module Effect.IO.File.Effect (
   FilePath(..)
 , File(..)
 , openAt
@@ -17,7 +17,7 @@ import Data.String
 import Data.Kind
 import Data.ByteString
 
-import Effect.File.OpenFlags
+import Effect.IO.File.OpenFlags
 import Effectful.Dispatch.Dynamic
 
 newtype FilePath = FilePath Text

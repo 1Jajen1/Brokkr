@@ -1,16 +1,16 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiWayIf #-}
-module Effect.File.Handle (
+module Effect.IO.File.Handle (
   runFile
 ) where
 
 import Effectful
-import Effect.File.Effect
+import Effect.IO.File.Effect
 import System.IO (Handle, openBinaryFile, IOMode(..), hClose, hSeek, SeekMode(..))
 import Effectful.Dispatch.Dynamic (interpret)
 import qualified Data.Text as T
-import Effect.File.OpenFlags
+import Effect.IO.File.OpenFlags
 import qualified Data.ByteString as BS
 
 runFile :: IOE :> es => Eff (File Handle : es) a -> Eff es a

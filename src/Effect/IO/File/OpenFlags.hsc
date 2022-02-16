@@ -1,5 +1,5 @@
 {-# LANGUAGE PatternSynonyms #-}
-module Effect.File.OpenFlags (
+module Effect.IO.File.OpenFlags (
   OpenFlags(..)
 , pattern OpenReadOnly
 , pattern OpenWriteOnly

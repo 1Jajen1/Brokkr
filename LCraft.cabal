@@ -28,6 +28,7 @@ common common-options
                      , uuid
                      , vector
                      , containers
+                     , zlib
   
   ghc-options:         -Wall
                        -Wcompat
@@ -42,15 +43,18 @@ common common-options
                        -O2
   default-extensions:  DerivingVia
                        LambdaCase
+                       StrictData
   default-language:    GHC2021
 library
   import:              common-options
   hs-source-dirs:      src
   exposed-modules:     LCraft
-                     , Effect.File
-                     , Effect.File.Effect
-                     , Effect.File.Handle
-                     , Effect.File.OpenFlags
+                     , Chunk.Position
+                     , Effect.IO.File
+                     , Effect.IO.File.Effect
+                     , Effect.IO.File.Handle
+                     , Effect.IO.File.OpenFlags
+                     , Effect.IO.RegionFile
                      , Network
                      , Network.Effect.Network
                      , Network.Effect.Network.Effect
@@ -69,6 +73,8 @@ library
                      , Util.Flatparse
                      , Util.NBT
                      , Util.NBT.Internal
+                     , Util.V2
+                     , Util.Word24
 executable LCraft
   import:              common-options
   hs-source-dirs:      app
@@ -93,7 +99,6 @@ test-suite LCraft-test
                      , genvalidity-vector
                      , genvalidity-containers
                      , QuickCheck
-                     , zlib
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N

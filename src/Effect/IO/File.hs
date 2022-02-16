@@ -1,10 +1,10 @@
 {-# LANGUAGE PatternSynonyms #-}
-module Effect.File (
+module Effect.IO.File (
   File
 , openAt
 , readAt
 , close
-, Effect.File.Effect.FilePath
+, Effect.IO.File.Effect.FilePath
 , OpenFlags
 , pattern OpenReadOnly
 , pattern OpenWriteOnly
@@ -14,5 +14,5 @@ module Effect.File (
 , pattern OpenDirectIO
 ) where
 
-import Effect.File.Effect
-import Effect.File.OpenFlags
+import Effect.IO.File.Effect
+import Effect.IO.File.OpenFlags
