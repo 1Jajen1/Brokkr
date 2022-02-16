@@ -47,6 +47,10 @@ library
   import:              common-options
   hs-source-dirs:      src
   exposed-modules:     LCraft
+                     , Effect.File
+                     , Effect.File.Effect
+                     , Effect.File.Handle
+                     , Effect.File.OpenFlags
                      , Network
                      , Network.Effect.Network
                      , Network.Effect.Network.Effect

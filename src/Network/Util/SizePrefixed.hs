@@ -9,7 +9,6 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString as BS
 import qualified Mason.Builder as B
-import Debug.Trace
 
 newtype ByteSizePrefixed a = ByteSizePrefixed a
 
