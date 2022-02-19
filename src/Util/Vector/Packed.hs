@@ -1,24 +1,28 @@
-{-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Util.Vector.Packed (
   DynamicNat(..)
 , PackedVector
 , unsafeIndex
 , MutablePackedVector
+, Mutable
 , PVector(..)
 , MPVector(..)
 , unsafeRead
 , unsafeWrite
 , unsafeCopy
+, foldMap
 , unsafeStaticFromForeignPtr
 , unsafeDynamicFromForeignPtr
 ) where
 
-import Prelude hiding ( length )
+import qualified Prelude
+import Prelude hiding (foldMap, length )
 
 import Control.Monad.Primitive
 import Control.Monad.ST ( runST )
@@ -35,9 +39,11 @@ import GHC.Exts ( coerce, pdep64#, pext64# )
 import GHC.ForeignPtr ( unsafeWithForeignPtr )
 import GHC.TypeLits ( KnownNat, Nat, natVal )
 import GHC.Word ( Word64(W64#) )
+import qualified Data.Primitive.Ptr as Ptr
 
 -- TODO Check if it is worth avoiding the overflow/underflow checks that div imposes
 --  Unless vectors with a packed bitSize of 0 or > 64 are introduced, which are nonsense, this should never fail
+-- TODO Tests + Benchmarks (Compare against normal storable vectors to get a sense of what overhead we have)
 
 -- | Either some 'Nat' value of a dynamic (usually runtime defined) value
 data DynamicNat = Static Nat | Dynamic
@@ -74,8 +80,8 @@ newtype instance MutablePackedVector ('Static sz) ('Static bSz) s = MPV_Stat (FP
 data instance MutablePackedVector ('Static sz) 'Dynamic s = MPV_Dyn {-# UNPACK #-} !Int {-# UNPACK #-} !(FP.ForeignPtr Word64)
 
 -- | Map immutable packed vectors to mutable packed vectors
-type family Mutable (a :: Type) :: Type -> Type where
-  Mutable (PackedVector sz bSz) = MutablePackedVector sz bSz
+type family Mutable (v :: Type) = (mv :: Type -> Type) | mv -> v
+type instance Mutable (PackedVector sz bSz) = MutablePackedVector sz bSz
 
 -- | Generic immutable packed vectors
 class MPVector (Mutable a) => PVector a where
@@ -121,6 +127,12 @@ instance KnownNat sz => MPVector (MutablePackedVector ('Static sz) 'Dynamic) whe
   backing (MPV_Dyn _ fptr) = fptr
   {-# INLINE backing #-}
 
+instance PVector (PackedVector sz bSz) => Show (PackedVector sz bSz) where
+  show v = "PackedVector " <> show len <> " " <> show bSz <> " " <>  (show $ foldMap (\a -> [a]) v)
+    where (len, bSz) = runST $ do
+            mv <- unsafeThaw v
+            pure $ (length mv, bitSz mv)
+
 -- Methods
 
 -- | /O(1)/ Read a packed element from a packed vector at a given index
@@ -159,7 +171,7 @@ unsafeWrite vec !i !a =
 -- terms of packed elements has to be the same. This is not checked.
 -- 
 -- With @0 < min(srcBitSize, dstBitSize) <= 64@ we can assert that the time complexity is always
--- smaller than a naive implementation reading and writing each packed word individually. 
+-- smaller than a naive implementation reading and writing each packed word individually.
 unsafeCopy :: (MPVector a, MPVector b, PrimMonad m) => a (PrimState m) -> b (PrimState m) -> m ()
 -- The naive implementation here would be to read every word one by one and write it to the destination so O(n)
 -- 
@@ -201,10 +213,13 @@ unsafeCopy :: (MPVector a, MPVector b, PrimMonad m) => a (PrimState m) -> b (Pri
 -- whenever it fills up.
 unsafeCopy !dst !src
   -- TODO This has a worse time complexity than the two methods below ... can/should we improve using simd instructions?
+  -- TODO After writing tests I had to adjust a few things, go over this again and try to simplify
   | dBs == sBs = unsafePrimToPrim $ unsafeWithForeignPtr dFptr $ \dPtr -> unsafeWithForeignPtr sFptr $ \sPtr ->
     S.copyBytes dPtr sPtr (8 * nrWords dBs len)
   | dBs > sBs = do
-    let !minOverflow = perWord - prevPerWord
+    let !(W64# pMask) = pextMask sBs dBs
+        !wLen = nrWords dBs len
+        !minOverflow = prevPerWord - perWord
         !overflowWordMask = (unsafeShiftL 1 (perWord * sBs)) - 1
         getOverflow 0 _ = 0
         getOverflow !nr !w = overflowWordMask .&. (unsafeShiftR w $ (prevPerWord - nr) * sBs)
@@ -228,8 +243,10 @@ unsafeCopy !dst !src
           | otherwise = pure ()
     unsafePrimToPrim $ unsafeWithForeignPtr dFptr $ \dPtr -> unsafeWithForeignPtr sFptr $ \sPtr -> do_copy_1 dPtr sPtr 0 0 0
   | otherwise = do
-    let do_copy_2 !dPtr !sPtr !dN !currentWord !off
-          | dN < wLen = do
+    let !(W64# pMask) = pextMask dBs sBs
+        srcLen = nrWords sBs len
+        do_copy_2 !dPtr !sPtr !dN !currentWord !off
+          | dN < srcLen = do
               !(W64# w) <- S.peek sPtr
               let w' = W64# (pext64# w pMask)
                   nW = currentWord .|. (unsafeShiftL w' $ off * dBs)
@@ -240,15 +257,11 @@ unsafeCopy !dst !src
                   let nW' = unsafeShiftR w' $ offDiff * dBs
                       offDiff = perWord - off
                   do_copy_2 (P.advancePtr dPtr 1) (P.advancePtr sPtr 1) (dN + 1) nW' (prevPerWord - offDiff)
-                else do_copy_2 dPtr (P.advancePtr sPtr 1) dN nW nOff
-          | otherwise = pure ()
+                else do_copy_2 dPtr (P.advancePtr sPtr 1) (dN + 1) nW nOff
+          | off == 0 = pure ()
+          | otherwise = S.poke dPtr currentWord
     unsafePrimToPrim $ unsafeWithForeignPtr dFptr $ \dPtr -> unsafeWithForeignPtr sFptr $ \sPtr -> do_copy_2 dPtr sPtr 0 0 0
   where
-    !wLen = nrWords dBs len
-     -- TODO This currently does not seem to inline pextMask and thus allocates a W64# object.
-     -- This isn't too bad since it's once per copy (or even cached after that if done with constants)
-     --  but it could obv be better since GHC should just inline here!
-    !(W64# pMask) = pextMask sBs dBs
     !prevPerWord = 64 `div` sBs
     !perWord = 64 `div` dBs
     !len = length dst
@@ -258,12 +271,41 @@ unsafeCopy !dst !src
     !sBs = bitSz src
 {-# INLINE unsafeCopy #-}
 
+-- | O(n) Fold over the content of a packed vector
+foldMap :: (PVector v, Monoid m) => (Word -> m) -> v -> m
+foldMap f v = runST $ do
+  mv <- unsafeThaw v
+  let len = length mv
+      bSz = bitSz mv
+      fptr = backing mv
+      wLen = nrWords bSz len
+      perWord = 64 `div` bSz
+      go ptr n x acc
+        | n < wLen = do
+          w <- S.peek ptr
+          let nAcc = acc <> (Prelude.foldMap (\i -> f . fromIntegral . (.&. ((unsafeShiftL 1 bSz) - 1)) $ unsafeShiftR w $ i * bSz) [0..((min perWord (len - x))) - 1])
+          go (Ptr.advancePtr ptr 1) (n + 1) (x + perWord) nAcc
+        | otherwise = pure acc
+  unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> go ptr 0 0 mempty
+{-# INLINE foldMap #-}
+
 -- Creating packed vectors
+
+-- | Cast a 'ForeignPtr' of unsigned 64bit words to a packed vector
+--
+-- The 'ForeignPtr' is expected to contain enough 64bit words to hold 'sz' packed values
+-- with an individual size of 'bSz'. This is not checked.
 unsafeStaticFromForeignPtr :: FP.ForeignPtr Word64 -> PackedVector ('Static sz) ('Static bSz)
 unsafeStaticFromForeignPtr = coerce
+{-# INLINE unsafeStaticFromForeignPtr #-}
 
+-- | Create a packed vector of a given dynamic bit-size and a 'ForeignPtr' of unsigned 64bit words
+--
+-- The 'ForeignPtr' is expected to contain enough 64bit words to hold 'sz' packed values
+-- with an individual size of 'bSz'. This is not checked.
 unsafeDynamicFromForeignPtr :: Int -> FP.ForeignPtr Word64 -> PackedVector ('Static sz) 'Dynamic
 unsafeDynamicFromForeignPtr bSz fptr = PV_Dyn bSz fptr
+{-# INLINE unsafeDynamicFromForeignPtr #-}
 
 -- Internal Utils
 
@@ -282,11 +324,12 @@ indexPacked bSz i w = fromIntegral . (.&. ((unsafeShiftL 1 bSz) - 1)) $ unsafeSh
 writePacked :: Int -> Int -> Word -> Word64 -> Word64
 writePacked bSz i el w = (w .&. mask) .|. mask
   where
-    mask = unsafeShiftR (fromIntegral el) (i * bSz) .&. complement zeroBits
+    mask = (unsafeShiftL (fromIntegral el) (i * bSz)) .&. complement zeroBits
 {-# INLINE writePacked #-}
 
 nrWords :: Int -> Int -> Int
-nrWords bSz i = (i * bSz + 63) `div` 64
+nrWords bSz i = (i + perWord - 1) `div` perWord
+  where perWord = 64 `div` bSz
 {-# INLINE nrWords #-}
 
 pextMask :: Int -> Int -> Word64
