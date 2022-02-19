@@ -73,7 +73,8 @@ library
                      , Util.Flatparse
                      , Util.NBT
                      , Util.NBT.Internal
-                     , Util.V2
+                     , Util.Vector.Packed
+                     , Util.Linear.V2
                      , Util.Word24
 executable LCraft
   import:              common-options
