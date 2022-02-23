@@ -42,7 +42,6 @@ readVarNum f maxSz = go 0 0
 
 -- This function can do bad things if the word requires more than maxSz bytes to be written, so take care not to exceed that!
 -- TODO Statically check that somehow?
-  -- Actually this is quite safe since this is internal and only used via VarInt/VarLong which both are fixed size and below the maxSz
 -- TODO Try to further optimise this
 writeVarNum :: Int -> (a -> Word64) -> a -> B.Builder
 writeVarNum maxSz f = \a -> B.primBounded varNumPrim a
@@ -50,7 +49,7 @@ writeVarNum maxSz f = \a -> B.primBounded varNumPrim a
     varNumPrim = Prim.boundedPrim maxSz $ \a ptr -> writeVarNumInternal (f a) ptr
 {-# INLINE writeVarNum #-}
 
--- TODO
+-- TODO This can probably be done using simd instructions to make this both branch free and loop free
 writeVarNumInternal :: Word64 -> Ptr Word8 -> IO (Ptr Word8)
 writeVarNumInternal !n !ptr
   | n < unsafeShiftL 2 7 = do

@@ -6,6 +6,7 @@ import Data.Int
 import Data.Word
 import GHC.ByteOrder
 import Unsafe.Coerce
+import Util.Word24
 
 -- | Swap byteorder if we are on a little endian system.
 --
@@ -42,6 +43,10 @@ instance ByteSwap Int64 where
 
 instance ByteSwap Word16 where
   swapBytes = byteSwap16
+  {-# INLINE swapBytes #-}
+
+instance ByteSwap Word24 where
+  swapBytes = byteSwap24
   {-# INLINE swapBytes #-}
 
 instance ByteSwap Word32 where
