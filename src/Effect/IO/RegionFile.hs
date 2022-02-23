@@ -31,11 +31,15 @@ import qualified Codec.Compression.Zlib as ZLib
 import Data.Int
 import Util.Binary
 import qualified Codec.Compression.GZip as GZip
+import Effect.World (RegionFileFolderPath (RegionFileFolderPath))
+import Effectful.Reader.Static
+import Data.String
+import Effect.Token
 
 data RegionFile file = RegionFile {
-  locationTable :: (S.Vector ChunkLocation_)
+  locationTable :: !(S.Vector ChunkLocation_)
 -- at some point we may also need to do ChunkTimestamps but not now...
-, file          :: file
+, file          :: !file
 }
 
 sectorSize :: Int
@@ -44,18 +48,28 @@ sectorSize = 4096
 newtype ChunkLocation_ = ChunkLocation_ Word32
   deriving newtype S.Storable
 
+instance Show ChunkLocation_ where
+  show (ChunkLocation off sz) = "ChunkLocation " <> show off <> " " <> show sz
+
 pattern ChunkLocation :: Word24 -> Word8 -> ChunkLocation_
 pattern ChunkLocation off sz <- !(toOffAndSz -> (off, sz)) where
-  ChunkLocation !off !sz = ChunkLocation_ $ (fromIntegral $ toBE off) .|. (unsafeShiftL 24 $ fromIntegral sz)
+  ChunkLocation !off !sz = ChunkLocation_ $ toBE (unsafeShiftL (fromIntegral off) 8) .|. (fromIntegral sz)
 {-# COMPLETE ChunkLocation #-}
 {-# INLINE ChunkLocation #-}
 
 toOffAndSz :: ChunkLocation_ -> (Word24, Word8)
-toOffAndSz (ChunkLocation_ x) = (toBE . fromIntegral $ x .&. 0x00ffffff, fromIntegral $ x .&. 0xff000000)
+toOffAndSz (ChunkLocation_ x) = let x' = toBE x in (fromIntegral $ unsafeShiftR x' 8, fromIntegral $ x' .&. 0x000000ff)
 {-# INLINE toOffAndSz #-}
+-- TODO Double check endianess...
 
-openRegionFile :: File file :> es => FilePath -> Eff es (RegionFile file)
-openRegionFile path = do
+openRegionFile ::
+  forall file w es .
+  ( Reader (RegionFileFolderPath w) :> es
+  , File file :> es
+  ) => Token w -> Int -> Int -> Eff es (RegionFile file)
+openRegionFile _ regionX regionZ = do
+  RegionFileFolderPath folder <- ask @(RegionFileFolderPath w)
+  let path = folder <> "/r." <> fromString (show regionX) <> "." <> fromString (show regionZ) <> ".mca"
   file <- openAt path OpenReadWrite
   (BS.BS fptr sz) <- readAt 0 sectorSize file
   when (sz /= sectorSize) $ error "Invalid location table size" -- TODO Error
@@ -66,7 +80,7 @@ readChunkData :: File file :> es => ChunkPosition -> RegionFile file -> Eff es B
 readChunkData (ChunkPos x z) RegionFile{..} = do
   compressedBs <- readAt (unsafeShiftL (fromIntegral off) 12) (unsafeShiftL (fromIntegral sz) 12) file
   case FP.runParser chunkDataP compressedBs of
-    FP.OK res "" -> pure res
+    FP.OK res _ -> pure res
     _ -> error "Failed decompressing chunk data" -- TODO Error
   where
     rIndex = x .&. 31 + unsafeShiftL (z .&. 31) 5

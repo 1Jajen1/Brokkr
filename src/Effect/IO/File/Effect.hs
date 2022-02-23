@@ -21,7 +21,7 @@ import Effect.IO.File.OpenFlags
 import Effectful.Dispatch.Dynamic
 
 newtype FilePath = FilePath Text
-  deriving newtype (Show, IsString)
+  deriving newtype (Show, IsString, Semigroup)
 
 --
 type instance DispatchOf (File file) = 'Dynamic

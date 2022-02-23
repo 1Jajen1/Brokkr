@@ -366,8 +366,8 @@ withCompound f = \case
 --
 -- If you need the key to be optional use '(.:?)' instead.
 (.:) :: FromNBT a => Map Text Tag -> Text -> NBTParser a
-m .: k = case Map.lookup k m of
-  Just tag -> parseNBT tag
+!m .: !k = case Map.lookup k m of
+  Just !tag -> parseNBT tag
   Nothing -> empty
 {-# INLINE (.:) #-}
 
@@ -378,7 +378,7 @@ m .: k = case Map.lookup k m of
 -- If you want to provide a default value use '(.!=)'
 (.:?) :: FromNBT a => Map Text Tag -> Text -> NBTParser (Maybe a)
 m .:? k = case Map.lookup k m of
-  Just tag -> Just <$> parseNBT tag
+  Just !tag -> Just <$> parseNBT tag
   Nothing -> pure Nothing
 {-# INLINE (.:?) #-}
 
@@ -387,7 +387,7 @@ m .:? k = case Map.lookup k m of
 -- Only provides the default if the initial parser succeeded with
 -- Nothing as a result.
 (.!=) :: NBTParser (Maybe a) -> a -> NBTParser a
-p .!= def = fromMaybe def <$> p
+!p .!= !def = fromMaybe def <$> p
 {-# INLINE (.!=) #-}
 
 -- | Create a compound tag from a key-value list.
@@ -399,7 +399,7 @@ compound = TagCompound . fromList
 
 -- | Create a key value pair with any value that can be converted to 'NBT'
 (.=) :: ToNBT a => Text -> a -> (Text, Tag)
-k .= v = (k, toNBT v)
+!k .= !v = (k, toNBT v)
 {-# INLINE (.=) #-}
 
 infixr 8 .=

@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MagicHash #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -17,6 +16,8 @@ module Util.Vector.Packed (
 , unsafeWrite
 , unsafeCopy
 , foldMap
+, foldl'
+, countElems
 , unsafeStaticFromForeignPtr
 , unsafeDynamicFromForeignPtr
 ) where
@@ -28,18 +29,22 @@ import Control.Monad.Primitive
 import Control.Monad.ST ( runST )
 
 import Data.Bits
-import Data.Kind ( Type )
 import qualified Data.Primitive.Ptr as P
 
 import qualified Foreign.ForeignPtr as FP
 import qualified Foreign.Storable as S
 import qualified Foreign.Marshal.Utils as S
 
-import GHC.Exts ( coerce, pdep64#, pext64# )
 import GHC.ForeignPtr ( unsafeWithForeignPtr )
 import GHC.TypeLits ( KnownNat, Nat, natVal )
 import GHC.Word ( Word64(W64#) )
 import qualified Data.Primitive.Ptr as Ptr
+import Control.DeepSeq
+import GHC.Base
+
+import Util.Vector.Internal
+import qualified Data.Foldable
+import Data.Semigroup
 
 -- TODO Check if it is worth avoiding the overflow/underflow checks that div imposes
 --  Unless vectors with a packed bitSize of 0 or > 64 are introduced, which are nonsense, this should never fail
@@ -133,6 +138,12 @@ instance PVector (PackedVector sz bSz) => Show (PackedVector sz bSz) where
             mv <- unsafeThaw v
             pure $ (length mv, bitSz mv)
 
+instance NFData (PackedVector ('Static sz) ('Static bSz)) where
+  rnf (PV_Stat _) = ()
+
+instance NFData (PackedVector ('Static sz) 'Dynamic) where
+  rnf (PV_Dyn len _) = rnf len
+
 -- Methods
 
 -- | /O(1)/ Read a packed element from a packed vector at a given index
@@ -212,8 +223,10 @@ unsafeCopy :: (MPVector a, MPVector b, PrimMonad m) => a (PrimState m) -> b (Pri
 -- Unlike copying into a larger bitsize, we now end up with an underfilled value. Thus we accumulate the value we want to write and write it
 -- whenever it fills up.
 unsafeCopy !dst !src
-  -- TODO This has a worse time complexity than the two methods below ... can/should we improve using simd instructions?
   -- TODO After writing tests I had to adjust a few things, go over this again and try to simplify
+  -- TODO Split the implementation from the top level case so that we can inline those but keep inlining impl up to ghc
+  -- TODO Revise uses of divInt var. Maybe write a wrapper around divInt# that does no safety checks but still does optimizations for powers of 2
+  --  Same for mod.
   | dBs == sBs = unsafePrimToPrim $ unsafeWithForeignPtr dFptr $ \dPtr -> unsafeWithForeignPtr sFptr $ \sPtr ->
     S.copyBytes dPtr sPtr (8 * nrWords dBs len)
   | dBs > sBs = do
@@ -262,8 +275,8 @@ unsafeCopy !dst !src
           | otherwise = S.poke dPtr currentWord
     unsafePrimToPrim $ unsafeWithForeignPtr dFptr $ \dPtr -> unsafeWithForeignPtr sFptr $ \sPtr -> do_copy_2 dPtr sPtr 0 0 0
   where
-    !prevPerWord = 64 `div` sBs
-    !perWord = 64 `div` dBs
+    !prevPerWord = 64 `divInt` sBs
+    !perWord = 64 `divInt` dBs
     !len = length dst
     !dFptr = backing dst
     !sFptr = backing src
@@ -279,7 +292,7 @@ foldMap f v = runST $ do
       bSz = bitSz mv
       fptr = backing mv
       wLen = nrWords bSz len
-      perWord = 64 `div` bSz
+      perWord = 64 `divInt` bSz
       go ptr n x acc
         | n < wLen = do
           w <- S.peek ptr
@@ -288,6 +301,34 @@ foldMap f v = runST $ do
         | otherwise = pure acc
   unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> go ptr 0 0 mempty
 {-# INLINE foldMap #-}
+
+foldl' :: PVector v => (a -> Int -> Word -> a) -> a -> v -> a
+foldl' f a v = runST $ do
+  mv <- unsafeThaw v
+  let len = length mv
+      bSz = bitSz mv
+      fptr = backing mv
+      wLen = nrWords bSz len
+      perWord = 64 `divInt` bSz
+      go ptr n x acc
+        | n < wLen = do
+          w <- S.peek ptr
+          let nAcc = Data.Foldable.foldl' (\a' i -> f a' (i + n * perWord) . fromIntegral . (.&. ((unsafeShiftL 1 bSz) - 1)) $ unsafeShiftR w $ i * bSz) acc [0..((min perWord (len - x))) - 1]
+          go (Ptr.advancePtr ptr 1) (n + 1) (x + perWord) nAcc
+        | otherwise = pure acc
+  unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> go ptr 0 0 a
+{-# INLINE foldl' #-}
+
+-- TODO This naive implementation can probably be done quite a bit faster for some bitSizes
+-- E.g. for 8 bits we can use pshufb and operate on a lot wider blocks at a time
+-- The idea being: We generate a lookuptable where our elements map to 1, the rest to 0
+-- Then we run pshufb over the entire array a popcount gets all our matches
+-- For 4 bits this is similar, but we need a case for the value in the low, or high bits
+-- and one for the value in both
+-- For bit sizes that don't align well with 4/8 bits this approach is likely not worth it
+countElems :: PVector v => [Word] -> v -> Int
+countElems els = \v -> coerce $ foldMap (\x -> if elem x els then Sum (1 :: Int) else Sum 0) v
+{-# INLINE countElems #-}
 
 -- Creating packed vectors
 
@@ -310,11 +351,11 @@ unsafeDynamicFromForeignPtr bSz fptr = PV_Dyn bSz fptr
 -- Internal Utils
 
 divSize :: Int -> Int -> Int
-divSize bSz i = i `div` (64 `div` bSz)
+divSize bSz i = i `divInt` (64 `divInt` bSz)
 {-# INLINE divSize #-}
 
 modSize :: Int -> Int -> Int
-modSize bSz i = i `mod` (64 `div` bSz)
+modSize bSz i = i `modInt` (64 `divInt` bSz)
 {-# INLINE modSize #-}
 
 indexPacked :: Int -> Int -> Word64 -> Word
@@ -328,15 +369,6 @@ writePacked bSz i el w = (w .&. mask) .|. mask
 {-# INLINE writePacked #-}
 
 nrWords :: Int -> Int -> Int
-nrWords bSz i = (i + perWord - 1) `div` perWord
-  where perWord = 64 `div` bSz
+nrWords bSz i = (i + perWord - 1) `divInt` perWord
+  where perWord = 64 `divInt` bSz
 {-# INLINE nrWords #-}
-
-pextMask :: Int -> Int -> Word64
-pextMask !i !j = go 0 section
-  where
-    section = (unsafeShiftL 1 i) - 1
-    len = 64 `div` j
-    go !n !acc | n < len = go (n + 1) (acc .|. unsafeShiftL section (n * j))
-               | otherwise = acc
-{-# INLINE pextMask #-}

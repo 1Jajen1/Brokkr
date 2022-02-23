@@ -36,3 +36,4 @@ source-repository-package
   subdir: autodocodec-yaml
 
 packages: ./LCraft.cabal
+packages: ./data/data.cabal

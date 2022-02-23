@@ -16,6 +16,7 @@ tested-with:         GHC == 9.2.1
 
 common common-options
   build-depends:       base ^>= 4.16.0.0
+                     , data
                      , effectful-core
                      , primitive
                      , text ^>= 2.0
@@ -29,6 +30,9 @@ common common-options
                      , vector
                      , containers
                      , zlib
+                     , containers
+                     , unordered-containers
+                     , deepseq
   
   ghc-options:         -Wall
                        -Wcompat
@@ -36,6 +40,7 @@ common common-options
                        -Wincomplete-uni-patterns
                        -Wincomplete-record-updates
                        -Wredundant-constraints
+                       --Wunused-packages
                        -fhide-source-paths
                        -Wmissing-export-lists
                        -Wpartial-fields
@@ -44,12 +49,18 @@ common common-options
   default-extensions:  DerivingVia
                        LambdaCase
                        StrictData
+                       OverloadedStrings
   default-language:    GHC2021
 library
   import:              common-options
   hs-source-dirs:      src
   exposed-modules:     LCraft
+                     , Block.GlobalPalette
+                     , Chunk.Internal
                      , Chunk.Position
+                     , Chunk.Section
+                     , Effect.Chunkloading
+                     , Effect.World
                      , Effect.IO.File
                      , Effect.IO.File.Effect
                      , Effect.IO.File.Handle
@@ -74,6 +85,7 @@ library
                      , Util.NBT
                      , Util.NBT.Internal
                      , Util.Vector.Packed
+                     , Util.Vector.Internal
                      , Util.Linear.V2
                      , Util.Word24
 executable LCraft
@@ -110,9 +122,22 @@ benchmark NBT-benchmark
   hs-source-dirs:      benchmark
   main-is:             Util/NBT.hs
   build-depends:       criterion
-                     , deepseq
                      , LCraft
                      , zlib
+benchmark Packed-vector-benchmark
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      benchmark
+  main-is:             PackedVector.hs
+  build-depends:       criterion
+                     , LCraft
+benchmark Chunkloading-benchmark
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      benchmark
+  main-is:             Chunkloading.hs
+  build-depends:       criterion
+                     , LCraft
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N
