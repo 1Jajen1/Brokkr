@@ -8,6 +8,7 @@ module Effect.IO.RegionFile (
 , openRegionFile
 , readChunkData
 , closeRegionFile
+, RegionFileFolderPath(..)
 ) where
 
 import Effectful
@@ -31,10 +32,9 @@ import qualified Codec.Compression.Zlib as ZLib
 import Data.Int
 import Util.Binary
 import qualified Codec.Compression.GZip as GZip
-import Effect.World (RegionFileFolderPath (RegionFileFolderPath))
-import Effectful.Reader.Static
 import Data.String
-import Effect.Token
+
+newtype RegionFileFolderPath = RegionFileFolderPath FilePath
 
 data RegionFile file = RegionFile {
   locationTable :: !(S.Vector ChunkLocation_)
@@ -63,12 +63,10 @@ toOffAndSz (ChunkLocation_ x) = let x' = toBE x in (fromIntegral $ unsafeShiftR 
 -- TODO Double check endianess...
 
 openRegionFile ::
-  forall file w es .
-  ( Reader (RegionFileFolderPath w) :> es
-  , File file :> es
-  ) => Token w -> Int -> Int -> Eff es (RegionFile file)
-openRegionFile _ regionX regionZ = do
-  RegionFileFolderPath folder <- ask @(RegionFileFolderPath w)
+  forall file es .
+  ( File file :> es
+  ) => RegionFileFolderPath -> Int -> Int -> Eff es (RegionFile file)
+openRegionFile (RegionFileFolderPath folder) regionX regionZ = do
   let path = folder <> "/r." <> fromString (show regionX) <> "." <> fromString (show regionZ) <> ".mca"
   file <- openAt path OpenReadWrite
   (BS.BS fptr sz) <- readAt 0 sectorSize file
@@ -78,6 +76,8 @@ openRegionFile _ regionX regionZ = do
 
 readChunkData :: File file :> es => ChunkPosition -> RegionFile file -> Eff es ByteString
 readChunkData (ChunkPos x z) RegionFile{..} = do
+  when (off == 0 && sz == 0) $
+    error $ "Chunk " <> show x <> ":" <> show z <> " not generated yet"
   compressedBs <- readAt (unsafeShiftL (fromIntegral off) 12) (unsafeShiftL (fromIntegral sz) 12) file
   case FP.runParser chunkDataP compressedBs of
     FP.OK res _ -> pure res

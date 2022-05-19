@@ -21,3 +21,7 @@ instance FromNBT a => FromBinary (BinaryNBT a) where
     NBT _ tag <- get @NBT
     runParser (parseNBT tag) (pure . BinaryNBT) FP.empty tag 
   {-# INLINE get #-}
+
+instance ToNBT a => ToBinary (BinaryNBT a) where
+  put (BinaryNBT a) = put $ NBT "" $ toNBT a
+  {-# INLINE put #-}

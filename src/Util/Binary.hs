@@ -20,6 +20,8 @@ import qualified Data.Vector.Storable as S
 import qualified Foreign.Storable as S
 import qualified Data.ByteString.Internal as BS
 import Data.Coerce
+import qualified Data.Vector as V
+import Debug.Trace
 
 -- TODO Test instances, just test roundtripping for now, add regression tests if something fails later on.
 
@@ -30,6 +32,15 @@ class ToBinary (a :: Type) where
   put :: a -> B.Builder
 
 -- TODO Roundtrip tests for all instances.
+instance FromBinary Bool where
+  get = (== 1) <$> anyWord8
+  {-# INLINE get #-}
+
+instance ToBinary Bool where
+  put True = put @Int8 1
+  put False = put @Int8 0
+  {-# INLINE put #-}
+
 instance FromBinary Int8 where
   get = fromIntegral <$> anyWord8
   {-# INLINE get #-}
@@ -143,3 +154,16 @@ instance (ToBinary pre, Integral pre, S.Storable a) => ToBinary (SizePrefixed pr
     let (fptr, len) = S.unsafeToForeignPtr0 vec
     in put (fromIntegral @_ @pre len) <> B.byteString (BS.BS (coerce fptr) (len * S.sizeOf @a undefined))
   {-# INLINE put #-}
+
+instance (FromBinary pre, Integral pre, FromBinary a) => FromBinary (SizePrefixed pre (V.Vector a)) where
+  get = do
+    len <- fromIntegral <$> get @pre
+    SizePrefixed <$> V.replicateM len get
+  {-# INLINE get #-}
+
+instance (ToBinary pre, Integral pre, ToBinary a) => ToBinary (SizePrefixed pre (V.Vector a)) where
+  put (SizePrefixed vec) =
+    let len = fromIntegral $ V.length vec
+    in put @pre len <> V.foldMap (\x -> put x) vec
+  {-# INLINE put #-}
+

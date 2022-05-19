@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE RecordWildCards #-}
 module Util.Vector.Packed (
   DynamicNat(..)
 , PackedVector
@@ -20,6 +21,7 @@ module Util.Vector.Packed (
 , countElems
 , unsafeStaticFromForeignPtr
 , unsafeDynamicFromForeignPtr
+, nrWords
 ) where
 
 import qualified Prelude
@@ -30,10 +32,12 @@ import Control.Monad.ST ( runST )
 
 import Data.Bits
 import qualified Data.Primitive.Ptr as P
+import qualified Data.ByteString.Internal as B
 
 import qualified Foreign.ForeignPtr as FP
 import qualified Foreign.Storable as S
 import qualified Foreign.Marshal.Utils as S
+import qualified Data.Vector.Storable as S
 
 import GHC.ForeignPtr ( unsafeWithForeignPtr )
 import GHC.TypeLits ( KnownNat, Nat, natVal )
@@ -45,6 +49,12 @@ import GHC.Base
 import Util.Vector.Internal
 import qualified Data.Foldable
 import Data.Semigroup
+import Util.NBT.Internal
+import Util.Binary
+
+import qualified Mason.Builder.Internal as Mason
+import Foreign.Ptr (plusPtr)
+import Debug.Trace
 
 -- TODO Check if it is worth avoiding the overflow/underflow checks that div imposes
 --  Unless vectors with a packed bitSize of 0 or > 64 are introduced, which are nonsense, this should never fail
@@ -143,6 +153,42 @@ instance NFData (PackedVector ('Static sz) ('Static bSz)) where
 
 instance NFData (PackedVector ('Static sz) 'Dynamic) where
   rnf (PV_Dyn len _) = rnf len
+
+instance FromNBT (PackedVector ('Static sz) ('Static bSz)) where
+  parseNBT (TagLongArray arr) = pure . unsafeStaticFromForeignPtr . coerce . fst $ S.unsafeToForeignPtr0 arr
+  parseNBT (TagByteArray arr) = pure . unsafeStaticFromForeignPtr . coerce . fst $ S.unsafeToForeignPtr0 arr
+  parseNBT (TagIntArray arr)  = pure . unsafeStaticFromForeignPtr . coerce . fst $ S.unsafeToForeignPtr0 arr
+  parseNBT _ = error "Not a packed vector at all!"
+
+instance (KnownNat sz, KnownNat bSz) => ToNBT (PackedVector ('Static sz) ('Static bSz)) where
+  toNBT pv@(PV_Stat fptr) = TagLongArray $ S.unsafeFromForeignPtr0 (coerce fptr) sz
+    where
+      !vLen = runST $ length <$> unsafeThaw pv
+      !vBSz = runST $ bitSz <$> unsafeThaw pv
+      !sz = nrWords vBSz vLen
+
+instance Eq (PackedVector ('Static _sz) ('Static _bSz)) where
+  PV_Stat f1 == PV_Stat f2 = f1 == f2
+
+instance Eq (PackedVector ('Static _sz) 'Dynamic) where
+  PV_Dyn l1 f1 == PV_Dyn l2 f2 = l1 == l2 && f1 == f2
+
+instance (KnownNat sz, KnownNat bSz) => ToBinary (PackedVector ('Static sz) ('Static bSz)) where
+  put pv@(PV_Stat fptr) = Mason.withPtr nrBytes $ \ptr -> unsafeWithForeignPtr fptr $ \src -> do
+    B.memcpy ptr (coerce src) nrBytes
+    pure $ ptr `plusPtr` nrBytes
+    where
+      vLen = runST $ length <$> unsafeThaw pv
+      vBSz = runST $ bitSz <$> unsafeThaw pv
+      nrBytes = 8 * (nrWords vBSz vLen)
+
+instance KnownNat sz => ToBinary (PackedVector ('Static sz) 'Dynamic) where
+  put pv@(PV_Dyn bSz fptr) = Mason.withPtr nrBytes $ \ptr -> unsafeWithForeignPtr fptr $ \src -> do
+    B.memcpy ptr (coerce src) nrBytes
+    pure $ ptr `plusPtr` nrBytes
+    where
+      vLen = runST $ length <$> unsafeThaw pv
+      nrBytes = 8 * (nrWords bSz vLen)
 
 -- Methods
 

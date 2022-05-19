@@ -1,14 +1,32 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE RoleAnnotations #-}
 module Effect.World (
-  WordEff
-, RegionFileFolderPath(..)
+  Worlds(..)
+, WorldManager
+, runWorldManager
+, withWorld
 ) where
 
-import qualified Effect.IO.File as File
-import Effectful.Reader.Static
 import Effectful
- 
-type WordEff w es =
-  ( Reader (RegionFileFolderPath w) :> es
-  )
+import World.Internal (Dimension(..))
+import qualified World.Internal as World
+import Effectful.Dispatch.Static
 
-newtype RegionFileFolderPath (w :: k) = RegionFileFolderPath File.FilePath
+data Worlds = Worlds !World.Handle !World.Handle !World.Handle
+
+type role WorldManager phantom phantom
+data WorldManager :: Effect
+type instance DispatchOf WorldManager = 'Static
+newtype instance StaticRep WorldManager = WorldState Worlds
+
+runWorldManager :: Worlds -> Eff (WorldManager : es) a -> Eff es a
+runWorldManager w = evalStaticRep (WorldState w)
+
+withWorld :: WorldManager :> es => Dimension -> (World.Handle -> Eff es a) -> Eff es a
+withWorld dim act = do
+  WorldState (Worlds overworld nether end) <- getStaticRep @WorldManager
+  case dim of
+    Overworld -> act overworld
+    Nether    -> act nether
+    TheEnd    -> act end

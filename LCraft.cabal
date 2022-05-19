@@ -56,38 +56,57 @@ library
   hs-source-dirs:      src
   exposed-modules:     LCraft
                      , Block.GlobalPalette
+                     , Block.Position
                      , Chunk.Internal
                      , Chunk.Position
                      , Chunk.Section
-                     , Effect.Chunkloading
-                     , Effect.World
+                     , Effect.Async
+                     , Effect.ChunkManager
+                     , Effect.EntityId
                      , Effect.IO.File
                      , Effect.IO.File.Effect
                      , Effect.IO.File.Handle
                      , Effect.IO.File.OpenFlags
                      , Effect.IO.RegionFile
+                     , Effect.Labelled
+                     , Effect.World
+                     , Entity.Internal
                      , Network
                      , Network.Effect.Network
                      , Network.Effect.Network.Effect
                      , Network.Effect.Network.IO
                      , Network.Effect.Packet
                      , Network.Handler.Login
+                     , Network.Handler.Play
                      , Network.Packet.Client.Login
+                     , Network.Packet.Client.Play
+                     , Network.Packet.Client.Play.ChunkData
+                     , Network.Packet.Client.Play.JoinGame
                      , Network.Packet.Server.Handshake
                      , Network.Packet.Server.Login
+                     , Network.Packet.Server.Play
+                     , Network.Util.FromIntegral
                      , Network.Util.MCString
                      , Network.Util.Packet
                      , Network.Util.SizePrefixed
                      , Network.Util.VarNum
+                     , Util.Angle
                      , Util.Binary
+                     , Util.BitSet
                      , Util.ByteOrder
                      , Util.Flatparse
                      , Util.NBT
                      , Util.NBT.Internal
+                     , Util.Type
                      , Util.Vector.Packed
                      , Util.Vector.Internal
                      , Util.Linear.V2
+                     , Util.Linear.V3
+                     , Util.Position
+                     , Util.Rotation
                      , Util.Word24
+                     , Player.Internal
+                     , World.Internal
 executable LCraft
   import:              common-options
   hs-source-dirs:      app

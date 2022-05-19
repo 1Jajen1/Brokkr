@@ -5,6 +5,7 @@ Maintainer: Jannis <overesch.jannis@gmail.com>
 
 See README for more info
 -}
+{-# LANGUAGE DataKinds #-}
 
 module LCraft (
   startServer
@@ -12,12 +13,21 @@ module LCraft (
 
 import Effectful
 import Network (setupTCPServer)
+import Effect.World
+import qualified World.Internal as World
+import qualified Effect.IO.RegionFile as RegionFile
+import qualified Effect.ChunkManager as ChunkManager
+import System.IO
 
 startServer :: IO ()
 startServer = do
   -- Load and init game state
+  let overWorldChunkManager = ChunkManager.new (ChunkManager.defaultChunkLoading @Handle (RegionFile.RegionFileFolderPath "server-dir/world/region"))
+      overworld = World.new "overworld" World.Overworld overWorldChunkManager
+      worlds = Worlds overworld overworld overworld
+
   -- Start network stuff
-  setupTCPServer
+  setupTCPServer worlds
   -- Start game loop
   return ()
 

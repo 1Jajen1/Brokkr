@@ -23,9 +23,9 @@ mkPacketParser [] = [|| empty ||]
 mkPacketParser subs = [||
   do
     VarInt pid <- get @VarInt
-    $$(unsafeCodeCoerce $ caseE [| pid |] (
+    $$(unsafeCodeCoerce $ caseE [| pid |] $ (
       do
         (i, p) <- zip [0..] subs
         pure $ match (litP $ IntegerL i) (normalB $ unTypeCode p) []
-      ))
+      ) <> [match wildP (normalB [| error $ "Unknown packet with id: " <> show pid |]) []])
   ||]

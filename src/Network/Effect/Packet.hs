@@ -28,7 +28,6 @@ import Foreign.Ptr
 import Data.Bits
 import Foreign.Marshal
 import GHC.Exts (IsList(fromList))
-import Debug.Trace
 
 readPacket ::
   ( S.State ByteString :> es
@@ -40,7 +39,7 @@ readPacket parser = do
   (packetBs, leftoverBs) <- go leftover
   S.put leftoverBs
   case runParser parser packetBs of
-    OK p "" -> pure p
+    OK p _ -> pure p -- TODO Decide wether or not the remaining bytes should be empty...
     _ -> error "Failed to parse packet" -- TODO
   where
     lenParser = do
@@ -84,7 +83,7 @@ Again this is internals only if I only ever use sendPacket, so should be fine.
 -}
 
 sendPacket :: (ToBinary a, Network :> es) => Int -> a -> Eff es ()
-sendPacket szEstimate a = sendBytes [traceShowId $ toStrictSizePrefixedByteString szEstimate (put a)]
+sendPacket szEstimate a = sendBytes [toStrictSizePrefixedByteString szEstimate (put a)]
 {-# INLINE sendPacket #-}
 
 sendPackets :: (ToBinary a, Network :> es) => Int -> [a] -> Eff es ()
@@ -123,10 +122,11 @@ toStrictSizePrefixedByteString szEstimate bb = unsafePerformIO $ do
   pPtr <- writeVarNumInternal (fromIntegral sz) ptr
   let pSz = minusPtr pPtr ptr
       off = prefixSz - pSz
+      finalLen = sz + pSz
 
   case off of
-    0 -> pure $ BS.BS fptr (sz + pSz)
+    0 -> pure $ BS.BS fptr finalLen
     _ -> do
       copyBytes (plusPtr ptr off) ptr pSz
-      pure $ BS.BS (plusForeignPtr fptr off) (sz + pSz)
+      pure $ BS.BS (plusForeignPtr fptr off) finalLen
 {-# INLINE toStrictSizePrefixedByteString #-}

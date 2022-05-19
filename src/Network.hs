@@ -13,28 +13,36 @@ import Data.ByteString
 import Network.Effect.Network.IO (runNetwork)
 import Network.Handler.Login
 
-import Debug.Trace
 import Network.Handler.Play
+import Effect.EntityId
+import Effect.World
+import Effect.IO.File.Handle
+import Effect.Async
 
-setupTCPServer :: IO ()
-setupTCPServer = do
+setupTCPServer :: Worlds -> IO ()
+setupTCPServer worlds = do
   _ <- Network.serve (Network.Host "192.168.178.59") "25565" $ \(sock, _sockddr) -> do
     runEff
+      . runFile
+      . runWorldManager worlds
+      . runFreshEntityId
       . runNetwork sock
       $ runProtocol
     pure ()
   pure ()
 
-runProtocol :: Network :> es => Eff es ()
+runProtocol ::
+  ( Network :> es
+  , Async :>> es
+  ) => Eff es ()
 runProtocol = do
   -- The first part of the protocol uses readPacket to read individual packets, this is necessary because the protocol
   --  may change and compression and encryption can be added. This is in contrast to the play protocol which parses the
   --  entire chunk before handling the packets
   ((uid, uname), _remBs) <- runState (mempty @ByteString) $ do
-    S.Handshake _ _ _ next <- traceShowId <$> readPacket (get @S.HandshakePacket)
+    S.Handshake _ _ _ next <- readPacket (get @S.HandshakePacket)
     case next of
       S.Status -> error "Status"
       S.Login -> loginProtocol
   -- TODO Think about _remBs. It should be empty since the servers last action is sending the LoginSuccess packet and all other packets should have been reacted to...
-  finalizeLogin uid uname
-  playProtocol
+  playProtocol uid uname

@@ -23,6 +23,8 @@ common common-options
                      , unordered-containers
                      , containers
                      , vector
+                     , bytestring
+                     , directory
   
   ghc-options:         -Wall
                        -Wcompat
@@ -48,4 +50,9 @@ library
                      , Block.Internal.BlockState
                      , Block.Internal.Conversion
                      , Block.BlockState
+                     , Registry.Biome
+                     , Registry.BiomeSettings
+                     , Registry.Dimension
+                     , Registry.TH.Biome
+                     , Registry.TH.Dimension
   other-modules:       Block.Internal.TH

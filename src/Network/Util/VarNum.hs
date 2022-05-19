@@ -1,7 +1,8 @@
-{-# LANGUAGE UnboxedTuples #-}
+{-# LANGUAGE MagicHash #-}
 module Network.Util.VarNum (
   VarInt(..)
 , writeVarNumInternal -- TODO ...
+, varIntSize
 ) where
 
 import Data.Int
@@ -14,8 +15,10 @@ import Control.Monad
 import qualified Mason.Builder as B
 import qualified Data.ByteString.Builder.Prim.Internal as Prim
 import Data.Primitive.Ptr
+import GHC.Exts
 
 newtype VarInt = VarInt Int32
+  deriving newtype (Show, Eq, Ord, Num, Enum, Real, Integral)
 
 instance FromBinary VarInt where
   get = VarInt <$> readVarNum (fromIntegral . fromIntegral @Word64 @Word32) 5
@@ -49,12 +52,24 @@ writeVarNum maxSz f = \a -> B.primBounded varNumPrim a
     varNumPrim = Prim.boundedPrim maxSz $ \a ptr -> writeVarNumInternal (f a) ptr
 {-# INLINE writeVarNum #-}
 
--- TODO This can probably be done using simd instructions to make this both branch free and loop free
+-- TODO This can be improved by first checking how many bytes we need (using clz or 0xFFFFFFFF << n * 7 == 0 where n is the number of bytes needed)
+-- Then we can do the write at once and thus eliminate the need for loops to just one branch.
+-- Probably best to just generate this with TH...
 writeVarNumInternal :: Word64 -> Ptr Word8 -> IO (Ptr Word8)
 writeVarNumInternal !n !ptr
-  | n < unsafeShiftL 2 7 = do
+  | n < 128 = do
       writeOffPtr ptr 0 (fromIntegral n)
       pure $ advancePtr ptr 1
   | otherwise = do
       writeOffPtr ptr 0 . fromIntegral $ setBit (n .&. 127) 7
       writeVarNumInternal (unsafeShiftR n 7) (advancePtr ptr 1)
+
+varIntSize :: Int -> Int
+varIntSize x = lookupByteN arr# (countLeadingZeros $ fromIntegral @_ @Int32 x)
+  where arr# = "\ENQ\ENQ\ENQ\ENQ\EOT\EOT\EOT\EOT\EOT\EOT\EOT\ETX\ETX\ETX\ETX\ETX\ETX\ETX\STX\STX\STX\STX\STX\STX\STX\SOH\SOH\SOH\SOH\SOH\SOH\SOH\SOH"#
+{-# INLINE varIntSize #-}
+
+lookupByteN :: Addr# -> Int -> Int
+lookupByteN addr# (I# n) = I# (word2Int# word#)
+  where word# = word8ToWord# (indexWord8OffAddr# addr# n)
+  
