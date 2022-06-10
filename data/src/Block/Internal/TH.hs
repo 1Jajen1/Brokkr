@@ -17,7 +17,6 @@ import Data.Foldable (foldl')
 import Data.Char (toUpper)
 import qualified Language.Haskell.TH as TH
 import Data.List (sortOn)
-import Data.Ord
 import Data.Semigroup
 import Data.Coerce
 import qualified Data.IntMap.Strict as IM
@@ -39,7 +38,7 @@ genPaletteMapping = do
   
   let entriesById = listE $ do
         (nameSpacedName, BE.BlockEntry{..}) <- sortOn (\(_, BE.BlockEntry{blockStates}) -> BE.stateId $ head blockStates) $ M.toList entries
-        let props = sortOn (Down . fst) $ maybe [] M.toList blockProperties
+        let props = sortOn fst $ maybe [] M.toList blockProperties
             nrProps = length props
             lowId = BE.stateId $ head blockStates
             name = fromSnakeCase $ T.drop 10 nameSpacedName
@@ -57,7 +56,7 @@ genPaletteMapping = do
         (nameSpacedName, BE.BlockEntry{..}) <- sortOn (\(_, BE.BlockEntry{blockStates}) -> BE.stateId $ head blockStates) $ M.toList entries
         let lowId = BE.stateId $ head blockStates
             name = fromSnakeCase $ T.drop 10 nameSpacedName
-            props = sortOn (Down . fst) $ maybe [] M.toList blockProperties
+            props = sortOn fst $ maybe [] M.toList blockProperties
             nrProps = length props
             getIdFor nr = [| \m ->
               $(getCard $ drop nr props) *
@@ -108,7 +107,7 @@ generateBlockStatePatterns = do
     let name = fromSnakeCase $ T.drop 10 namespacedName
         pName = mkName $ T.unpack name
 
-    let props = sortOn (Down . fst) $ maybe [] M.toList blockProperties
+    let props = sortOn fst $ maybe [] M.toList blockProperties
         propsDown = reverse props
         lowId :: Int = coerce $ foldMap (\BE.BlockState{..} -> Min stateId) blockStates
         highId :: Int = 1 + (coerce $ foldMap (\BE.BlockState{..} -> Max stateId) blockStates)
@@ -197,7 +196,7 @@ conFromProps ty ("type", _)
   | isPiston ty = ConT $ mkName "PistonType"
   | otherwise = error $ "Unknown type: " <> T.unpack ty
 conFromProps _ ("axis", _) = ConT $ mkName "Axis"
-conFromProps _ ("stage", _) = AppT (ConT $ mkName "GrowthStage") (LitT $ NumTyLit 2)
+conFromProps _ ("stage", _) = AppT (ConT $ mkName "GrowthStage") (LitT $ NumTyLit 1)
 conFromProps _ ("shape", _) = ConT $ mkName "StairShape"
 conFromProps _ ("half", _) = ConT $ mkName "Half"
 conFromProps _ ("part", _) = ConT $ mkName "BedPart"
@@ -264,7 +263,8 @@ conFromProps ty ("age", _)
     = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 15)
   | ty == "Beetroots" || ty == "FrostedIce" || ty == "NetherWart" || ty == "SweetBerryBush"
     = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 4)
-  | ty == "Cocoa" || ty == "Bamboo" = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 2)
+  | ty == "Cocoa" = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 2)
+  | ty == "Bamboo" = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 1)
   | ty == "Potatoes" || ty == "PumpkinStem" || ty == "MelonStem" || ty == "Carrots" ||
     ty == "Wheat"
     = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 7)

@@ -1,29 +1,68 @@
-{- |
-Copyright: (c) 2022 Jannis
-SPDX-License-Identifier: BSD-3-Clause
-Maintainer: Jannis <overesch.jannis@gmail.com>
-
-See README for more info
--}
-
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedStrings #-}
 module LCraft (
   startServer
 ) where
 
-import Effectful
-import Network (setupTCPServer)
+import Game.Monad
+import Control.Monad.Fix
+import Util.Time
+import Util.Log
+import Control.Monad
+import qualified Data.Text as T
+import Control.Monad.State.Strict
+import Game.State
+import Game.Command
+import Game.Event
+import Sync.Monad
+import Sync.Handler.JoinPlayer (joinPlayer)
+import Sync.Handler.PlayerMovement (movePlayer, rotatePlayer, updateMovingPlayer)
+import Optics
+import Network.Connection.Internal
 
-startServer :: IO ()
+startServer :: (MonadIO m, MonadGame m) => m ()
 startServer = do
-  -- Load and init game state
   -- Start network stuff
-  setupTCPServer
+  setupNetwork
   -- Start game loop
-  return ()
+  gameLoop $ do
+    initSt <- takeGameState
+    -- liftIO $ print initSt
+    (_, !newSt') <- flip runStateT initSt $
+      traverseOf_ connections (\conn -> do
+        !commands <- liftIO $ flushCommands conn
+        forM_ commands $ \cmd -> do
+          st <- get
 
-gameLoop :: Eff es ()
-gameLoop = undefined
+          --logDebug $ T.pack $ show commands
 
+          let evs = runSync $ case cmd of
+                (JoinPlayer p) -> joinPlayer p st
+                (MovePlayer p pos) -> movePlayer p pos st
+                (RotatePlayer p rot) -> rotatePlayer p rot st
+                (UpdateMovingPlayer p onGround) -> updateMovingPlayer p onGround st
+
+          forM_ evs $ \ev -> get >>= \st' -> applyEvent st' conn ev >>= put
+
+        ) initSt
+    putGameState newSt'
+{-# SPECIALIZE startServer :: GameM IO () #-}
+
+gameLoop :: MonadGame m => m () -> m ()
+gameLoop act = fix $ \loop -> do
+    start <- currentTime
+
+    act
+
+    end <- currentTime
+
+    let diff = end - start
+    delay $ 50 * 1000 - diff
+
+    when (diff > 10) . logWarn . T.pack $ "Tick took: " <> show diff
+
+    loop
+{-# INLINE gameLoop #-}
 
 {-
 
@@ -93,23 +132,26 @@ Task list:
 ||    - Be able to respond to handshakes
   - Expand to have state on a connection and have some management state for the connection
     - Initially mutable, but later immutable as soon as the player joins
-  - Implement command queue
-    - Again start simple, tweak later
+||  - Implement command queue
+||    - Again start simple, tweak later
 ||  - Start on the login sequence
-    - Just make up data for now
-    - Add first PlayerJoinCommand
-      - Although I may be able to async that action
-  - Implement NBT format
-    - Simple stuff Map Text Tag etc
-      Manual instances as generic kills compile time and isn't that performant (maybe later, this also takes a ton of time)
-  - Implement chunk loading
-    - Figure out a good abstract IO interface
-    - Then hide that behind a region file interface
-    - Think about caching, but don't implement that yet, just make it possible
-    - Do the million subtasks involved in reading out chunks...
-  - Start join sequence:
-    - Keep alive handling
-    - For now just send chunk packets and join the player right at 0,0
-  - ...
+||    - Just make up data for now
+||    - Add first PlayerJoinCommand
+||      - Although I may be able to async that action. Most of it can be done async, but the actual modification of server state beyond the connection manager needs
+          to be done sync
+||  - Implement NBT format
+||    - Simple stuff Map Text Tag etc
+||      Manual instances as generic kills compile time and isn't that performant (maybe later, this also takes a ton of time)
+||  - Implement chunk loading
+||    - Figure out a good abstract IO interface
+||    - Then hide that behind a region file interface
+||    - Think about caching, but don't implement that yet, just make it possible
+||    - Do the million subtasks involved in reading out chunks...
+||  - Start join sequence:
+||    - Keep alive handling
+||    - For now just send chunk packets and join the player right at 0,0
+  - Implement player movement
+    - Basic position updates and chunkloading
+    - implement creative mode flying
 -}
 

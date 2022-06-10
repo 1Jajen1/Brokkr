@@ -15,9 +15,10 @@ extra-doc-files:     README.md
 tested-with:         GHC == 9.2.1
 
 common common-options
+-- TODO Go through deps soon-ish
   build-depends:       base ^>= 4.16.0.0
                      , data
-                     , effectful-core
+                     , async
                      , primitive
                      , text ^>= 2.0
                      , flatparse
@@ -32,7 +33,14 @@ common common-options
                      , zlib
                      , containers
                      , unordered-containers
+                     , hashable
                      , deepseq
+                     , dlist
+                     , time
+                     , transformers
+                     , mtl
+                     , unliftio-core
+                     , optics
   
   ghc-options:         -Wall
                        -Wcompat
@@ -56,38 +64,69 @@ library
   hs-source-dirs:      src
   exposed-modules:     LCraft
                      , Block.GlobalPalette
+                     , Block.Position
                      , Chunk.Internal
                      , Chunk.Position
                      , Chunk.Section
-                     , Effect.Chunkloading
-                     , Effect.World
-                     , Effect.IO.File
-                     , Effect.IO.File.Effect
-                     , Effect.IO.File.Handle
-                     , Effect.IO.File.OpenFlags
-                     , Effect.IO.RegionFile
+                     , Entity.Id.Monad
+                     , Entity.Internal
+                     , Game.Command
+                     , Game.Event
+                     , Game.Event.PlayerJoined
+                     , Game.Event.PlayerMoved
+                     , Game.State
+                     , Game.State.Internal
+                     , Game.Monad
+                     , IO.Chunkloading
+                     , IO.RegionFile
                      , Network
-                     , Network.Effect.Network
-                     , Network.Effect.Network.Effect
-                     , Network.Effect.Network.IO
-                     , Network.Effect.Packet
+                     , Network.Connection
+                     , Network.Connection.Internal
                      , Network.Handler.Login
+                     , Network.Handler.Play
+                     , Network.Monad
                      , Network.Packet.Client.Login
+                     , Network.Packet.Client.Play
+                     , Network.Packet.Client.Play.ChunkData
+                     , Network.Packet.Client.Play.JoinGame
                      , Network.Packet.Server.Handshake
                      , Network.Packet.Server.Login
+                     , Network.Packet.Server.Play
+                     , Network.Protocol
+                     , Network.Util.Builder
+                     , Network.Util.FromIntegral
                      , Network.Util.MCString
                      , Network.Util.Packet
                      , Network.Util.SizePrefixed
                      , Network.Util.VarNum
+                     , Player
+                     , Player.GameMode
+                     , Player.Internal
+                     , Sync.Handler.JoinPlayer
+                     , Sync.Handler.PlayerMovement
+                     , Sync.Monad
+                     , Util.Angle
                      , Util.Binary
+                     , Util.BitSet
                      , Util.ByteOrder
-                     , Util.Flatparse
+                     , Util.Lift
+                     , Util.Log
                      , Util.NBT
                      , Util.NBT.Internal
+                     , Util.Time
+                     , Util.Type
                      , Util.Vector.Packed
                      , Util.Vector.Internal
                      , Util.Linear.V2
+                     , Util.Linear.V3
+                     , Util.Linear.Vector
+                     , Util.Position
+                     , Util.Ring
+                     , Util.Rotation
+                     , Util.UUID
                      , Util.Word24
+                     , World
+                     , World.Internal
 executable LCraft
   import:              common-options
   hs-source-dirs:      app
@@ -96,6 +135,7 @@ executable LCraft
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N
+                       -O2
 test-suite LCraft-test
   import:              common-options
   type:                exitcode-stdio-1.0

@@ -1,39 +1,33 @@
--- Missing hackage release
-source-repository-package
-  type: git
-  location: git@github.com:arybczak/effectful.git
-  subdir: effectful-core
-
 -- Text 2.0 support
 source-repository-package
   type: git
   location: git@github.com:1Jajen1/mason.git
 -- GHC 9.2 support
-source-repository-package
-  type: git
-  location: https://github.com/srid/validity.git
-  tag: 3d95a17f1223615b7f55e4e7bf9350227023ee9d
-  subdir: validity
-source-repository-package
-  type: git
-  location: https://github.com/srid/validity.git
-  tag: 3d95a17f1223615b7f55e4e7bf9350227023ee9d
-  subdir: validity-aeson
-source-repository-package
-  type: git
-  location: https://github.com/srid/autodocodec.git
-  tag: 42b42a7407f33c6c74fa4e8c84906aebfed28daf
-  subdir: autodocodec
-source-repository-package
-  type: git
-  location: https://github.com/srid/autodocodec.git
-  tag: 42b42a7407f33c6c74fa4e8c84906aebfed28daf
-  subdir: autodocodec-schema
-source-repository-package
-  type: git
-  location: https://github.com/srid/autodocodec.git
-  tag: 42b42a7407f33c6c74fa4e8c84906aebfed28daf
-  subdir: autodocodec-yaml
+-- source-repository-package
+--   type: git
+--   location: https://github.com/srid/validity.git
+--   tag: 3d95a17f1223615b7f55e4e7bf9350227023ee9d
+--   subdir: validity
+-- source-repository-package
+--   type: git
+--   location: https://github.com/srid/validity.git
+--   tag: 3d95a17f1223615b7f55e4e7bf9350227023ee9d
+--   subdir: validity-aeson
+-- source-repository-package
+--   type: git
+--   location: https://github.com/srid/autodocodec.git
+--   tag: 42b42a7407f33c6c74fa4e8c84906aebfed28daf
+--   subdir: autodocodec
+-- source-repository-package
+--   type: git
+--   location: https://github.com/srid/autodocodec.git
+--   tag: 42b42a7407f33c6c74fa4e8c84906aebfed28daf
+--   subdir: autodocodec-schema
+-- source-repository-package
+--   type: git
+--   location: https://github.com/srid/autodocodec.git
+--   tag: 42b42a7407f33c6c74fa4e8c84906aebfed28daf
+--   subdir: autodocodec-yaml
 
 packages: ./LCraft.cabal
 packages: ./data/data.cabal
