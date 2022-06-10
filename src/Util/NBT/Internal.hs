@@ -26,7 +26,6 @@ import Data.Void
 import qualified Mason.Builder as B
 import Data.Word
 import qualified Data.Text.Encoding as T
-import Util.Flatparse
 import qualified Data.ByteString as BS
 import Control.Monad
 import Prelude hiding (succ)
@@ -126,11 +125,12 @@ newtype NBTString = NBTString Text
 instance FromBinary NBTString where
   get = do
     len <- get @Word16
-    bs <- takeN $ fromIntegral len
-    pure . NBTString $ T.decodeUtf8 bs 
+    bs <- takeBs $ fromIntegral len
+    pure . NBTString $ T.decodeUtf8 bs -- TODO Make sure we handle this as java cesu8 rather than utf8, there are some cases where this isn't valid 
   {-# INLINE get #-}
 
 instance ToBinary NBTString where
+  -- TODO Make sure we encode to java cesu8 correctly, this may be the source of problems with the JoinGame packet
   put (NBTString str) =
     let bs = T.encodeUtf8 str
         len = BS.length bs
@@ -151,7 +151,6 @@ instance FromBinary NBT where
     -- Don't consume the tag id on failure so that the compound parser has an easier time determining if it finished correctly
     -- It uses many (get @NBT) thus when this fails we either have a faulty NBT (in that case the next thing is not TagEnd) or we are
     -- done (in which case we have TagEnd next). This may be problematic if the faulty nbt branch backtracks to right before a 0...
-    -- TODO ^-^ 
     tid <- lookahead $ get @Int8
     when (tid == 0) FlatParse.Basic.empty
     _ <- anyWord8

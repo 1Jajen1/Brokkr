@@ -30,9 +30,7 @@ import Language.Haskell.TH.Syntax (Lift)
 
 data BiomeSettings = BiomeSettings {
   _precipitation       :: Precipitation
-, _depth               :: Depth
 , _temperature         :: Temperature
-, _scale               :: Scale
 , _downfall            :: Downfall
 , _category            :: BiomeCategory
 , _temperatureModifier :: Maybe TemperatureModifier
@@ -88,6 +86,7 @@ data BiomeCategory =
   | MesaC
   | SavannaC
   | UndergroundC
+  | MountainC
   | NoneC
   deriving stock (Show, Eq, Lift)
 
@@ -110,6 +109,7 @@ instance FromJSON BiomeCategory where
     "mesa" -> pure MesaC
     "savanna" -> pure SavannaC
     "underground" -> pure UndergroundC
+    "mountain" -> pure MountainC
     "none" -> pure NoneC
     t -> fail $ "Unknown value " <> T.unpack t
 

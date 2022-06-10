@@ -17,10 +17,7 @@ import Data.Bits hiding (complement)
 import qualified Data.Bits
 import Util.Binary hiding (get)
 import Network.Util.VarNum
-import GHC.Stack
-import Debug.Trace
 
--- TODO This BitSet is only to be used on small lengths, for unbounded stuff use Roaring bitsets
 newtype BitSet = BitSet (Vector Word64)
   deriving newtype (Eq, Show)
 

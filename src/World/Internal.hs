@@ -3,25 +3,24 @@
 {-# LANGUAGE RecordWildCards #-}
 module World.Internal (
   WorldName(..)
-, Handle(worldName, dimension, chunkManager)
-, new
+, World(..)
 , Dimension(..)
+, HasDimension(..)
 ) where
 
 import Data.Text
 import Network.Util.MCString
 import Util.Binary
 import Data.String
-import qualified Effect.ChunkManager as ChunkManager
+import Optics
+import qualified IO.Chunkloading as Chunkloading
 
-data Handle = Handle {
-    worldName           :: WorldName
-  , dimension           :: Dimension
-  , chunkManager        :: ChunkManager.Handle
-  }
-
-new :: WorldName -> Dimension -> ChunkManager.Handle -> Handle
-new worldName dimension chunkManager = Handle{..}
+data World = World {
+  _worldName :: WorldName
+, _dimension :: Dimension
+, chunkloading :: Chunkloading.Handle
+}
+  deriving stock Show
 
 newtype WorldName = WorldName Text
   deriving stock Show
@@ -29,4 +28,9 @@ newtype WorldName = WorldName Text
   deriving (ToBinary, FromBinary) via MCString
 
 data Dimension = Overworld | Nether | TheEnd
+  deriving stock (Eq, Enum, Show)
+
+class HasDimension a where
+  type Access a :: OpticKind
+  dimension :: Optic' (Access a) NoIx a Dimension
 

@@ -14,7 +14,6 @@ import Language.Haskell.TH
 import FlatParse.Basic
 import Data.Void
 
--- Bang pattern is important otherwise dataToTag can be a bit weird afaik
 packetId :: a -> B.Builder
 packetId !a = put $ VarInt $ fromIntegral (I# (dataToTag# a))
 

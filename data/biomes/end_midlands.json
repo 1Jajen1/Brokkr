@@ -1,5 +1,4 @@
 {
-  "scale": 0.2,
   "effects": {
     "mood_sound": {
       "sound": "minecraft:ambient.cave",
@@ -12,28 +11,8 @@
     "water_color": 4159204,
     "water_fog_color": 329011
   },
-  "surface_builder": {
-    "config": {
-      "top_material": {
-        "Name": "minecraft:end_stone"
-      },
-      "under_material": {
-        "Name": "minecraft:end_stone"
-      },
-      "underwater_material": {
-        "Name": "minecraft:end_stone"
-      }
-    },
-    "type": "minecraft:default"
-  },
   "carvers": {},
   "features": [],
-  "starts": [
-    {
-      "config": {},
-      "type": "minecraft:endcity"
-    }
-  ],
   "spawners": {
     "monster": [
       {
@@ -45,16 +24,15 @@
     ],
     "creature": [],
     "ambient": [],
+    "axolotls": [],
     "underground_water_creature": [],
     "water_creature": [],
     "water_ambient": [],
     "misc": []
   },
   "spawn_costs": {},
-  "player_spawn_friendly": false,
   "precipitation": "none",
   "temperature": 0.5,
   "downfall": 0.5,
-  "category": "the_end",
-  "depth": 0.1
+  "category": "the_end"
 }

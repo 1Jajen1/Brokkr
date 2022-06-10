@@ -33,12 +33,14 @@ import Util.Binary
 import Data.Proxy
 import Network.Util.VarNum
 import Control.Monad.ST (runST)
-import Debug.Trace
+import qualified Data.Text as T
+import Data.Maybe (fromMaybe)
+import Registry.Biome
 
 type NibbleVector = PackedVector ('Static 4096) ('Static 4)
 
--- TODO We can easily compress this using RLE for light, block and biome data and that can be done really fast using SIMD
--- Might make access time worse, but could end up saving a lot of memory for chunks that aren't modified a lot
+-- TODO Try and compress blocks/light by using octtrees, maybe just if the palette is small as a heuristic (compress them, calc byte size and compare to arr version)
+-- if its smaller use the octtree otherwise stick with the array. 
 data ChunkSection = ChunkSection {
   y          :: {-# UNPACK #-} !Int
 , blockLight ::                !(Maybe NibbleVector)
@@ -117,12 +119,12 @@ instance FromNBT ChunkSection where
 
 instance FromNBT BlockStates where
   parseNBT = withCompound $ \obj -> do
-    palette <- (fmap lookupTag) <$> obj .: "palette"
+    palette <- fmap lookupTag <$> obj .: "palette"
 
     if | V.length palette == 1 -> pure . BlockStates . SingleValue . coerce $ V.unsafeHead palette 
        | otherwise -> do
          (blockStates, len) <- S.unsafeToForeignPtr0 @Int64 <$> obj .: "data"
-         let bitsPerVal = len `div` 64
+         let bitsPerVal = len `div` 64 -- TODO Why does this work?
          if | bitsPerVal < 4 -> error "TODO" -- TODO Error messages
             | bitsPerVal < 9 -> 
               let !intPalette = U.generate (V.length palette) $ (coerce . (V.!) palette) 
@@ -141,8 +143,22 @@ instance FromNBT BlockStates where
       lookupTag _ = error "Wut?"
 
 instance FromNBT Biomes where
-  parseNBT = withCompound $ \_ -> do
-    pure . Biomes $ SingleValue 0 -- TODO
+  parseNBT = withCompound $ \obj -> do
+    !intPalette <- lookupBiomes <$> obj .: "palette"
+
+    if | U.length intPalette == 1 -> pure . Biomes . SingleValue $ U.unsafeHead intPalette 
+       | otherwise -> do
+         (biomes, len) <- S.unsafeToForeignPtr0 @Int64 <$> obj .: "data"
+         let bitsPerVal = if len == 4 then 3 else len -- TODO
+         if | bitsPerVal < 4 -> pure . Biomes . Indirect intPalette . P.unsafeDynamicFromForeignPtr bitsPerVal $ coerce biomes
+            | otherwise -> pure . Biomes . Global . P.unsafeStaticFromForeignPtr $ coerce biomes
+
+    where
+      lookupBiomes v = U.generate (V.length v) $ \i -> lookupBiome (v V.! i)
+      lookupBiome :: Tag -> Int
+      lookupBiome (TagString name) = fromMaybe (error $ show name) $ HM.lookup (T.drop 10 name) biomeMap
+      lookupBiome _ = error "WUT=!"
+      biomeMap = HM.fromList $ zip (T.pack . fst <$> all_biome_settings) [0..]
 
 countBlocks :: BlockStates -> Int
 countBlocks (BlockStates (SingleValue val))

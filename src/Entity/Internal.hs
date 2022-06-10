@@ -3,7 +3,7 @@ module Entity.Internal (
 ) where
 import Data.Int
 import Util.Binary
-import Network.Util.FromIntegral -- TODO Move this
+import Network.Util.FromIntegral
 
 newtype EntityId = EntityId Int
   deriving stock Show

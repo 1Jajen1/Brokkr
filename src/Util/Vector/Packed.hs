@@ -54,7 +54,6 @@ import Util.Binary
 
 import qualified Mason.Builder.Internal as Mason
 import Foreign.Ptr (plusPtr)
-import Debug.Trace
 
 -- TODO Check if it is worth avoiding the overflow/underflow checks that div imposes
 --  Unless vectors with a packed bitSize of 0 or > 64 are introduced, which are nonsense, this should never fail
@@ -396,6 +395,8 @@ unsafeDynamicFromForeignPtr bSz fptr = PV_Dyn bSz fptr
 
 -- Internal Utils
 
+-- TODO We can speed up divisions by instead multiplying the numbers in such a way that we can then divide by a power of 2
+-- Lots of magic constants will get involved but that's fine, we can generate lookup tables for those
 divSize :: Int -> Int -> Int
 divSize bSz i = i `divInt` (64 `divInt` bSz)
 {-# INLINE divSize #-}

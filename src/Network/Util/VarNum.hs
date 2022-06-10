@@ -25,7 +25,7 @@ instance FromBinary VarInt where
   {-# INLINE get #-}
 
 instance ToBinary VarInt where
-  put (VarInt i32) = writeVarNum 5 fromIntegral i32
+  put (VarInt i32) = writeVarNum 5 (fromIntegral . fromIntegral @_ @Word32) i32
   {-# INLINE put #-}
 
 -- TODO Optimize this, quite a bit of potential here I think

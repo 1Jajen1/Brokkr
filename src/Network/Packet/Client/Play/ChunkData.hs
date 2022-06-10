@@ -22,7 +22,6 @@ import Control.Monad.ST (runST)
 import Util.Vector.Packed
 import Util.BitSet (BitSet)
 import qualified Util.BitSet as BitSet
-import Debug.Trace
 import Data.Semigroup
 
 type NibbleVector = PackedVector ('Static 4096) ('Static 4)
@@ -86,8 +85,8 @@ instance ToBinary ChunkData where
     <> put (VarInt . fromIntegral $ V.length blockLight)
     <> V.foldMap (\i -> put (VarInt 2048) <> put i) blockLight
     where
-      sectionsBytes = V.foldMap putSection sections
-      putSection ChunkSection{..} =
+      sectionsBytes = V.foldMap putSection sections -- Do we send all here? Including the y = -1 section?
+      putSection ChunkSection{blockCount,blocks,biomes} =
            put (fromIntegral @_ @Int16 blockCount)
         <> put blocks
         <> put biomes

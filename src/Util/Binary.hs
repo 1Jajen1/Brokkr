@@ -6,13 +6,12 @@ module Util.Binary (
 
 import Data.Kind
 import Data.Void
-import FlatParse.Basic hiding (anyWord16, anyWord32)
+import FlatParse.Basic
 import Data.Int
 import Data.Text
 import qualified Data.Text.Encoding as T
 import Data.Word
 import GHC.Float
-import Util.Flatparse
 import Util.ByteOrder
 import qualified Mason.Builder as B
 import Data.UUID
@@ -21,7 +20,6 @@ import qualified Foreign.Storable as S
 import qualified Data.ByteString.Internal as BS
 import Data.Coerce
 import qualified Data.Vector as V
-import Debug.Trace
 
 -- TODO Test instances, just test roundtripping for now, add regression tests if something fails later on.
 
@@ -122,7 +120,7 @@ instance ToBinary Double where
   {-# INLINE put #-}
 
 instance FromBinary Text where
-  get = T.decodeUtf8 <$> takeRemaining
+  get = T.decodeUtf8 <$> takeRestBs
   {-# INLINE get #-}
 
 instance ToBinary Text where
@@ -145,7 +143,7 @@ instance (FromBinary pre, Integral pre, S.Storable a) => FromBinary (SizePrefixe
   get = do
     len <- fromIntegral <$> get @pre
     let aSz = S.sizeOf @a undefined
-    BS.BS fptr _ <- takeN (len * aSz)
+    BS.BS fptr _ <- takeBs (len * aSz)
     pure . SizePrefixed $ S.unsafeFromForeignPtr0 (coerce fptr) len
   {-# INLINE get #-}
 

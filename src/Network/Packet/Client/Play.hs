@@ -13,6 +13,7 @@ import Network.Util.FromIntegral
 import Network.Util.VarNum
 import Util.Rotation
 import Data.Word
+import Data.Int
 
 data PlayPacket =
     SpawnEntity
@@ -44,11 +45,11 @@ data PlayPacket =
   | Disconnect
   | EntityStatus
   | Explosion
-  | UnloadChunk
+  | UnloadChunk Int Int
   | ChangeGameState
   | OpenHorseWindow
   | InitializeWorldBorder
-  | KeepAlive
+  | KeepAlive Word64
   | ChunkDataAndUpdateLight ChunkData
   | Effect
   | Particle
@@ -128,6 +129,8 @@ instance ToBinary PlayPacket where
     PlayerPositionAndLook pos rot tId dism -> put pos <> put rot <> put (0 :: Word8) <> put tId <> put dism
     UpdateViewPosition chunkX chunkY -> put (VarInt $ fromIntegral chunkX) <> put (VarInt $ fromIntegral chunkY)
     SpawnPosition pos angle -> put pos <> put angle
+    KeepAlive w -> put w
+    UnloadChunk x z -> put (fromIntegral @_ @Int32 x) <> put (fromIntegral @_ @Int32 z)
     _ -> error "Unsupported"
 
 newtype TeleportId = TeleportId Int

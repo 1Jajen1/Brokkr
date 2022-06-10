@@ -2,20 +2,21 @@
 module Network.Util.SizePrefixed (
   ByteSizePrefixed(..)
 ) where
+  
 import Util.Binary
 import Network.Util.VarNum
-import Util.Flatparse
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString as BS
 import qualified Mason.Builder as B
+import FlatParse.Basic
 
 newtype ByteSizePrefixed a = ByteSizePrefixed a
 
 instance FromBinary (ByteSizePrefixed T.Text) where
   get = do
     VarInt len <- get
-    bts <- takeN $ fromIntegral len
+    bts <- takeBs $ fromIntegral len
     pure . ByteSizePrefixed $ T.decodeUtf8 bts
   {-# INLINE get #-}
 

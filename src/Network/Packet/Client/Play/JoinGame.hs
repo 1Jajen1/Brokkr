@@ -28,7 +28,7 @@ import Registry.Dimension
 import Registry.BiomeSettings
 import Network.Util.VarNum
 import World.Internal
-import Player.Internal
+import Player.GameMode
 import Network.Util.FromIntegral
 import Data.Coerce
 
@@ -69,7 +69,7 @@ instance ToBinary JoinGameData where
     <> put _enableRespawnScreen
     <> put _isDebug
     <> put _isFlat
-    <> put False -- TODO Why?
+    <> put False -- TODO Why? Context: I am missing exactly one byte somewhere in this packet, adding one byte just seems to work somehow...
   {-# INLINE put #-}
 
 newtype IsHardcore = IsHardcore Bool
@@ -211,9 +211,7 @@ instance ToNBT BiomeSettings where
   toNBT BiomeSettings{..} =
     compound $ [
         ("precipitation" .= _precipitation)
-      , ("depth" .= coerce @_ @Float _depth)
       , ("temperature" .= coerce @_ @Float _temperature)
-      , ("scale" .= coerce @_ @Float _scale)
       , ("downfall" .= coerce @_ @Float _downfall)
       , ("category" .= _category)
       , ("effects" .= _effects)
@@ -243,6 +241,7 @@ instance ToNBT BiomeCategory where
   toNBT SavannaC = toNBT @Text "savanna"
   toNBT ForestC = toNBT @Text "forest"
   toNBT UndergroundC = toNBT @Text "underground"
+  toNBT MountainC = toNBT @Text "mountain"
   toNBT NoneC = toNBT @Text "none"
 
 instance ToNBT TemperatureModifier where
