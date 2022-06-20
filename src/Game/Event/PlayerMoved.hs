@@ -22,6 +22,7 @@ import Util.Rotation
 import qualified Data.HashMap.Strict as HM
 import Chunk.Internal
 import Control.Monad.State.Strict
+import Data.Coerce
 
 {- TODO: This needs a rewrite
 
@@ -103,10 +104,10 @@ playerMoved p mpos conn = do
           !oldPos = p ^. position
           !st' = (player uid % _Just) .~ p' $ st
       put st' >> liftIO (updateViewPosition w conn p' (Just oldPos))
-  
+
   st <- get
-  let !w' = w { _chunks = _chunks w <> cs }
-  put $! world dim .~ w' $ st
+  let !w' = w { _chunks = _chunks w <> coerce cs }
+  put $ world dim .~ w' $ st
   where
     !uid = p ^. uuid
     !dim = p ^. dimension

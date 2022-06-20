@@ -18,6 +18,7 @@ import Sync.Handler.JoinPlayer (joinPlayer)
 import Sync.Handler.PlayerMovement (movePlayer, rotatePlayer, updateMovingPlayer)
 import Optics
 import Network.Connection.Internal
+import Util.UUID
 
 -- All of this should not be in the lib
 startServer :: (MonadIO m, MonadGame m) => m ()
@@ -27,25 +28,25 @@ startServer = do
   -- Start game loop
   gameLoop $ do
     !initSt <- takeGameState
-    !(_, !newSt') <- flip runStateT initSt $
-      traverseOf_ connections (\conn -> do
+    !(_, !newSt) <- flip runStateT initSt $
+      flip (traverseOf_ connections) initSt $ \conn -> do
         !commands <- liftIO $ flushCommands conn
         forM_ commands $ \cmd -> do
           st <- get
-
+          
           -- Here st is readonly
-          let evs = runSync $ case cmd of
-                (JoinPlayer p) -> joinPlayer p st
-                (MovePlayer p pos) -> movePlayer p pos st
-                (RotatePlayer p rot) -> rotatePlayer p rot st
-                (UpdateMovingPlayer p onGround) -> updateMovingPlayer p onGround st
+          -- TODO Handle missing player 
+          let Just p = st ^. player (conn ^. uuid)
+              evs = runSync $ case cmd of
+                (JoinPlayer p') -> joinPlayer p' st
+                (MovePlayer pos) -> movePlayer p pos st
+                (RotatePlayer rot) -> rotatePlayer p rot st
+                (UpdateMovingPlayer onGround) -> updateMovingPlayer p onGround st
 
           -- apply events and send packets
           forM_ evs (applyEvent conn)
-
-        ) initSt
-
-    putGameState newSt'
+    
+    putGameState newSt
 {-# SPECIALIZE startServer :: GameM IO () #-}
 
 gameLoop :: MonadGame m => m () -> m ()

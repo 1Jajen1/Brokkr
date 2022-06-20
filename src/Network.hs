@@ -18,13 +18,14 @@ import Util.Log
 import Game.State
 import Optics
 import Control.Monad.Trans.State.Strict (runStateT)
+import Data.UUID
 
 runProtocol ::
   ( MonadIO m
   , MonadNetwork m
   , MonadLog m
   , MonadGameState m
-  ) => (Protocol -> IO Connection.Handle) -> m ()
+  ) => (UUID -> Protocol -> IO Connection.Handle) -> m ()
 runProtocol mkHandle = do
   S.Handshake _pVersion _addr _addrPort next <- readPacket (Protocol NoCompression NoEncryption)
 
@@ -32,9 +33,9 @@ runProtocol mkHandle = do
     S.Status -> error "Status"
     S.Login -> loginProtocol
 
-  conn <- liftIO $ mkHandle prot
+  conn <- liftIO $ mkHandle uid prot
  
-  takeGameState >>= \st -> putGameState $ connection uid .~ (Just conn) $ st
+  modifyGameState (connection uid .~ (Just conn))
 
   runReaderT (playProtocol prot uid uname) conn
-{-# SPECIALIZE runProtocol :: (Protocol -> IO Connection.Handle) -> NetworkM (GameM IO) () #-}
+{-# SPECIALIZE runProtocol :: (UUID -> Protocol -> IO Connection.Handle) -> NetworkM (GameM IO) () #-}

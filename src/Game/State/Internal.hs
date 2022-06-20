@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards  #-}
 module Game.State.Internal (
   GameState(..)
 ) where

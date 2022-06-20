@@ -23,6 +23,7 @@ import Control.Monad.Trans.State.Strict
 class Monad m => MonadGameState m where
   takeGameState :: m GameState
   putGameState  :: GameState -> m ()
+  modifyGameState :: (GameState -> GameState) -> m ()
 
 deriving via (Lift (ReaderT r) m) instance MonadGameState m => MonadGameState (ReaderT r m)
 deriving via (Lift (StateT s) m) instance MonadGameState m => MonadGameState (StateT s m)
@@ -32,6 +33,8 @@ instance (MonadGameState m, MonadTrans t, Monad (t m)) => MonadGameState (Lift t
   {-# INLINE takeGameState #-}
   putGameState st = Lift . lift $ putGameState st
   {-# INLINE putGameState #-} 
+  modifyGameState = Lift . lift . modifyGameState
+  {-# INLINE modifyGameState #-}
 
 --
 

@@ -11,6 +11,7 @@ import Sync.Monad
 import Game.Event
 import Util.Rotation
 import Optics
+import Data.UUID
 
 movePlayer :: Player -> Position -> GameState -> Sync [Event]
 movePlayer p pos _ = pure [PlayerMoved p (Just pos)]
@@ -20,7 +21,7 @@ rotatePlayer :: Player -> Rotation -> GameState -> Sync [Event]
 rotatePlayer _p _rot _ = pure []
 
 updateMovingPlayer :: Player -> OnGround -> GameState -> Sync [Event]
-updateMovingPlayer p newOnGround _
+updateMovingPlayer p newOnGround st
   | p ^. onGround /= newOnGround =
     -- Check if we need to apply fall-damage here
     pure [] -- TODO

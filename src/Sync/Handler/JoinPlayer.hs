@@ -6,6 +6,7 @@ import Player
 import Game.State
 import Sync.Monad
 import Game.Event
+import Optics
 
 joinPlayer :: Player -> GameState -> Sync [Event]
 -- TODO Check for bans and other conditions here

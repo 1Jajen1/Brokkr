@@ -10,7 +10,7 @@ import Util.Rotation
 -- Then the whole thing will be a GADT where each command requires different resources
 data Command =
     JoinPlayer Player
-  | MovePlayer Player Position
-  | RotatePlayer Player Rotation
-  | UpdateMovingPlayer Player OnGround
+  | MovePlayer Position
+  | RotatePlayer Rotation
+  | UpdateMovingPlayer OnGround
   deriving stock (Eq, Show)

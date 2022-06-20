@@ -50,6 +50,8 @@ instance MonadIO m => MonadGameState (GameM m) where
   {-# INLINE takeGameState #-}
   putGameState !st = GameM ask >>= liftIO . flip putMVar st
   {-# INLINE putGameState #-}
+  modifyGameState f = GameM ask >>= liftIO . flip modifyMVar_ (pure . f)
+  {-# INLINE modifyGameState #-}
 
 instance (MonadUnliftIO m, PrimMonad m, MonadTime m) => MonadGame (GameM m) where
   setupNetwork = do

@@ -24,10 +24,11 @@ import qualified Network.Packet.Client.Play as C
 import Prelude hiding (last)
 import qualified Data.Time as Time
 import Data.IORef
+import Data.UUID
 
 -- TODO Is the send function here problematic for perf? I mean it is pointer passing and very small so ...
-new :: (ByteString -> IO ()) -> Protocol -> IO Handle
-new send prot = do
+new :: (ByteString -> IO ()) -> UUID -> Protocol -> IO Handle
+new send uid prot = do
   ring <- Ring.newRingBuffer 512 -- This has to be larger than the max chunk batch size for one conn, so ~ (viewDistance * 2) ** 2
   sendLock <- newMVar ()
   -- TODO use a specialized structure for the queue

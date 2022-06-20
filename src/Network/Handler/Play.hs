@@ -30,8 +30,8 @@ playProtocol ::
   , MonadReader Connection.Handle m
   , MonadNetwork m
   ) => Protocol -> UUID -> Text -> m ()
-playProtocol prot uuid _text = do
-  let player = Player Creative (Position 0 200 0) (Rotation 0 0) OnGround Overworld uuid
+playProtocol prot uid _text = do
+  let player = Player Creative (Position 0 200 0) (Rotation 0 0) OnGround Overworld uid
 
   conn <- ask
   liftIO . pushCommand conn $ JoinPlayer player
@@ -41,19 +41,19 @@ playProtocol prot uuid _text = do
         -- Saves at least one allocation, a lot more if the client sends nbt
         readPacket @S.PlayPacket prot >>= \case
           S.PlayerPosition pos onGround -> liftIO . pushCommands conn $ V.fromListN 2 [
-              Cmd.MovePlayer player pos
-            , Cmd.UpdateMovingPlayer player onGround
+              Cmd.MovePlayer pos
+            , Cmd.UpdateMovingPlayer onGround
             ]
           S.PlayerRotation rot onGround -> liftIO . pushCommands conn $ V.fromListN 2 [
-              Cmd.RotatePlayer player rot
-            , Cmd.UpdateMovingPlayer player onGround
+              Cmd.RotatePlayer rot
+            , Cmd.UpdateMovingPlayer onGround
             ]
           S.PlayerPositionAndRotation pos rot onGround -> liftIO . pushCommands conn $ V.fromListN 3 [
-              Cmd.MovePlayer player pos
-            , Cmd.RotatePlayer player rot
-            , Cmd.UpdateMovingPlayer player onGround
+              Cmd.MovePlayer pos
+            , Cmd.RotatePlayer rot
+            , Cmd.UpdateMovingPlayer onGround
             ]
-          S.PlayerMovement onGround -> liftIO $ pushCommand conn $ Cmd.UpdateMovingPlayer player onGround
+          S.PlayerMovement onGround -> liftIO $ pushCommand conn $ Cmd.UpdateMovingPlayer onGround
           _ -> pure () -- Error here?
         go
 

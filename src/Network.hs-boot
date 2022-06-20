@@ -7,10 +7,11 @@ import Network.Protocol (Protocol)
 import qualified Network.Connection as Connection
 import Util.Log (MonadLog)
 import Game.State (MonadGameState)
+import Data.UUID
 
 runProtocol ::
   ( MonadIO m
   , MonadNetwork m
   , MonadLog m
   , MonadGameState m
-  ) => (Protocol -> IO Connection.Handle) -> m ()
+  ) => (UUID -> Protocol -> IO Connection.Handle) -> m ()

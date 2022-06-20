@@ -8,7 +8,6 @@ import qualified Data.Text as T
 import qualified Network.Packet.Client.Play as C
 import Network.Connection
 import Game.State
-import Game.State.Internal
 import Optics
 import Util.UUID
 import Registry.Biome
@@ -16,7 +15,6 @@ import Registry.Dimension
 import Player
 import Entity.Id.Monad
 import Control.Monad.IO.Class
-import qualified Data.HashMap.Strict as HM
 import Block.Position
 import qualified Network.Connection as Connection
 import Game.Monad (GameM)
@@ -67,6 +65,6 @@ playerJoined p conn = do
     ]
   
   st <- get
-  put $ st { _players = HM.insert uid p (_players st) }
+  put $ player uid .~ Just p $ st
   where uid = p ^. uuid
 {-# SPECIALIZE playerJoined :: Player -> Connection.Handle -> StateT GameState (GameM IO) () #-}

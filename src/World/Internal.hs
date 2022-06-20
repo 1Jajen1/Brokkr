@@ -8,6 +8,7 @@ module World.Internal (
 , HasDimension(..)
 , getOrLoadChunk
 , chunk
+, Hide(..)
 ) where
 
 import Data.Text
@@ -18,14 +19,22 @@ import Optics
 import qualified IO.Chunkloading as Chunkloading
 import qualified Data.HashMap.Strict as HM
 import Chunk.Internal
+import Data.Coerce
 
 data World = World {
   _worldName   :: !WorldName
 , _dimension   :: !Dimension
 , chunkloading :: {-# UNPACK #-} !Chunkloading.Handle
-, _chunks      :: !(HM.HashMap ChunkPosition Chunk) -- TODO Store in an IntMap and use Z-Encoding for the position to keep them close together
+, _chunks      :: !(HM.HashMap ChunkPosition (Hide Chunk)) -- TODO Store in an IntMap and use Z-Encoding for the position to keep them close together
 }
   deriving stock Show
+
+-- TODO MOVE
+newtype Hide a = Hide a
+
+instance Show (Hide a) where
+  show _ = ""
+--
 
 newtype WorldName = WorldName Text
   deriving stock Show
@@ -45,7 +54,7 @@ getOrLoadChunk w cp
 
 -- lenses
 cLens :: Lens' World (HM.HashMap ChunkPosition Chunk)
-cLens = lens _chunks $ \w nC -> w { _chunks = nC }
+cLens = lens (coerce . _chunks) $ \w nC -> w { _chunks = coerce nC }
 {-# INLINE cLens #-}
 
 chunk :: ChunkPosition -> Lens' World (Maybe Chunk)
