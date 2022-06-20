@@ -19,11 +19,15 @@ import Control.Monad.IO.Class
 import qualified Data.HashMap.Strict as HM
 import Block.Position
 import qualified Network.Connection as Connection
-import Control.Monad.Trans.State.Strict (StateT)
 import Game.Monad (GameM)
+import Control.Monad.State.Strict
 
-playerJoined :: (MonadIO m, MonadEntityId m) => Player -> GameState -> Connection.Handle -> m GameState
-playerJoined p st conn = do
+playerJoined ::
+  ( MonadIO m
+  , MonadEntityId m
+  , MonadState GameState m
+  ) => Player -> Connection.Handle -> m ()
+playerJoined p conn = do
   entityId <- freshEntityId
 
   -- TODO all this is pretty temporary
@@ -62,6 +66,7 @@ playerJoined p st conn = do
     , (16, C.SpawnPosition (BlockPos 0 100 0) 0)
     ]
   
-  pure $ st { _players = HM.insert uid p (_players st) }
+  st <- get
+  put $ st { _players = HM.insert uid p (_players st) }
   where uid = p ^. uuid
-{-# SPECIALIZE playerJoined :: Player -> GameState -> Connection.Handle -> StateT GameState (GameM IO) GameState #-}
+{-# SPECIALIZE playerJoined :: Player -> Connection.Handle -> StateT GameState (GameM IO) () #-}

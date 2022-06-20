@@ -8,7 +8,7 @@ module Chunk.Position (
 ) where
 import Util.Linear.V2
 import Control.DeepSeq
-import Data.Hashable (Hashable)
+import Data.Hashable
 import Optics
 
 newtype ChunkPosition = ChunkPosition (V2 Int)

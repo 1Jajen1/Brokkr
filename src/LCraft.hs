@@ -5,7 +5,6 @@ module LCraft (
 ) where
 
 import Game.Monad
-import Control.Monad.Fix
 import Util.Time
 import Util.Log
 import Control.Monad
@@ -20,48 +19,51 @@ import Sync.Handler.PlayerMovement (movePlayer, rotatePlayer, updateMovingPlayer
 import Optics
 import Network.Connection.Internal
 
+-- All of this should not be in the lib
 startServer :: (MonadIO m, MonadGame m) => m ()
 startServer = do
   -- Start network stuff
   setupNetwork
   -- Start game loop
   gameLoop $ do
-    initSt <- takeGameState
-    -- liftIO $ print initSt
-    (_, !newSt') <- flip runStateT initSt $
+    !initSt <- takeGameState
+    !(_, !newSt') <- flip runStateT initSt $
       traverseOf_ connections (\conn -> do
         !commands <- liftIO $ flushCommands conn
         forM_ commands $ \cmd -> do
           st <- get
 
-          --logDebug $ T.pack $ show commands
-
+          -- Here st is readonly
           let evs = runSync $ case cmd of
                 (JoinPlayer p) -> joinPlayer p st
                 (MovePlayer p pos) -> movePlayer p pos st
                 (RotatePlayer p rot) -> rotatePlayer p rot st
                 (UpdateMovingPlayer p onGround) -> updateMovingPlayer p onGround st
 
-          forM_ evs $ \ev -> get >>= \st' -> applyEvent st' conn ev >>= put
+          -- apply events and send packets
+          forM_ evs (applyEvent conn)
 
         ) initSt
+
     putGameState newSt'
 {-# SPECIALIZE startServer :: GameM IO () #-}
 
 gameLoop :: MonadGame m => m () -> m ()
-gameLoop act = fix $ \loop -> do
-    start <- currentTime
+gameLoop act = go
+  where
+    go = do
+      !start <- currentTime
 
-    act
+      act
 
-    end <- currentTime
+      !end <- currentTime
 
-    let diff = end - start
-    delay $ 50 * 1000 - diff
+      let !diff = max 0 $ end - start
+      when (diff > 10) . logWarn . T.pack $ "Tick took: " <> show diff
 
-    when (diff > 10) . logWarn . T.pack $ "Tick took: " <> show diff
+      delay $ 50 * 1000 - diff
 
-    loop
+      go
 {-# INLINE gameLoop #-}
 
 {-

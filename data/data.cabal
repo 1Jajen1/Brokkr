@@ -20,11 +20,12 @@ common common-options
                      , aeson
                      , deriving-aeson
                      , template-haskell
-                     , unordered-containers
                      , containers
-                     , vector
                      , bytestring
                      , directory
+                     , hashable
+                     , primitive
+                     , vector
   
   ghc-options:         -Wall
                        -Wcompat

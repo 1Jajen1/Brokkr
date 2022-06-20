@@ -5,17 +5,26 @@ module Main (main) where
 
 import Prelude hiding (foldMap)
 
-import Criterion.Main
+import Test.Tasty.Bench
+
+import Prelude hiding (length)
+import qualified Foreign.Storable as S
+import qualified Data.Primitive.Ptr as Ptr
 
 import Data.Semigroup
-import Data.Foldable (traverse_)
 import Control.DeepSeq
 import GHC.Generics (Generic)
 import Data.Word
 import qualified Foreign.ForeignPtr as FP
 import Data.Coerce
+import Data.Bits
+import Control.Monad.Primitive
+import Control.Monad.ST ( runST )
+import GHC.Base
+import GHC.ForeignPtr ( unsafeWithForeignPtr )
+import qualified Data.Vector.Storable as S
 
-import Util.Vector.Packed
+import Util.Vector.Packed hiding (nrWords)
 
 data Env = Env {
     staticV4  :: PackedVector ('Static 4096) ('Static 4)
@@ -56,27 +65,28 @@ setupEnv = do
   return $ Env{..}
 
 main :: IO ()
-main = defaultMain [
+main = do
+  defaultMain [
     bgroup "PackedVector" $
       [ env setupEnv $ \ ~(Env{..}) ->
         bgroup "countElemsNaive" $
-          [ bench "countElemsNaive 4" $ nf (naiveCount [0,3,5]) staticV4
-          , bench "countElemsNaive 5" $ nf (naiveCount [0,3,5]) staticV5
-          , bench "countElemsNaive 6" $ nf (naiveCount [0,3,5]) staticV6
-          , bench "countElemsNaive 7" $ nf (naiveCount [0,3,5]) staticV7
-          , bench "countElemsNaive 8" $ nf (naiveCount [0,3,5]) staticV8
-          , bench "countElemsNaive 9" $ nf (naiveCount [0,3,5]) staticV9
-          , bench "countElemsNaive 15" $ nf (naiveCount [0,3,5]) staticV15
+          [ bench "countElemsNaive 4"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV4
+          , bench "countElemsNaive 5"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV5
+          , bench "countElemsNaive 6"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV6
+          , bench "countElemsNaive 7"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV7
+          , bench "countElemsNaive 8"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV8
+          , bench "countElemsNaive 9"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV9
+          , bench "countElemsNaive 15" $ nf (naiveCount $ S.fromList [0,3,5]) staticV15
           ]
       , env setupEnv $ \ ~(Env{..}) ->
         bgroup "countElems" $
-          [ bench "countElems 4" $ nf (countElems [0,3,5]) staticV4
-          , bench "countElems 5" $ nf (countElems [0,3,5]) staticV5
-          , bench "countElems 6" $ nf (countElems [0,3,5]) staticV6
-          , bench "countElems 7" $ nf (countElems [0,3,5]) staticV7
-          , bench "countElems 8" $ nf (countElems [0,3,5]) staticV8
-          , bench "countElems 9" $ nf (countElems [0,3,5]) staticV9
-          , bench "countElems 15" $ nf (countElems [0,3,5]) staticV15
+          [ bench "countElems 4"  $ nf (countElems $ S.fromList [0,3,5]) staticV4
+          , bench "countElems 5"  $ nf (countElems $ S.fromList [0,3,5]) staticV5
+          , bench "countElems 6"  $ nf (countElems $ S.fromList [0,3,5]) staticV6
+          , bench "countElems 7"  $ nf (countElems $ S.fromList [0,3,5]) staticV7
+          , bench "countElems 8"  $ nf (countElems $ S.fromList [0,3,5]) staticV8
+          , bench "countElems 9"  $ nf (countElems $ S.fromList [0,3,5]) staticV9
+          , bench "countElems 15" $ nf (countElems $ S.fromList [0,3,5]) staticV15
           ]
       , bgroup "unsafeCopy" $
           [ env setupEnv $ \ ~(Env{..}) ->
@@ -119,11 +129,28 @@ main = defaultMain [
             bench "naiveCopy 4 - 4" $ nfIO $ naiveCopy staticV4 staticV4
           ]
       ]
-  ]
+    ]
 
-naiveCount :: PVector v => [Word] -> v -> Int
-naiveCount els = \v -> coerce $ foldMap (\x -> if elem x els then Sum (1 :: Int) else Sum 0) v
+naiveCount :: PVector v => S.Vector Word -> v -> Int
+naiveCount els = \v -> coerce $ foldMap1 (\x -> if S.elem x els then Sum (1 :: Int) else Sum 0) v
 {-# INLINE naiveCount #-}
+
+foldMap1 :: (PVector v, Monoid m) => (Word -> m) -> v -> m
+foldMap1 f v = runST $ do
+  mv <- unsafeThaw v
+  let len = Util.Vector.Packed.length mv
+      bSz = bitSz mv
+      fptr = backing mv
+      wLen = nrWords bSz len
+      perWord = 64 `divInt` bSz
+      go ptr n x acc
+        | n < wLen = do
+          w <- S.peek ptr
+          let nAcc = acc <> (Prelude.foldMap (\i -> f . fromIntegral . (.&. ((unsafeShiftL 1 bSz) - 1)) $ unsafeShiftR w $ i * bSz) [0..((min perWord (len - x))) - 1])
+          go (Ptr.advancePtr ptr 1) (n + 1) (x + perWord) nAcc
+        | otherwise = pure acc
+  unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> go ptr 0 0 mempty
+{-# INLINE foldMap1 #-}
 
 copyArr :: (PVector v, PVector w) => v -> w -> IO ()
 copyArr v w = do
@@ -134,7 +161,6 @@ copyArr v w = do
 naiveCopy :: (PVector v, PVector w) => v -> w -> IO ()
 naiveCopy v w = do
   mv <- unsafeThaw v
-  mw <- unsafeThaw w
   foldl' (\acc i x -> acc >> unsafeWrite mv i x) (pure ()) w
 
 --

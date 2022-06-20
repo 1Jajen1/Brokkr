@@ -20,39 +20,43 @@ import Player
 import Util.Position
 import Util.Rotation
 import qualified Network.Packet.Server.Play as S
-import Control.Monad.Fix
 import qualified Game.Command as Cmd
 import qualified Data.Vector as V
 import World
+import Network.Protocol
 
 playProtocol ::
   ( MonadIO m
   , MonadReader Connection.Handle m
   , MonadNetwork m
-  ) => UUID -> Text -> m ()
-playProtocol uuid _text = do
+  ) => Protocol -> UUID -> Text -> m ()
+playProtocol prot uuid _text = do
   let player = Player Creative (Position 0 200 0) (Rotation 0 0) OnGround Overworld uuid
 
   conn <- ask
   liftIO . pushCommand conn $ JoinPlayer player
-  fix $ \loop -> do
-    -- TODO Instead of parsing the packet we could operate on the binary form and only copy the bytes we actually need
-    -- Saves at least one allocation, a lot more if the client sends nbt
-    readPacket @S.PlayPacket >>= \case
-      S.PlayerPosition pos onGround -> liftIO . pushCommands conn $ V.fromListN 2 [
-          Cmd.MovePlayer player pos
-        , Cmd.UpdateMovingPlayer player onGround
-        ]
-      S.PlayerRotation rot onGround -> liftIO . pushCommands conn $ V.fromListN 2 [
-          Cmd.RotatePlayer player rot
-        , Cmd.UpdateMovingPlayer player onGround
-        ]
-      S.PlayerPositionAndRotation pos rot onGround -> liftIO . pushCommands conn $ V.fromListN 3 [
-          Cmd.MovePlayer player pos
-        , Cmd.RotatePlayer player rot
-        , Cmd.UpdateMovingPlayer player onGround
-        ]
-      S.PlayerMovement onGround -> liftIO $ pushCommand conn $ Cmd.UpdateMovingPlayer player onGround
-      _ -> pure () -- Error here?
-    loop
-{-# SPECIALIZE playProtocol :: UUID -> Text -> ReaderT Connection.Handle (NetworkM (GameM IO)) () #-}
+
+  let go = do
+        -- TODO Instead of parsing the packet we could operate on the binary form and only copy the bytes we actually need
+        -- Saves at least one allocation, a lot more if the client sends nbt
+        readPacket @S.PlayPacket prot >>= \case
+          S.PlayerPosition pos onGround -> liftIO . pushCommands conn $ V.fromListN 2 [
+              Cmd.MovePlayer player pos
+            , Cmd.UpdateMovingPlayer player onGround
+            ]
+          S.PlayerRotation rot onGround -> liftIO . pushCommands conn $ V.fromListN 2 [
+              Cmd.RotatePlayer player rot
+            , Cmd.UpdateMovingPlayer player onGround
+            ]
+          S.PlayerPositionAndRotation pos rot onGround -> liftIO . pushCommands conn $ V.fromListN 3 [
+              Cmd.MovePlayer player pos
+            , Cmd.RotatePlayer player rot
+            , Cmd.UpdateMovingPlayer player onGround
+            ]
+          S.PlayerMovement onGround -> liftIO $ pushCommand conn $ Cmd.UpdateMovingPlayer player onGround
+          _ -> pure () -- Error here?
+        go
+
+  go
+
+{-# SPECIALIZE playProtocol :: Protocol -> UUID -> Text -> ReaderT Connection.Handle (NetworkM (GameM IO)) () #-}

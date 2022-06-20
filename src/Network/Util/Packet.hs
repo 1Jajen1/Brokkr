@@ -16,6 +16,7 @@ import Data.Void
 
 packetId :: a -> B.Builder
 packetId !a = put $ VarInt $ fromIntegral (I# (dataToTag# a))
+{-# INLINE packetId #-}
 
 mkPacketParser :: [Code Q (Parser Void a)] -> Code Q (Parser Void a)
 mkPacketParser [] = [|| empty ||]

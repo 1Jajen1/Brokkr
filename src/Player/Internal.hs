@@ -27,12 +27,12 @@ The assoc entity may or may not be a player entitiy. This has two usages:
 -- the rest to the players entitity
 -- Also remove position and replace by chunkPosition?
 data Player = Player {
-    _gameMode   :: GameMode
-  , _position   :: Position
-  , _rotation   :: Rotation
-  , _onGround   :: OnGround
-  , _dimension   :: Dimension
-  , _uuid       :: UUID
+    _gameMode   :: !GameMode
+  , _position   :: {-# UNPACK #-} !Position
+  , _rotation   :: {-# UNPACK #-} !Rotation
+  , _onGround   :: !OnGround
+  , _dimension  :: !Dimension
+  , _uuid       :: {-# UNPACK #-} !UUID
 }
   deriving stock Show
 

@@ -5,6 +5,7 @@
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 module Util.Vector.Packed (
   DynamicNat(..)
 , PackedVector
@@ -48,12 +49,12 @@ import GHC.Base
 
 import Util.Vector.Internal
 import qualified Data.Foldable
-import Data.Semigroup
 import Util.NBT.Internal
 import Util.Binary
 
 import qualified Mason.Builder.Internal as Mason
-import Foreign.Ptr (plusPtr)
+import Foreign.Ptr (Ptr, plusPtr)
+import Data.Word
 
 -- TODO Check if it is worth avoiding the overflow/underflow checks that div imposes
 --  Unless vectors with a packed bitSize of 0 or > 64 are introduced, which are nonsense, this should never fail
@@ -333,7 +334,7 @@ unsafeCopy !dst !src
 foldMap :: (PVector v, Monoid m) => (Word -> m) -> v -> m
 foldMap f v = runST $ do
   mv <- unsafeThaw v
-  let len = length mv
+  let len = Util.Vector.Packed.length mv
       bSz = bitSz mv
       fptr = backing mv
       wLen = nrWords bSz len
@@ -364,15 +365,17 @@ foldl' f a v = runST $ do
   unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> go ptr 0 0 a
 {-# INLINE foldl' #-}
 
--- TODO This naive implementation can probably be done quite a bit faster for some bitSizes
--- E.g. for 8 bits we can use pshufb and operate on a lot wider blocks at a time
--- The idea being: We generate a lookuptable where our elements map to 1, the rest to 0
--- Then we run pshufb over the entire array a popcount gets all our matches
--- For 4 bits this is similar, but we need a case for the value in the low, or high bits
--- and one for the value in both
--- For bit sizes that don't align well with 4/8 bits this approach is likely not worth it
-countElems :: PVector v => [Word] -> v -> Int
-countElems els = \v -> coerce $ foldMap (\x -> if elem x els then Sum (1 :: Int) else Sum 0) v
+countElems :: PVector v => S.Vector Word -> v -> Int
+countElems els v =
+  runST $ do
+    mv <- unsafeThaw v
+    let fptr = backing mv
+        len = length mv
+        wLen = nrWords bSz len
+        bSz = bitSz mv
+    unsafePrimToPrim $ S.unsafeWith els $ \ePtr -> unsafeWithForeignPtr fptr $ \ptr -> do
+      pure . fromIntegral $
+        c_countElems (fromIntegral bSz) (fromIntegral len) (coerce ptr) (fromIntegral wLen) ePtr (fromIntegral $ S.length els)
 {-# INLINE countElems #-}
 
 -- Creating packed vectors
@@ -419,3 +422,6 @@ nrWords :: Int -> Int -> Int
 nrWords bSz i = (i + perWord - 1) `divInt` perWord
   where perWord = 64 `divInt` bSz
 {-# INLINE nrWords #-}
+
+-- TODO THis assumes Word is Word64, which is fine since our parser does so as well
+foreign import ccall unsafe "countElems" c_countElems :: Word8 -> Word32 -> Ptr Word8 -> Word32 -> Ptr Word -> Word32 -> Word32

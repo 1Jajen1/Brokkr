@@ -27,6 +27,8 @@ import Util.Lift
 import Util.Log ( MonadLog )
 import Util.Time ( MonadTime )
 import Game.State (MonadGameState)
+import Network.Protocol
+import qualified Codec.Compression.Zlib as ZLib
 
 class Monad m => MonadNetwork m where
   receiveBytes :: (ByteString -> Maybe (ByteString, ByteString)) -> m ByteString
@@ -70,21 +72,28 @@ instance MonadIO m => MonadNetwork (NetworkM m) where
     liftIO $ Network.sendLazy sock bs
   {-# INLINE sendBytes #-}
 
-readPacket :: forall a m . (MonadNetwork m, FromBinary a) => m a
-readPacket = do
+readPacket :: forall a m . (MonadNetwork m, FromBinary a) => Protocol -> m a
+readPacket prot = do
   packetBs <- receiveBytes $ \bs -> case runParser (Binary.get @VarInt >>= takeBs . fromIntegral) bs of
-    OK res rem' -> Just (res, rem') 
+    OK res rem' -> Just (withCompression prot res, rem')
     Fail       -> Nothing
   case runParser (Binary.get @a) packetBs of
     OK !p _ -> pure p -- TODO Decide wether or not the remaining bytes should be empty...
     _ -> error $ "Failed to parse packet\n" <> show packetBs -- TODO
+  where
+    withCompression (Protocol NoCompression  _) bs = bs
+    withCompression (Protocol (Threshold _) _) bs =
+      case runParser (Binary.get @VarInt) bs of
+        OK 0 rem' -> rem'
+        OK _ rem' -> LBS.toStrict . ZLib.decompress $ LBS.fromStrict rem'
+        _ -> error $ "Failed to decompress packet " <> show bs 
 {-# INLINE readPacket #-}
 
-sendPacket :: (ToBinary a, MonadNetwork m) => Int -> a -> m ()
-sendPacket szEstimate a = sendBytes (LBS.fromStrict $ toStrictSizePrefixedByteString szEstimate (Binary.put a))
+sendPacket :: (ToBinary a, MonadNetwork m) => Protocol -> Int -> a -> m ()
+sendPacket prot szEstimate a = sendBytes (LBS.fromStrict $ toStrictSizePrefixedByteString prot szEstimate (Binary.put a))
 {-# INLINE sendPacket #-}
 
-sendPackets :: (ToBinary a, MonadNetwork m) => Int -> [a] -> m ()
-sendPackets szEstimate as = sendBytes (LBS.fromChunks $ fmap (\a -> toStrictSizePrefixedByteString szEstimate $ Binary.put a) as)
+sendPackets :: (ToBinary a, MonadNetwork m) => Protocol -> Int -> [a] -> m ()
+sendPackets prot szEstimate as = sendBytes (LBS.fromChunks $ fmap (\a -> toStrictSizePrefixedByteString prot szEstimate $ Binary.put a) as)
 {-# INLINE sendPackets #-}
 

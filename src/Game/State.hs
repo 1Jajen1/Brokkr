@@ -6,8 +6,7 @@ module Game.State (
 , connections, connection
 ) where
 
-import World (World, Dimension)
-import qualified Data.Vector as V
+import World (World, Dimension(..))
 import qualified Data.HashMap.Strict as HM
 import Data.UUID (UUID)
 import Player (Player)
@@ -37,11 +36,15 @@ instance (MonadGameState m, MonadTrans t, Monad (t m)) => MonadGameState (Lift t
 --
 
 worlds :: IxFold Dimension GameState World
-worlds = reindexed toEnum $ ifolding _worlds
+worlds = error "TODO worlds fold"-- reindexed toEnum $ ifolding _worlds
 {-# INLINE worlds #-}
 
-world :: Dimension -> Getter GameState World
-world dim = to $ (flip V.unsafeIndex (fromEnum dim)) . _worlds
+world :: Dimension -> Lens' GameState World
+world dim = lens _worlds (\st nW -> st { _worlds = nW }) % sel
+  where sel = case dim of
+          Overworld -> _1
+          Nether -> _2
+          TheEnd -> _3
 {-# INLINE world #-}
 
 pLens :: Lens' GameState (HM.HashMap UUID Player)
@@ -58,6 +61,7 @@ player uid = pLens % at uid
 
 cLens :: Lens' GameState (HM.HashMap UUID Connection.Handle)
 cLens = lens _connections $ \st nC -> st {_connections = nC}
+{-# INLINE cLens #-}
 
 connections :: IxTraversal' UUID GameState Connection.Handle
 connections = cLens % itraversed

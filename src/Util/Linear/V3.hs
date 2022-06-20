@@ -8,9 +8,9 @@ import Util.Linear.Vector
 
 -- Use a data family so that GHC unpacks the fields
 data family V3 a
-data instance V3 Int = V3_Int !Int !Int !Int
+data instance V3 Int = V3_Int {-# UNPACK #-} !Int {-# UNPACK #-} !Int {-# UNPACK #-} !Int
   deriving stock (Eq, Show)
-data instance V3 Double = V3_Double !Double !Double !Double
+data instance V3 Double = V3_Double {-# UNPACK #-} !Double {-# UNPACK #-} !Double {-# UNPACK #-} !Double
   deriving stock (Eq, Show)
 
 instance NFData (V3 Int) where

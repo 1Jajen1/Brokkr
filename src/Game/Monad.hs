@@ -48,7 +48,7 @@ runGame st act = do
 instance MonadIO m => MonadGameState (GameM m) where
   takeGameState = GameM ask >>= liftIO . takeMVar
   {-# INLINE takeGameState #-}
-  putGameState st = GameM ask >>= liftIO . flip putMVar st
+  putGameState !st = GameM ask >>= liftIO . flip putMVar st
   {-# INLINE putGameState #-}
 
 instance (MonadUnliftIO m, PrimMonad m, MonadTime m) => MonadGame (GameM m) where

@@ -17,7 +17,7 @@ movePlayer p pos _ = pure [PlayerMoved p (Just pos)]
 
  -- Rotate and onGround updates only matter for the associated entitiy right?
 rotatePlayer :: Player -> Rotation -> GameState -> Sync [Event]
-rotatePlayer p rot _ = pure []
+rotatePlayer _p _rot _ = pure []
 
 updateMovingPlayer :: Player -> OnGround -> GameState -> Sync [Event]
 updateMovingPlayer p newOnGround _

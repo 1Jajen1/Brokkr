@@ -1,4 +1,5 @@
 {-# LANGUAGE MagicHash  #-}
+{-# LANGUAGE DeriveAnyClass #-}
 module Util.NBT.Internal (
   NBT(..)
 , Tag(..)
@@ -16,8 +17,8 @@ module Util.NBT.Internal (
 import Data.Int
 import Data.Text hiding (empty)
 import qualified Data.Vector.Storable as S
+import Data.ByteString hiding (empty)
 import qualified Data.Vector as V
-import Data.Map.Strict hiding (empty)
 import GHC.Exts ( Int(I#), dataToTag#, coerce )
 import Util.Binary
 import FlatParse.Basic hiding ((<|>), empty, runParser)
@@ -30,9 +31,12 @@ import qualified Data.ByteString as BS
 import Control.Monad
 import Prelude hiding (succ)
 import Control.Applicative
-import qualified Data.Map.Strict as Map
 import Data.Maybe
 import GHC.Generics
+import Control.DeepSeq
+import Data.String (IsString)
+import Data.Hashable
+import qualified Data.HashMap.Strict as HM
 
 -- | Content of a NBT
 data Tag =
@@ -44,12 +48,13 @@ data Tag =
   | TagFloat !Float
   | TagDouble !Double
   | TagByteArray !(S.Vector Int8) 
-  | TagString !Text
+  | TagString !NBTString
   | TagList !(V.Vector Tag)
-  | TagCompound !(Map Text Tag)
+  | TagCompound !(HM.HashMap NBTString Tag)
   | TagIntArray !(S.Vector Int32)
   | TagLongArray !(S.Vector Int64)
   deriving stock (Eq, Show, Generic)
+  deriving anyclass NFData
 
 {- Note [Tag types]:
 
@@ -83,16 +88,23 @@ tagFromId = \case
     tid <- get @Int8
     len <- get @Int32
     V.replicateM (fromIntegral len) (tagFromId tid)
-  10 -> TagCompound <$> do
-    nbts <- FlatParse.Basic.many get
-    tid <- get @Int8
-    case tid of
-      0 -> pure . fromList $ fmap (\(NBT n t) -> (n, t)) nbts
-      _ -> FlatParse.Basic.empty
+  10 -> TagCompound <$> goCompound mempty
   11 -> TagIntArray . coerce <$> get @(SizePrefixed Int32 (S.Vector Int32))
   12 -> TagLongArray . coerce <$> get @(SizePrefixed Int32 (S.Vector Int64))
   _ -> FlatParse.Basic.empty
+  where
+    -- TODO use a different HashMap better geared towards small inserts, very small sizes and fast lookups to lower this cost some more
+    goCompound acc = do
+      tid <- get @Int8
+      if tid == 0
+        then pure acc
+        else do
+          !key <- get @NBTString
+          !comp <- tagFromId tid
+          goCompound $ HM.insert key comp acc
 {-# INLINE tagFromId #-}
+{-# SCC tagFromId #-}
+-- TODO This occupies a lot of time when loading chunks
 
 instance ToBinary Tag where
   put tag = case tag of
@@ -104,36 +116,35 @@ instance ToBinary Tag where
     TagFloat f -> B.floatBE f
     TagDouble d -> B.doubleBE d
     TagByteArray arr -> put (SizePrefixed @Int32 arr)
-    TagString str -> put (NBTString str)
+    TagString str -> put str
     TagList xs ->
       let len = V.length xs
           tid = fromIntegral $ if len == 0
             then tagId TagEnd
             else tagId $ xs V.! 0
       in B.word8 tid <> put (fromIntegral @_ @Int32 len) <> V.foldMap (\x -> put x) xs
-    TagCompound c -> foldMapWithKey (\n t -> put $ NBT n t) c <> B.int8 0
+    TagCompound c -> HM.foldMapWithKey (\n t -> put $ NBT n t) c <> B.int8 0
     TagIntArray arr -> put (SizePrefixed @Int32 arr)
     TagLongArray arr -> put (SizePrefixed @Int32 arr)
   {-# INLINE put #-}
 
--- | Newtype wrapper for 'Text' which implements 'FromBinary'/'ToBinary' for the NBTSpec
---
--- The NBT spec defines 'Text' encoding as a utf-8 bytestring with a length prefix using 2 bytes.
--- This is in contrast to the network specification which uses a 'VarInt' prefix.
-newtype NBTString = NBTString Text
+-- These are not quite utf-8 bytestrings, technically minecraft uses cesu-8 instead
+-- Either way we don't care here, we simply get the string as a view into the underlying data,
+-- so no allocation is done. When this is needed as a Text rather than just bytes to compare
+-- against we parse the string and do more with it.
+newtype NBTString = NBTString ByteString
+  deriving newtype (Eq, Ord, Show, IsString, Hashable, NFData)
 
 instance FromBinary NBTString where
   get = do
     len <- get @Word16
     bs <- takeBs $ fromIntegral len
-    pure . NBTString $ T.decodeUtf8 bs -- TODO Make sure we handle this as java cesu8 rather than utf8, there are some cases where this isn't valid 
+    pure $ NBTString bs
   {-# INLINE get #-}
 
 instance ToBinary NBTString where
-  -- TODO Make sure we encode to java cesu8 correctly, this may be the source of problems with the JoinGame packet
-  put (NBTString str) =
-    let bs = T.encodeUtf8 str
-        len = BS.length bs
+  put (NBTString bs) =
+    let len = BS.length bs
     in put @Word16 (fromIntegral len) <> B.byteString bs
   {-# INLINE put #-}
 
@@ -143,8 +154,12 @@ instance ToBinary NBTString where
 --
 -- The original NBT specification can be found here: https://web.archive.org/web/20110723210920/http://www.minecraft.net/docs/NBT.txt
 -- An updated version with documentation can be seen here: https://wiki.vg/NBT
-data NBT = NBT !Text !Tag
+-- 
+-- TODO Note: Using ByteString here because that's cheaper to decode, most (all?) of minecrafts NBT keys are
+-- valid utf8 and equally valid cesu8 so this should not be an issue?
+data NBT = NBT !NBTString !Tag
   deriving stock (Eq, Show, Generic)
+  deriving anyclass NFData
 
 instance FromBinary NBT where
   get = do
@@ -155,7 +170,7 @@ instance FromBinary NBT where
     when (tid == 0) FlatParse.Basic.empty
     _ <- anyWord8
 
-    NBTString name <- get
+    name <- get
     tag <- tagFromId tid
     pure $ NBT name tag
   {-# INLINE get #-}
@@ -163,7 +178,7 @@ instance FromBinary NBT where
 instance ToBinary NBT where
   put (NBT n t) =
     let tid = tagId t
-    in B.int8 (fromIntegral tid) <> put (NBTString n) <> put t
+    in B.int8 (fromIntegral tid) <> put n <> put t
   {-# INLINE put #-}
 
 -- | Custom Parser for NBT values
@@ -260,7 +275,7 @@ instance FromNBT (S.Vector Int8) where
 
 instance FromNBT Text where
   parseNBT = \case
-    TagString str -> pure str
+    TagString (NBTString str) -> pure $ T.decodeUtf8 str -- TODO Decode from java cesu8 instead
     _ -> empty
   {-# INLINE parseNBT #-}
 
@@ -331,7 +346,7 @@ instance ToNBT (S.Vector Int8) where
   {-# INLINE toNBT #-}
 
 instance ToNBT Text where
-  toNBT = TagString
+  toNBT = TagString . NBTString . T.encodeUtf8 -- TODO encode cesu8 instead
   {-# INLINE toNBT #-}
 
 instance ToNBT a => ToNBT (V.Vector a) where
@@ -352,7 +367,7 @@ instance ToNBT (S.Vector Int64) where
 --
 -- The resulting 'NBTParser' will only succeed if the given 'Tag' is a compound and the
 -- 'NBTParser' returned by the function succeeds.
-withCompound :: (Map Text Tag -> NBTParser a) -> Tag -> NBTParser a
+withCompound :: (HM.HashMap NBTString Tag -> NBTParser a) -> Tag -> NBTParser a
 withCompound f = \case
   TagCompound m -> f m
   _ -> empty
@@ -364,8 +379,8 @@ withCompound f = \case
 -- the key succeeds.
 --
 -- If you need the key to be optional use '(.:?)' instead.
-(.:) :: FromNBT a => Map Text Tag -> Text -> NBTParser a
-!m .: !k = case Map.lookup k m of
+(.:) :: FromNBT a => HM.HashMap NBTString Tag -> NBTString -> NBTParser a
+!m .: !k = case HM.lookup k m of
   Just !tag -> parseNBT tag
   Nothing -> empty
 {-# INLINE (.:) #-}
@@ -375,8 +390,8 @@ withCompound f = \case
 -- Succeeds with Nothing if the key is not present, otherwise behaves like '(.:)'
 --
 -- If you want to provide a default value use '(.!=)'
-(.:?) :: FromNBT a => Map Text Tag -> Text -> NBTParser (Maybe a)
-m .:? k = case Map.lookup k m of
+(.:?) :: FromNBT a => HM.HashMap NBTString Tag -> NBTString -> NBTParser (Maybe a)
+m .:? k = case HM.lookup k m of
   Just !tag -> Just <$> parseNBT tag
   Nothing -> pure Nothing
 {-# INLINE (.:?) #-}
@@ -392,12 +407,12 @@ m .:? k = case Map.lookup k m of
 -- | Create a compound tag from a key-value list.
 --
 -- Use '(.=)' to simplify building such a list.
-compound :: [(Text, Tag)] -> Tag
-compound = TagCompound . fromList
+compound :: [(NBTString, Tag)] -> Tag
+compound = TagCompound . HM.fromList
 {-# INLINE compound #-}
 
 -- | Create a key value pair with any value that can be converted to 'NBT'
-(.=) :: ToNBT a => Text -> a -> (Text, Tag)
+(.=) :: ToNBT a => NBTString -> a -> (NBTString, Tag)
 !k .= !v = (k, toNBT v)
 {-# INLINE (.=) #-}
 

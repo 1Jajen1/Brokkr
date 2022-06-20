@@ -17,9 +17,10 @@ import Data.Bits hiding (complement)
 import qualified Data.Bits
 import Util.Binary hiding (get)
 import Network.Util.VarNum
+import Control.DeepSeq
 
 newtype BitSet = BitSet (Vector Word64)
-  deriving newtype (Eq, Show)
+  deriving newtype (Eq, Show, NFData)
 
 byteSize :: BitSet -> Int
 byteSize (BitSet v)

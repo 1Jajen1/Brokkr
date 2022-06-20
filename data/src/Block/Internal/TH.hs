@@ -2,80 +2,103 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE MagicHash #-}
 module Block.Internal.TH (
   generateBlockStatePatterns
 , genPaletteMapping
 ) where
 
 import Data.Text ( Text )
+import Data.ByteString ( ByteString )
 import Data.Aeson
 import Data.Maybe
 import qualified Block.Internal.BlockEntry as BE
 import Language.Haskell.TH
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Foldable (foldl')
 import Data.Char (toUpper)
 import qualified Language.Haskell.TH as TH
 import Data.List (sortOn)
 import Data.Semigroup
 import Data.Coerce
-import qualified Data.IntMap.Strict as IM
+import qualified Data.IntSet as IS
 import qualified Data.Map.Strict as M
-import qualified Data.HashMap.Strict as HM
-import qualified Data.Vector as V
+import Data.Hashable
+import Data.Word
+import GHC.Exts
+import Foreign.ForeignPtr
+import qualified Data.Vector.Storable as S
 
 {-
 
 Generates two datatypes:
 
-Vector (Text, [(Text, Text)])
-HashMap (Text, [(Text, Text)]) Int
+Id to nbt
+Vector (ByteString, [(ByteString, ByteString)])
+
+nbt to id
+(ByteString, [(ByteString, ByteString)]) -> Int
 
 -}
 genPaletteMapping :: Q [Dec]
 genPaletteMapping = do
   entries <- runIO $ readBlocks
   
-  let entriesById = listE $ do
+  let namesAndPropsToId = sortOn fst $ do
         (nameSpacedName, BE.BlockEntry{..}) <- sortOn (\(_, BE.BlockEntry{blockStates}) -> BE.stateId $ head blockStates) $ M.toList entries
-        let props = sortOn fst $ maybe [] M.toList blockProperties
-            nrProps = length props
-            lowId = BE.stateId $ head blockStates
-            name = fromSnakeCase $ T.drop 10 nameSpacedName
-            getCard ps = foldl' (\x y -> [| $(x) * $(getCard1 y) |]) [| 1 |] ps
-            getCard1 prop = appTypeE [| cardinality |] . pure $ conFromProps name prop
-            getInd nr = [| \i -> (i `mod` $(getCard $ drop (nr - 1) props)) `div` $(getCard $ drop nr props) |]
-        pure $ [| (lowId, (nameSpacedName, \n ->
-            let i = n - lowId
-            in $(
-              foldl' (\acc nr -> [| ($([| fst $ props !! nr|]), ($([| V.fromListN (length props) . snd $ props !! nr |])) V.! ($(getInd nr) i)) : $(acc) |]) [| [] |] [1..nrProps]
-              )
-          ))
-          |]
-      entriesByProps = listE $ do
-        (nameSpacedName, BE.BlockEntry{..}) <- sortOn (\(_, BE.BlockEntry{blockStates}) -> BE.stateId $ head blockStates) $ M.toList entries
-        let lowId = BE.stateId $ head blockStates
-            name = fromSnakeCase $ T.drop 10 nameSpacedName
-            props = sortOn fst $ maybe [] M.toList blockProperties
-            nrProps = length props
-            getIdFor nr = [| \m ->
-              $(getCard $ drop nr props) *
-                (fromJust $ elemIndex (fromJust $ M.lookup ($([| fst $ props !! (nr - 1) |])) m) $([| snd $ props !! (nr - 1) |]))
-              |]
-            getCard ps = foldl' (\x y -> [| $(x) * $(getCard1 y) |]) [| 1 |] ps
-            getCard1 prop = appTypeE [| cardinality |] . pure $ conFromProps name prop
-        pure [| (nameSpacedName, \m -> $(foldl' (\acc nr -> [| $(acc) + ($(getIdFor nr) m) |]) [| lowId |] [1..nrProps])) |]
+        BE.BlockState{..} <- blockStates
+
+        pure (fromIntegral $ hash (T.encodeUtf8 nameSpacedName, maybe [] (sortOn fst . fmap (\(k,v) -> (T.encodeUtf8 k, T.encodeUtf8 v)) . M.toList) stateProperties), fromIntegral stateId) 
+
       highestId = maximum $ do
         (_, BE.BlockEntry{blockStates}) <- M.toList entries
         BE.BlockState{stateId} <- blockStates
-        pure stateId 
+        pure stateId
+      
+      setOfHashes = IS.size . IS.fromList $ fmap (fromIntegral . fst) namesAndPropsToId
+
+      hLiFptrSz = setOfHashes * 8
+      vLiFptrSz = setOfHashes * 4
+
+      hLitArr = S.fromListN setOfHashes $ fmap fst namesAndPropsToId
+      valLitArr = S.fromListN setOfHashes $ fmap snd namesAndPropsToId
+      (hLitFptr, _, _) = S.unsafeToForeignPtr hLitArr
+      (vLitFptr, _, _) = S.unsafeToForeignPtr valLitArr
+  
+  --error . show $ S.elem 5369188014199616130 hLitArr
+
+  let hashLit = litE . BytesPrimL . mkBytes (coerce @(ForeignPtr Word64) hLitFptr) 0 $ fromIntegral hLiFptrSz
+      valsLit = litE . BytesPrimL . mkBytes (coerce @(ForeignPtr Word32) vLitFptr) 0 $ fromIntegral vLiFptrSz
+
+  -- Quick check if we have no hash collisions
+  -- We will probably run into one at some point, but that's for future me to worry about
+  if (setOfHashes /= length namesAndPropsToId)
+    then error $ "Expected " <> show (length namesAndPropsToId) <> " but actual is " <> show setOfHashes
+  else
+    pure ()
 
   [d|
-    idToProps :: IM.IntMap (Text, (Int -> [(Text, Text)]))
-    idToProps = IM.fromList $(entriesById)
+    hashProps :: ByteString -> [(ByteString, ByteString)] -> Int
+    hashProps !ns !arr = hash (ns, arr)
+    {-# INLINE hashProps #-}
 
-    propsToId :: HM.HashMap Text (M.Map Text Text -> Int)
-    propsToId = HM.fromList $(entriesByProps)
+    propsToId :: ByteString -> [(ByteString, ByteString)] -> Int
+    propsToId !n !props = I# (int32ToInt# (loop 0 setOfHashes))
+      where
+        !hs = fromIntegral $ hashProps n props
+        !hsLit = $(hashLit)
+        !valLit = $(valsLit)
+        loop !l !u
+          | u <= l    = error $ show hs
+          | otherwise =
+            let a = W# (indexWord64OffAddr# hsLit mid#)
+            in case compare a hs of
+              LT -> loop (mid + 1) u
+              EQ -> indexInt32OffAddr# valLit mid#
+              GT -> loop l mid
+          where
+            mid@(I# mid#) = (l + u) `div` 2
 
     type HighestBlockStateId = $(pure . LitT . NumTyLit $ fromIntegral highestId)
 

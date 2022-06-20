@@ -17,6 +17,10 @@ import qualified Test.QuickCheck as Q
 import qualified Foreign.ForeignPtr.Unsafe as FP
 import qualified Data.Primitive.Ptr as Prim
 import GHC.TypeLits
+import qualified Data.Vector.Storable as S
+import Data.Semigroup
+import Data.Coerce
+import Data.List (nub)
 
 spec :: Spec
 spec = describe "PackedVector" $ do
@@ -40,6 +44,12 @@ spec = describe "PackedVector" $ do
       P.unsafeCopy mv1 mv2
       -- Collect both vectors and don't forget that the first one has the values from the second but truncated!
       pure $ P.foldMap (\w -> [w]) v1 Q.=== P.foldMap (\w -> [((unsafeShiftL 1 destBSz) - 1) .&. w]) v2
+  specify "countElems" $ forAllValid $ \(SomePackedVector @128 v, (ints :: [Word8])) ->
+    let act = P.countElems els v
+        -- TODO Mask them into whatever bitsize we use
+        els = S.fromList $ take 3 $ nub $ (fromIntegral . (.&. 15)) <$> ints
+        exp = coerce $ P.foldMap (\x -> if S.elem x els then Sum (1 :: Int) else Sum 0) v
+    in (not $ null ints) Q.==> act `shouldBe` exp
 
 -- Generate random valid writes
 data VectorWrite (sz :: Nat) = VectorWrite Int Word (SomePackedVector sz)
@@ -93,6 +103,18 @@ instance KnownNat sz => GenValid (SomePackedVector sz) where
           let ptr = FP.unsafeForeignPtrToPtr fptr
           Prim.setPtr ptr wordSz 0
           mpv <- P.unsafeThaw $ P.unsafeStaticFromForeignPtr @sz @23 fptr
+          forM_ (zip xs [0..]) $ \(el, i) -> P.unsafeWrite mpv i $ wordMask .&. fromIntegral el 
+          pv <- P.unsafeFreeze mpv
+          pure $ SomePackedVector pv
+    , do
+        xs <- Gen.vector @Word8 sz
+        let wordSz = nrWords 4 sz
+            wordMask = (unsafeShiftL 1 4) - 1
+        pure $ runST $ unsafePrimToPrim $ do
+          fptr <- FP.mallocForeignPtrArray wordSz
+          let ptr = FP.unsafeForeignPtrToPtr fptr
+          Prim.setPtr ptr wordSz 0
+          mpv <- P.unsafeThaw $ P.unsafeStaticFromForeignPtr @sz @4 fptr
           forM_ (zip xs [0..]) $ \(el, i) -> P.unsafeWrite mpv i $ wordMask .&. fromIntegral el 
           pv <- P.unsafeFreeze mpv
           pure $ SomePackedVector pv

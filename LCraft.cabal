@@ -41,6 +41,7 @@ common common-options
                      , mtl
                      , unliftio-core
                      , optics
+                     , linear-base
   
   ghc-options:         -Wall
                        -Wcompat
@@ -62,8 +63,12 @@ common common-options
 library
   import:              common-options
   hs-source-dirs:      src
+--if (arch(x86_64) || arch(i386))
+  c-sources:          cbits/x86/countElems.c
+--else
+  --c-sources:         cbits/basic.c
+  cc-options:          -O3
   exposed-modules:     LCraft
-                     , Block.GlobalPalette
                      , Block.Position
                      , Chunk.Internal
                      , Chunk.Position
@@ -161,7 +166,7 @@ benchmark NBT-benchmark
   type:                exitcode-stdio-1.0
   hs-source-dirs:      benchmark
   main-is:             Util/NBT.hs
-  build-depends:       criterion
+  build-depends:       tasty-bench
                      , LCraft
                      , zlib
 benchmark Packed-vector-benchmark
@@ -169,15 +174,23 @@ benchmark Packed-vector-benchmark
   type:                exitcode-stdio-1.0
   hs-source-dirs:      benchmark
   main-is:             PackedVector.hs
-  build-depends:       criterion
+  build-depends:       tasty-bench
                      , LCraft
 benchmark Chunkloading-benchmark
   import:              common-options
   type:                exitcode-stdio-1.0
   hs-source-dirs:      benchmark
   main-is:             Chunkloading.hs
-  build-depends:       criterion
+  build-depends:       tasty-bench
                      , LCraft
-  ghc-options:         -threaded
-                       -rtsopts
-                       -with-rtsopts=-N
+  ghc-options:         -O2
+benchmark VarInt-benchmark
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      benchmark
+  main-is:             VarInt.hs
+  build-depends:       tasty-bench
+                     , LCraft
+                     , random
+                     , mwc-random
+  ghc-options:         -O2

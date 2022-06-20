@@ -12,7 +12,7 @@ import Game.Event.PlayerMoved (playerMoved)
 import qualified Network.Connection as Connection
 import Entity.Id.Monad
 import Game.Monad (GameM)
-import Control.Monad.Trans.State.Strict (StateT)
+import Control.Monad.State.Strict
 
 data Event =
     PlayerJoined Player
@@ -22,8 +22,9 @@ data Event =
 applyEvent ::
   ( MonadIO m
   , MonadEntityId m
-  ) => GameState -> Connection.Handle -> Event -> m GameState
-applyEvent st conn = \case
-  PlayerJoined p -> playerJoined p st conn
-  PlayerMoved p pos -> playerMoved p pos st conn
-{-# SPECIALIZE applyEvent :: GameState -> Connection.Handle -> Event -> StateT GameState (GameM IO) GameState  #-}
+  , MonadState GameState m
+  ) => Connection.Handle -> Event -> m ()
+applyEvent conn = \case
+  PlayerJoined p -> playerJoined p conn
+  PlayerMoved p pos -> playerMoved p pos conn
+{-# SPECIALIZE applyEvent :: Connection.Handle -> Event -> StateT GameState (GameM IO) ()  #-}

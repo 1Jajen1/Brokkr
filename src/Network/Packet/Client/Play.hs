@@ -50,7 +50,7 @@ data PlayPacket =
   | OpenHorseWindow
   | InitializeWorldBorder
   | KeepAlive Word64
-  | ChunkDataAndUpdateLight ChunkData
+  | ChunkDataAndUpdateLight {-# UNPACk #-} !ChunkData
   | Effect
   | Particle
   | UpdateLight
@@ -132,6 +132,7 @@ instance ToBinary PlayPacket where
     KeepAlive w -> put w
     UnloadChunk x z -> put (fromIntegral @_ @Int32 x) <> put (fromIntegral @_ @Int32 z)
     _ -> error "Unsupported"
+  {-# INLINE put #-}
 
 newtype TeleportId = TeleportId Int
   deriving stock Show

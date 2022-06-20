@@ -12,12 +12,18 @@ import IO.RegionFile
 import qualified FlatParse.Basic as FP
 import Util.NBT
 import Util.Binary
-import Data.IORef
 import qualified Data.HashMap.Strict as HM
+import Control.Concurrent
+import Data.Foldable (traverse_)
+import Control.DeepSeq
 
 data Handle = Handle {
   loadChunk :: ChunkPosition -> IO (Maybe Chunk)
+, close     :: IO ()
 }
+
+instance NFData Handle where
+  rnf !Handle{} = () 
 
 instance Show Handle where
   show _ = "_"
@@ -25,23 +31,29 @@ instance Show Handle where
 newFromFolder :: String -> IO Handle
 newFromFolder path = do
   -- TODO Implement cache eviction for old files
-  rFiles <- newIORef mempty
+  rFiles <- newMVar mempty
   let loadChunk cp@(ChunkPos x z) = do
         let rX = x `div` 32
             rZ = z `div` 32
-        rMap <- readIORef rFiles
-        !rFile <- case HM.lookup (rX, rZ) rMap of
-          Just r -> pure r
+        rMap <- takeMVar rFiles
+        !rRef <- case HM.lookup (rX, rZ) rMap of
+          Just r -> putMVar rFiles rMap >> pure r
           Nothing -> do
             !r <- openRegionFile path rX rZ
-            writeIORef rFiles (HM.insert (rX, rZ) r rMap)
-            pure r
-        !mchunkBs <- readChunkData cp rFile
+            ref <- newMVar r
+            putMVar rFiles (HM.insert (rX, rZ) ref rMap)
+            pure ref
+        
+        mchunkBs <- withMVar rRef $ readChunkData cp
+
         case mchunkBs of
           Nothing -> error $ "Not generated: " <> show cp
           Just chunkBs ->
             -- TODO Adjust this parser and maybe just store Chunk as Packed 'Chunk instead?
             case FP.runParser (get @(BinaryNBT Chunk)) chunkBs of
-              FP.OK (BinaryNBT chunk) _ -> pure $ Just chunk
+              FP.OK (BinaryNBT chunk) _ -> pure (Just chunk)
               _ -> error "TODO" -- TODO
+      close = do
+        rMap <- takeMVar rFiles
+        traverse_ (flip withMVar closeRegionFile) rMap
   pure Handle{..}

@@ -3,8 +3,8 @@ module Util.Ring (
 , newRingBuffer
 , push
 , pushN
-, take
-, peek
+--, take
+--, peek
 , peekN
 , advanceN
 ) where
@@ -85,19 +85,20 @@ pushN ring@(Ring r w l arr) els = do
       writeMut w $ w' + fromIntegral n
       tryPutMVar l () >> pure ()
 
--- Blocks if the ring is empty
-peek :: Ring a -> IO a
-peek ring@(Ring r _ l arr) = empty ring >>= \case
-  False -> do
-    r' <- readMut r
-    VG.unsafeRead arr . fromIntegral $ mask ring r'
-  True -> takeMVar l >> peek ring
+-- Removed for now till I figure out if I need to set the element to some initial value again for gc
+-- -- Blocks if the ring is empty
+-- peek :: Ring a -> IO a
+-- peek ring@(Ring r _ l arr) = empty ring >>= \case
+--   False -> do
+--     r' <- readMut r
+--     VG.unsafeRead arr . fromIntegral $ mask ring r'
+--   True -> takeMVar l >> peek ring
 
-take :: Ring a -> IO a
-take ring = do
-  a <- peek ring
-  advanceN ring 1
-  pure a
+-- take :: Ring a -> IO a
+-- take ring = do
+--   a <- peek ring
+--   advanceN ring 1
+--   pure a
 
 -- Blocks if the ring is empty
 -- TODO Can we avoid freeze or use unsafeFreeze? It segfaults, but maybe we can prevent that in a cheap way
@@ -109,7 +110,10 @@ peekN ring@(Ring r w lock arr) = empty ring >>= \case
     !w' <- readMut w
     let !readI = fromIntegral $ mask ring r'
         !sz = min (VG.length arr - readI) . fromIntegral $ w' - r'
-    V.freeze $ VG.unsafeSlice readI sz arr
+        !slice = VG.unsafeSlice readI sz arr
+    !res <- V.freeze slice
+    VG.clear slice
+    pure res
 
 advanceN :: Ring a -> Word -> IO ()
 advanceN (Ring r _ l _) n =

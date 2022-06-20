@@ -17,6 +17,7 @@ import Game.Monad (GameM)
 import Util.Log
 import Game.State
 import Optics
+import Control.Monad.Trans.State.Strict (runStateT)
 
 runProtocol ::
   ( MonadIO m
@@ -25,15 +26,15 @@ runProtocol ::
   , MonadGameState m
   ) => (Protocol -> IO Connection.Handle) -> m ()
 runProtocol mkHandle = do
-  S.Handshake _pVersion _addr _addrPort next <- readPacket
+  S.Handshake _pVersion _addr _addrPort next <- readPacket (Protocol NoCompression NoEncryption)
 
-  (uid, uname) <- case next of
+  ((uid, uname), prot) <- flip runStateT (Protocol NoCompression NoEncryption) $ case next of
     S.Status -> error "Status"
     S.Login -> loginProtocol
 
-  conn <- liftIO $ mkHandle (Protocol NoCompression NoEncryption)
+  conn <- liftIO $ mkHandle prot
  
   takeGameState >>= \st -> putGameState $ connection uid .~ (Just conn) $ st
 
-  runReaderT (playProtocol uid uname) conn
+  runReaderT (playProtocol prot uid uname) conn
 {-# SPECIALIZE runProtocol :: (Protocol -> IO Connection.Handle) -> NetworkM (GameM IO) () #-}

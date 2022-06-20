@@ -31,3 +31,5 @@ source-repository-package
 
 packages: ./LCraft.cabal
 packages: ./data/data.cabal
+
+-- profiling: True

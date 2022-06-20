@@ -3,6 +3,7 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveAnyClass #-}
 module IO.RegionFile (
   RegionFile
 , openRegionFile
@@ -31,12 +32,16 @@ import qualified Codec.Compression.GZip as GZip
 import Data.String
 import System.IO
 import FlatParse.Basic
+import Control.DeepSeq
 
 data RegionFile = RegionFile {
   locationTable :: !(S.Vector ChunkLocation_)
 -- at some point we may also need to do ChunkTimestamps but not now...
 , file          :: !Handle
 }
+
+instance NFData RegionFile where
+  rnf !RegionFile{} = ()
 
 sectorSize :: Int
 sectorSize = 4096

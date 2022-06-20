@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
 module Network.Handler.Login (
   loginProtocol
 ) where
@@ -13,18 +14,25 @@ import Data.Text
 import Network.Monad
 import Game.Monad (GameM)
 import Util.Log
+import Control.Monad.State.Strict
+import Network.Protocol
 
 loginProtocol ::
   ( MonadNetwork m
   , MonadLog m
+  , MonadState Protocol m
   ) => m (UUID, Text)
-loginProtocol = readPacket >>= \case
+loginProtocol = get >>= readPacket >>= \case
   S.LoginStart uName -> do
     let uid = V3.generateNamed UUID.nil (BS.unpack $ T.encodeUtf8 uName)
 
-    sendPacket 64 $ C.LoginSuccess uid uName
+    prot <- get
+    sendPacket prot 10 $ C.SetCompression 256
+    prot <- put (Protocol (Threshold 256) NoEncryption) >> get
+
+    sendPacket prot 64 $ C.LoginSuccess uid uName
 
     logInfo $ "Player " <> uName <> " logged in."
 
     return (uid, uName)
-{-# SPECIALIZE loginProtocol :: NetworkM (GameM IO) (UUID, Text) #-}
+{-# SPECIALIZE loginProtocol :: StateT Protocol (NetworkM (GameM IO)) (UUID, Text) #-}

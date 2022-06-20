@@ -43,9 +43,6 @@ readVarNum f maxSz = go 0 0
         _ -> go newAcc newRes
 {-# INLINE readVarNum #-}
 
--- This function can do bad things if the word requires more than maxSz bytes to be written, so take care not to exceed that!
--- TODO Statically check that somehow?
--- TODO Try to further optimise this
 writeVarNum :: Int -> (a -> Word64) -> a -> B.Builder
 writeVarNum maxSz f = \a -> B.primBounded varNumPrim a
   where
@@ -64,6 +61,7 @@ writeVarNumInternal !n !ptr
       writeOffPtr ptr 0 . fromIntegral $ setBit (n .&. 127) 7
       writeVarNumInternal (unsafeShiftR n 7) (advancePtr ptr 1)
 
+-- TODO Bench against repeated shift and mask if statements
 varIntSize :: Int -> Int
 varIntSize x = lookupByteN arr# (countLeadingZeros $ fromIntegral @_ @Int32 x)
   where arr# = "\ENQ\ENQ\ENQ\ENQ\EOT\EOT\EOT\EOT\EOT\EOT\EOT\ETX\ETX\ETX\ETX\ETX\ETX\ETX\STX\STX\STX\STX\STX\STX\STX\SOH\SOH\SOH\SOH\SOH\SOH\SOH\SOH"#
@@ -72,4 +70,5 @@ varIntSize x = lookupByteN arr# (countLeadingZeros $ fromIntegral @_ @Int32 x)
 lookupByteN :: Addr# -> Int -> Int
 lookupByteN addr# (I# n) = I# (word2Int# word#)
   where word# = word8ToWord# (indexWord8OffAddr# addr# n)
+{-# INLINE lookupByteN #-}
   

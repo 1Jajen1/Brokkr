@@ -15,8 +15,6 @@ module Chunk.Section (
 import Util.Vector.Packed (PackedVector, DynamicNat(..))
 import qualified Util.Vector.Packed as P
 
-import Data.Vector.Unboxed (Vector)
-import qualified Data.Vector.Unboxed as U
 import GHC.TypeLits
 import Util.NBT.Internal
 import Data.Int
@@ -25,8 +23,7 @@ import Data.Coerce (coerce)
 import qualified Data.Vector as V
 import Block.Internal.BlockState
 import Block.Internal.Conversion
-import qualified Data.HashMap.Strict as HM
-import qualified Data.Map.Strict as M
+import qualified Data.HashMap.Lazy as HM
 import GHC.Generics (Generic)
 import Control.DeepSeq
 import Util.Binary
@@ -36,6 +33,10 @@ import Control.Monad.ST (runST)
 import qualified Data.Text as T
 import Data.Maybe (fromMaybe)
 import Registry.Biome
+import Unsafe.Coerce (unsafeCoerce)
+import qualified Data.ByteString as BS
+import qualified Data.Text.Encoding as T
+import Data.List (sortOn)
 
 type NibbleVector = PackedVector ('Static 4096) ('Static 4)
 
@@ -70,12 +71,12 @@ newtype Biomes = Biomes (PalettedVector BiomeSectionSize BiomePaletteMaxBitsze)
 data PalettedVector (sz :: Nat) (globalBitSz :: Nat) =
     Global      {-# UNPACK #-} !(PackedVector ('Static sz) ('Static globalBitSz))
   | SingleValue {-# UNPACK #-} !Int
-  | Indirect    {-# UNPACK #-} !(Vector Int) {-# UNPACK #-} !(PackedVector ('Static sz) 'Dynamic)
+  | Indirect    {-# UNPACK #-} !(S.Vector Int) {-# UNPACK #-} !(PackedVector ('Static sz) 'Dynamic)
 
 instance (KnownNat sz, KnownNat mBSz) => Show (PalettedVector sz mBSz) where
   show (Global v)      = "Global " <> show v
   show (SingleValue v) = "Single " <> show v
-  show (Indirect p v)  = "Indirect " <> show (U.indexed p) <> show v 
+  show (Indirect p v)  = "Indirect " <> show p <> show v 
 
 instance NFData (PalettedVector sz maxBitSz) where
   rnf (Global vec) = rnf vec
@@ -94,14 +95,15 @@ instance (KnownNat sz, KnownNat mBSz) => ToBinary (PalettedVector sz mBSz) where
   put (SingleValue v) = put (0 :: Int8) <> put (VarInt $ fromIntegral v) <> put (VarInt 0) -- No data
   put (Indirect p v) =
        put (fromIntegral @_ @Int8 bitSz)
-    <> put (VarInt . fromIntegral $ U.length p)
-    <> U.foldMap (\x -> put $ VarInt $ fromIntegral x) p
+    <> put (VarInt . fromIntegral $ S.length p)
+    <> S.foldMap (\x -> put $ VarInt $ fromIntegral x) p
     <> put (VarInt $ fromIntegral numInt64)
     <> put v
     where
       bitSz = runST $ P.bitSz <$> P.unsafeThaw v
       vLen = runST $ P.length <$> P.unsafeThaw v
       numInt64 = P.nrWords bitSz vLen
+  {-# INLINE put #-}
 
 instance FromNBT ChunkSection where
   parseNBT = withCompound $ \obj -> do
@@ -116,6 +118,8 @@ instance FromNBT ChunkSection where
 
     !biomes <- obj .: "biomes"
     pure ChunkSection{..}
+  {-# INLINE parseNBT #-}
+  {-# SCC parseNBT #-}
 
 instance FromNBT BlockStates where
   parseNBT = withCompound $ \obj -> do
@@ -127,50 +131,59 @@ instance FromNBT BlockStates where
          let bitsPerVal = len `div` 64 -- TODO Why does this work?
          if | bitsPerVal < 4 -> error "TODO" -- TODO Error messages
             | bitsPerVal < 9 -> 
-              let !intPalette = U.generate (V.length palette) $ (coerce . (V.!) palette) 
+              let !intPalette = S.generate (V.length palette) $ (coerce . (V.!) palette) 
               in pure . BlockStates . Indirect intPalette . P.unsafeDynamicFromForeignPtr bitsPerVal $ coerce blockStates
             | otherwise -> pure . BlockStates . Global . P.unsafeStaticFromForeignPtr $ coerce blockStates
     where
       lookupTag :: Tag -> BlockState
       lookupTag (TagCompound m) = maybe (error $ show m) id $ do
-        TagString name <- M.lookup "Name" m
-        props <- case M.lookup "Properties" m of
-          Just (TagCompound props) -> pure props
+        TagString name <- HM.lookup "Name" m
+        props <- case HM.lookup "Properties" m of
+          Just (TagCompound props) -> pure . fmap (fmap (\(TagString bs) -> bs)) $ HM.toList props
           Nothing -> pure mempty
           _ -> Nothing
-        f <- HM.lookup name propsToId
-        pure . BlockState . f $ fmap (\(TagString s) -> s) props
+        pure . BlockState $ propsToId (coerce name) $ coerce $ sortOn fst props
       lookupTag _ = error "Wut?"
+      {-# SCC lookupTag #-}
+  {-# INLINE parseNBT #-}
+  {-# SCC parseNBT #-}
 
 instance FromNBT Biomes where
   parseNBT = withCompound $ \obj -> do
     !intPalette <- lookupBiomes <$> obj .: "palette"
 
-    if | U.length intPalette == 1 -> pure . Biomes . SingleValue $ U.unsafeHead intPalette 
+    if | S.length intPalette == 1 -> pure . Biomes . SingleValue $ S.unsafeHead intPalette 
        | otherwise -> do
          (biomes, len) <- S.unsafeToForeignPtr0 @Int64 <$> obj .: "data"
          let bitsPerVal = if len == 4 then 3 else len -- TODO
          if | bitsPerVal < 4 -> pure . Biomes . Indirect intPalette . P.unsafeDynamicFromForeignPtr bitsPerVal $ coerce biomes
             | otherwise -> pure . Biomes . Global . P.unsafeStaticFromForeignPtr $ coerce biomes
-
     where
-      lookupBiomes v = U.generate (V.length v) $ \i -> lookupBiome (v V.! i)
+      lookupBiomes v = S.generate (V.length v) $ \i -> lookupBiome (v V.! i)
       lookupBiome :: Tag -> Int
-      lookupBiome (TagString name) = fromMaybe (error $ show name) $ HM.lookup (T.drop 10 name) biomeMap
+      lookupBiome (TagString name) = fromMaybe (error $ show name) $ HM.lookup (BS.drop 10 $ coerce name) biomeMap
       lookupBiome _ = error "WUT=!"
-      biomeMap = HM.fromList $ zip (T.pack . fst <$> all_biome_settings) [0..]
+      {-# SCC lookupBiome #-}
+  {-# INLINE parseNBT #-}
+  {-# SCC parseNBT #-}
 
+biomeMap :: HM.HashMap BS.ByteString Int
+biomeMap = HM.fromList $ zip (T.encodeUtf8 . T.pack . fst <$> all_biome_settings) [0..]
+
+-- TODO unsafeCoerce ... get rid of it
 countBlocks :: BlockStates -> Int
 countBlocks (BlockStates (SingleValue val))
   | isAir $ BlockState val = 0
   | otherwise              = fromIntegral $ natVal @SectionSize undefined
 countBlocks (BlockStates (Global vec)) 
-  = P.countElems (fromIntegral @Int . coerce <$> [Air, VoidAir, CaveAir]) vec
+  = P.countElems (unsafeCoerce $ S.fromList $ coerce @_ @[Int] [Air, VoidAir, CaveAir]) vec
 countBlocks (BlockStates (Indirect palette vec))
-  | null airs = fromIntegral $ natVal @SectionSize undefined
-  | otherwise = P.countElems (fromIntegral <$> airs) vec
+  | S.null airs = fromIntegral $ natVal @SectionSize undefined
+  -- | U.length airs == 1 = P.countElem (airs U.! 0) vec
+  | otherwise = P.countElems (unsafeCoerce airs) vec
   where
-    !airs = U.toList $ U.findIndices (\x -> isAir $ BlockState x) palette
+    !airs = S.findIndices (\x -> isAir $ BlockState x) palette
+{-# SCC countBlocks #-}
 
 isAir :: BlockState -> Bool
 isAir Air     = True

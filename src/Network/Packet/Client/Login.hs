@@ -7,17 +7,19 @@ import Data.Text
 import Util.Binary
 import Network.Util.Packet
 import Network.Util.MCString
+import Network.Util.VarNum
 
 data LoginPacket =
     Disconnect
   | EncryptionRequest
   | LoginSuccess UUID Text
-  | SetCompression
+  | SetCompression Int
   deriving stock Show
 
 instance ToBinary LoginPacket where
   put a = packetId a <> case a of
     LoginSuccess uid name -> put uid <> put (MCString name)
+    SetCompression i -> put (VarInt $ fromIntegral i)
     _ -> error "Unsupported"
 
 
