@@ -86,7 +86,7 @@ new send uid prot = do
       goSend = do
         !toSend <- Ring.peekN ring
 
-        send . fromChunks $! fmap (\(szHint, packet) -> toStrictSizePrefixedByteString prot szHint $ put packet) (V.toList toSend)
+        send . fromChunks $ fmap (\(szHint, packet) -> let !bs = toStrictSizePrefixedByteString prot szHint $ put packet in bs) (V.toList toSend)
 
         Ring.advanceN ring $ fromIntegral (V.length toSend)
 

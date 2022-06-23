@@ -19,10 +19,7 @@ import Control.Monad.IO.Class
 import World.Internal
 import Game.Monad (GameM)
 import Util.Rotation
-import qualified Data.HashMap.Strict as HM
-import Chunk.Internal
 import Control.Monad.State.Strict
-import Data.Coerce
 
 {- TODO: This needs a rewrite
 
@@ -97,25 +94,24 @@ playerMoved ::
 playerMoved p mpos conn = do
   st <- get
   let !w = st ^. world dim
-  !cs <- case mpos of
+  case mpos of
     Nothing -> liftIO (updateViewPosition w conn p Nothing)
     Just pos -> do
       let !p' = position .~ pos $ p
           !oldPos = p ^. position
           !st' = (player uid % _Just) .~ p' $ st
-      put st' >> liftIO (updateViewPosition w conn p' (Just oldPos))
-
-  st <- get
-  let !w' = w { _chunks = _chunks w <> coerce cs }
-  put $ world dim .~ w' $ st
+      put st'
+      liftIO (updateViewPosition w conn p' (Just oldPos))
   where
     !uid = p ^. uuid
     !dim = p ^. dimension
 {-# SPECIALIZE playerMoved :: Player -> Maybe Position -> Connection.Handle -> StateT GameState (GameM IO) () #-}
 
--- https://stackoverflow.com/questions/398299/looping-in-a-spiral for a fast inclusivity check, tho having bitmaps seems fine as well
+-- TODO https://stackoverflow.com/questions/398299/looping-in-a-spiral for a fast inclusivity check, tho having bitmaps seems fine as well
 -- since we don't need one per player as we can shift them
-updateViewPosition :: World -> Connection.Handle -> Player -> Maybe Position -> IO (HM.HashMap ChunkPosition Chunk)
+-- TODO Think about if we need to send/store chunks in sync or if we can async part of it 
+-- I think we can fully send them async and just add them the tick they become available...
+updateViewPosition :: World -> Connection.Handle -> Player -> Maybe Position -> IO ()
 updateViewPosition !w !conn !p !mPrevPos = do
   let !newChunkPos = p ^. position % chunkPosition
       !(ChunkPos x z) = newChunkPos
@@ -133,28 +129,18 @@ updateViewPosition !w !conn !p !mPrevPos = do
           sendPacket conn (10, C.UpdateViewPosition x z)
           sendPackets conn $ (\(ChunkPos x' z') -> (16, C.UnloadChunk x' z')) <$> V.fromList (HS.toList toUnload)
           sendChunks toSend
-        else pure mempty
+        else pure ()
     Nothing -> do
       sendPacket conn (10, C.UpdateViewPosition x z)
       -- TODO Handle teleport id correctly
       sendPacket conn (40, C.PlayerPositionAndLook (p ^. position) (p ^. rotation) (C.TeleportId 0) C.NoDismount)
       sendChunks newChunks
   where
-    sendChunks :: HS.HashSet ChunkPosition -> IO (HM.HashMap ChunkPosition Chunk)
+    sendChunks :: HS.HashSet ChunkPosition -> IO ()
     sendChunks toSend = do
-      !(ps, cs) <- foldMapHS getChunkAndChunkDataPacket toSend
-      sendPackets conn $ V.fromList ps
-      pure cs
+      -- TOOD Since I moved sendPacket inside the client seems to really hate that
+      getOrLoadChunks w (V.fromList $ HS.toList toSend) $ \c -> sendPacket conn (C.ChunkDataAndUpdateLight <$> mkChunkData c)
     {-# INLINE sendChunks #-}
-    foldMapHS f = HM.foldMapWithKey (\a _ -> f a) . HS.toMap
-    {-# INLINE foldMapHS #-}
-    -- Todo this runs in sync, either move async or make fast enough!
-    -- Ideas: Prefetch chunks async for first join, but load sync otherwise?
-    getChunkAndChunkDataPacket :: ChunkPosition -> IO ([(Int, C.PlayPacket)], HM.HashMap ChunkPosition Chunk)
-    getChunkAndChunkDataPacket cPos = getOrLoadChunk w cPos >>= \c ->
-        let !(!cSize, !cData) = mkChunkData c
-        in pure ([(cSize, C.ChunkDataAndUpdateLight cData)], HM.singleton cPos c)
-    {-# INLINE getChunkAndChunkDataPacket #-}
 
 {-
 

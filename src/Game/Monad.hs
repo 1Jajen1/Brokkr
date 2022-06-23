@@ -24,6 +24,7 @@ import Control.Monad.Trans.Reader
 import Game.State
 
 -- Make sure this is not available for either sync/async
+-- TODO This should not exist
 class
   ( MonadEntityId m
   , MonadTime m
@@ -32,6 +33,7 @@ class
   ) => MonadGame m where
     setupNetwork :: m ()
 
+-- TODO Move to app
 newtype GameM m a = GameM { runGameM :: ReaderT (MVar GameState) (LogM 'Debug (EntityIdM m)) a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadUnliftIO, MonadEntityId, MonadLog, MonadTime, PrimMonad)
 

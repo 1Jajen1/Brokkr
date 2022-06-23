@@ -3,8 +3,8 @@ module Util.Ring (
 , newRingBuffer
 , push
 , pushN
---, take
---, peek
+, take
+, peek
 , peekN
 , advanceN
 ) where
@@ -16,6 +16,7 @@ import Data.Bits
 import Control.Concurrent.MVar
 import Prelude hiding (take)
 import qualified Data.Vector as V
+import Control.Monad (void)
 
 newtype Mut a = Mut (MutableByteArray RealWorld)
 
@@ -32,6 +33,8 @@ writeMut :: Prim a => Mut a -> a -> IO ()
 writeMut (Mut arr) = writeByteArray arr 0 
 
 -- TODO Make a unlifted, stuff in these rings should usually not be lazy since we never drop any
+-- TODO MVar vs TVar MVar is great if only a single thread is blocked or writes/reads always write/read one element at a time
+--  TVar is much better if when n threads are blocked >= n writes/reads come in
 data Ring a = Ring !(Mut Word) !(Mut Word) !(MVar ()) !(MV.MVector RealWorld a)
 
 newRingBuffer :: Int -> IO (Ring a)
@@ -85,20 +88,19 @@ pushN ring@(Ring r w l arr) els = do
       writeMut w $ w' + fromIntegral n
       tryPutMVar l () >> pure ()
 
--- Removed for now till I figure out if I need to set the element to some initial value again for gc
--- -- Blocks if the ring is empty
--- peek :: Ring a -> IO a
--- peek ring@(Ring r _ l arr) = empty ring >>= \case
---   False -> do
---     r' <- readMut r
---     VG.unsafeRead arr . fromIntegral $ mask ring r'
---   True -> takeMVar l >> peek ring
+-- Blocks if the ring is empty
+peek :: Ring a -> IO a
+peek ring@(Ring r _ l arr) = empty ring >>= \case
+  False -> do
+    r' <- readMut r
+    VG.unsafeRead arr . fromIntegral $ mask ring r'
+  True -> takeMVar l >> peek ring
 
--- take :: Ring a -> IO a
--- take ring = do
---   a <- peek ring
---   advanceN ring 1
---   pure a
+take :: Ring a -> IO a
+take ring = do
+  a <- peek ring
+  advanceN ring 1
+  pure a
 
 -- Blocks if the ring is empty
 -- TODO Can we avoid freeze or use unsafeFreeze? It segfaults, but maybe we can prevent that in a cheap way
@@ -112,12 +114,16 @@ peekN ring@(Ring r w lock arr) = empty ring >>= \case
         !sz = min (VG.length arr - readI) . fromIntegral $ w' - r'
         !slice = VG.unsafeSlice readI sz arr
     !res <- V.freeze slice
-    VG.clear slice
     pure res
 
 advanceN :: Ring a -> Word -> IO ()
-advanceN (Ring r _ l _) n =
-  readMut r >>=  writeMut r . (+ n) >> tryPutMVar l () >> pure ()
+advanceN (Ring r _ l arr) n = do
+  r' <- readMut r
+  -- TODO Check for overlap, the way I use it right now this can't happen but it might in the future
+  -- Weak references have a perf impact right?
+  VG.clear (VG.unsafeSlice (fromIntegral r') (fromIntegral n) arr)
+  writeMut r (r' + n)
+  void $ tryPutMVar l ()
 
 empty :: Ring a -> IO Bool
 empty (Ring r w _ _) = do

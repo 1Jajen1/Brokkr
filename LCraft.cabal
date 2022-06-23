@@ -55,6 +55,7 @@ common common-options
                        -Wpartial-fields
                        -Wmissing-deriving-strategies
                        -O2
+                       --eventlog
   default-extensions:  DerivingVia
                        LambdaCase
                        StrictData

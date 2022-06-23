@@ -46,7 +46,8 @@ main = defaultMain [
       -- NBT parse
       , bench "ByteString -> Chunk" $ nf parseChunksDirect loaded
       ]
-  , envWithCleanup setupCLEnv (CL.close . hdl) $ \ ~(CLEnv{..}) -> bench "IO Chunk" . nfIO $ traverse_ (CL.loadChunk hdl) toLoad1
+  -- TODO This benchmark won't work till I add some way of completion back in
+  -- , envWithCleanup setupCLEnv (CL.close . hdl) $ \ ~(CLEnv{..}) -> bench "IO Chunk" . nfIO $ CL.loadChunks hdl toLoad1 (const $ pure ())
   ]
 
 setupCLEnv :: IO CLEnv

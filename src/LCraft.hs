@@ -17,36 +17,46 @@ import Sync.Monad
 import Sync.Handler.JoinPlayer (joinPlayer)
 import Sync.Handler.PlayerMovement (movePlayer, rotatePlayer, updateMovingPlayer)
 import Optics
+import Optics.Operators.Unsafe
 import Network.Connection.Internal
 import Util.UUID
+import Control.Concurrent.Async
+import Control.Monad.IO.Unlift
 
 -- All of this should not be in the lib
-startServer :: (MonadIO m, MonadGame m) => m ()
+startServer :: (MonadUnliftIO m, MonadGame m) => m ()
 startServer = do
   -- Start network stuff
   setupNetwork
   -- Start game loop
-  gameLoop $ do
-    !initSt <- takeGameState
-    !(_, !newSt) <- flip runStateT initSt $
-      flip (traverseOf_ connections) initSt $ \conn -> do
-        !commands <- liftIO $ flushCommands conn
-        forM_ commands $ \cmd -> do
-          st <- get
-          
-          -- Here st is readonly
-          -- TODO Handle missing player 
-          let Just p = st ^. player (conn ^. uuid)
-              evs = runSync $ case cmd of
-                (JoinPlayer p') -> joinPlayer p' st
-                (MovePlayer pos) -> movePlayer p pos st
-                (RotatePlayer rot) -> rotatePlayer p rot st
-                (UpdateMovingPlayer onGround) -> updateMovingPlayer p onGround st
+  as <- withRunInIO $ \runInIO -> do 
+    async $ runInIO $ gameLoop $ do
+      !initSt <- takeGameState
+      !(_, !newSt) <- flip runStateT initSt $
+        flip (traverseOf_ connections) initSt $ \conn -> do
+          !commands <- liftIO $ flushCommands conn
+          forM_ commands $ \cmd -> do
+            st <- get
 
-          -- apply events and send packets
-          forM_ evs (applyEvent conn)
-    
-    putGameState newSt
+            -- Here st is readonly
+            -- TODO Handle player disconnecting
+            let p = st ^?! player (conn ^. uuid) % _Just
+                evs = runSync $ case cmd of
+                  (JoinPlayer p') -> joinPlayer p' st
+                  (MovePlayer pos) -> movePlayer p pos st
+                  (RotatePlayer rot) -> rotatePlayer p rot st
+                  (UpdateMovingPlayer onGround) -> updateMovingPlayer p onGround st
+
+            -- apply events and send packets
+            forM_ evs (applyEvent conn)
+
+      putGameState newSt
+
+  fix $ \loop -> do
+    inp <- liftIO getLine
+    case inp of
+      "stop" -> liftIO $ cancel as
+      _ -> loop
 {-# SPECIALIZE startServer :: GameM IO () #-}
 
 gameLoop :: MonadGame m => m () -> m ()

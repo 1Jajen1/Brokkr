@@ -7,6 +7,7 @@ module World.Internal (
 , Dimension(..)
 , HasDimension(..)
 , getOrLoadChunk
+, getOrLoadChunks
 , chunk
 , Hide(..)
 ) where
@@ -20,6 +21,8 @@ import qualified IO.Chunkloading as Chunkloading
 import qualified Data.HashMap.Strict as HM
 import Chunk.Internal
 import Data.Coerce
+import qualified Data.Vector as V
+import Data.Maybe (fromMaybe)
 
 data World = World {
   _worldName   :: !WorldName
@@ -34,8 +37,8 @@ newtype Hide a = Hide a
 
 instance Show (Hide a) where
   show _ = ""
---
 
+--
 newtype WorldName = WorldName Text
   deriving stock Show
   deriving newtype (Eq, IsString)
@@ -44,13 +47,25 @@ newtype WorldName = WorldName Text
 data Dimension = Overworld | Nether | TheEnd
   deriving stock (Eq, Enum, Show)
 
---
-getOrLoadChunk :: World -> ChunkPosition -> IO Chunk
-getOrLoadChunk w cp
-  | Just c <- w ^. chunk cp = pure c
-  | otherwise = Chunkloading.loadChunk (chunkloading w) cp >>= \case
-    Just c -> pure c
+-- methods
+-- TODO Add commands to world and add CacheChunk command here
+getOrLoadChunk :: World -> ChunkPosition -> (Chunk -> IO ()) -> IO ()
+getOrLoadChunk w cp act
+  | Just c <- w ^. chunk cp = act c
+  | otherwise = Chunkloading.loadChunk (chunkloading w) cp $ \case
+    Just c -> act c
     Nothing -> error "Worldgen not implemented"
+{-# INLINE getOrLoadChunk #-}
+
+getOrLoadChunks :: World -> V.Vector ChunkPosition -> (Chunk -> IO ()) -> IO ()
+getOrLoadChunks w cps act = do
+  let (res, toLoad) = V.partitionWith (\cp ->
+        case w ^. chunk cp of
+          Just c -> Left $ act c
+          Nothing -> Right cp
+        ) cps
+  sequence_ res >> Chunkloading.loadChunks (chunkloading w) toLoad (act . fromMaybe (error "Worldgen not implemented"))
+{-# INLINE getOrLoadChunks #-}
 
 -- lenses
 cLens :: Lens' World (HM.HashMap ChunkPosition Chunk)

@@ -1,0 +1,3 @@
+[submodule "lcraft-uring/liburing"]
+	path = lcraft-uring/liburing
+	url = https://github.com/axboe/liburing.git

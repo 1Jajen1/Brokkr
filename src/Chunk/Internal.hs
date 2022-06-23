@@ -2,6 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeFamilies #-}
 module Chunk.Internal (
   Chunk(..)
 , ChunkSection(..)
@@ -18,6 +19,7 @@ import Data.Int
 import GHC.Generics (Generic)
 import Control.DeepSeq
 import Util.Vector.Packed
+import Optics
 
 numSections :: Int
 numSections = 26 -- TODO Derive from world height value
@@ -70,3 +72,9 @@ instance ToNBT Heightmaps where
 
 newtype Heightmap = Heightmap (PackedVector ('Static 256) ('Static 9))
   deriving newtype (Show, NFData, FromNBT, ToNBT)
+
+--
+instance HasChunkPosition Chunk where
+  type Access Chunk = A_Getter
+  chunkPosition = to _position
+  {-# INLINE chunkPosition #-}
