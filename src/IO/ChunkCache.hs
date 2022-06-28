@@ -17,6 +17,8 @@ import Data.Bits
 import qualified Data.IntMap.Strict as IM
 import Data.Tuple (swap)
 
+-- For each chunk we store a reference counter and the chunk
+-- It is possible for a chunk to be loaded but not yet in the cache
 data ChunkCache = ChunkCache !(IntMap Int) !(IntMap Chunk)
   
 instance Show ChunkCache where
@@ -42,10 +44,9 @@ unloadChunk (ChunkCache loaded chunks) cp = ChunkCache loaded' chunks'
   where
     ind = toIndex cp
     loaded' = IM.alter (maybe Nothing $ \i -> if i == 1 then Nothing else Just $ i - 1) ind loaded
-    unload = IM.member ind loaded'
-    chunks' = if unload
-      then IM.delete ind chunks
-      else chunks
+    chunks' = if IM.member ind loaded'
+      then chunks
+      else IM.delete ind chunks
 {-# INLINE unloadChunk #-}
 
 insertChunk :: ChunkCache -> Chunk -> ChunkCache

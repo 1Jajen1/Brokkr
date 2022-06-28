@@ -43,15 +43,18 @@ newtype WorldName = WorldName Text
   deriving (ToBinary, FromBinary) via MCString
 
 -- methods
--- TODO Add commands to world and add CacheChunk command here
+-- TODO These really should not be in Internal!
 getOrLoadChunk :: World -> ChunkPosition -> (Chunk -> IO ()) -> IO World
 getOrLoadChunk w cp act
   -- TODO Should I fork act c here?
   | Just c <- w ^? chunk cp = act c >> pure w'
   | otherwise = do
     Chunkloading.loadChunk (chunkloading w) cp $ \case
-      -- TODO Prepend queueing adding to the chunk cache here
       Just c -> do
+        -- Doing this before act ensures the next tick will have the chunks
+        -- If we were to do this after act we could have a client already modifying the chunks
+        -- but the chunks aren't in the cache. The window for that is really narrow but
+        -- it does exist
         Queue.push (_commandQueue w) $! CacheLoadedChunk c 
         act c
       Nothing -> error "Worldgen not implemented"
@@ -67,7 +70,6 @@ getOrLoadChunks w cps act = do
           Just c -> Left $ act c
           Nothing -> Right cp
         ) cps
-  -- TODO Prepend queueing adding to the chunk cache to act
   sequence_ res >> Chunkloading.loadChunks (chunkloading w) toLoad (act' . fromMaybe (error "Worldgen not implemented"))
   -- TODO This isn't too pretty
   pure $ w { _chunkCache = V.foldl' (\acc cp -> CK.loadChunk acc cp) (_chunkCache w) cps }
