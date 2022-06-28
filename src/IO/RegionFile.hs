@@ -92,10 +92,10 @@ readChunkData (ChunkPos x z) RegionFile{..}
       chunkDataP = do
         sizePre <- get @Int32
         compType <- get @Int8
-        bs <- takeBs . fromIntegral $ sizePre - 1
+        !bs <- takeBs . fromIntegral $ sizePre - 1
         case compType of
-          2 -> pure $ LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
-          1 -> pure $ LBS.toStrict . GZip.decompress $ LBS.fromStrict bs
+          2 -> pure $! LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
+          1 -> pure $! LBS.toStrict . GZip.decompress $ LBS.fromStrict bs
           3 -> pure bs
           _ -> error "Unknown compression scheme" -- TODO error
 

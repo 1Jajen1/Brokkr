@@ -1,4 +1,4 @@
-module Game.Event.PlayerJoined (
+module Event.Handler.PlayerJoined (
   playerJoined
 ) where
 
@@ -16,7 +16,6 @@ import Player
 import Entity.Id.Monad
 import Control.Monad.IO.Class
 import Block.Position
-import qualified Network.Connection as Connection
 import Game.Monad (GameM)
 import Control.Monad.State.Strict
 
@@ -24,8 +23,8 @@ playerJoined ::
   ( MonadIO m
   , MonadEntityId m
   , MonadState GameState m
-  ) => Player -> Connection.Handle -> m ()
-playerJoined p conn = do
+  ) => Player -> m ()
+playerJoined p = do
   entityId <- freshEntityId
 
   -- TODO all this is pretty temporary
@@ -59,12 +58,14 @@ playerJoined p conn = do
         return $ C.BiomeRegistryEntry ("minecraft:" <> T.pack name) bid settings
     
   -- TODO Update other players scoreboard etc.
+  st <- get
+  -- TODO? This should be safe, connections should not ne removed before this event is processed
+  let Just conn = st ^. connection (p ^. uuid)
   liftIO . sendPackets conn $ V.fromListN 2 [
       (65536, C.JoinGame joinGameData)
     , (16, C.SpawnPosition (BlockPos 0 100 0) 0)
     ]
   
-  st <- get
   put $ player uid .~ Just p $ st
   where uid = p ^. uuid
-{-# SPECIALIZE playerJoined :: Player -> Connection.Handle -> StateT GameState (GameM IO) () #-}
+{-# SPECIALIZE playerJoined :: Player -> StateT GameState (GameM IO) () #-}

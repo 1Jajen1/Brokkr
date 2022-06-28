@@ -71,18 +71,25 @@ library
   cc-options:          -O3
   exposed-modules:     LCraft
                      , Block.Position
+                     , Chunk
                      , Chunk.Internal
                      , Chunk.Position
                      , Chunk.Section
+                     , Command.Connection
+                     , Command.Handler.World
+                     , Command.World
                      , Entity.Id.Monad
                      , Entity.Internal
-                     , Game.Command
-                     , Game.Event
-                     , Game.Event.PlayerJoined
-                     , Game.Event.PlayerMoved
+                     , Event
+                     , Event.Handler
+                     , Event.Handler.ChunkCached
+                     , Event.Handler.PlayerDisconnected
+                     , Event.Handler.PlayerJoined
+                     , Event.Handler.PlayerMoved
                      , Game.State
                      , Game.State.Internal
                      , Game.Monad
+                     , IO.ChunkCache
                      , IO.Chunkloading
                      , IO.RegionFile
                      , Network
@@ -98,6 +105,7 @@ library
                      , Network.Packet.Server.Handshake
                      , Network.Packet.Server.Login
                      , Network.Packet.Server.Play
+                     , Network.Packet.Server.Play.PlayerAbilities
                      , Network.Protocol
                      , Network.Util.Builder
                      , Network.Util.FromIntegral
@@ -108,6 +116,7 @@ library
                      , Player
                      , Player.GameMode
                      , Player.Internal
+                     , Sync.Handler.DisconnectPlayer
                      , Sync.Handler.JoinPlayer
                      , Sync.Handler.PlayerMovement
                      , Sync.Monad
@@ -115,6 +124,8 @@ library
                      , Util.Binary
                      , Util.BitSet
                      , Util.ByteOrder
+                     , Util.Disconnect
+                     , Util.Exception
                      , Util.Lift
                      , Util.Log
                      , Util.NBT
@@ -127,11 +138,14 @@ library
                      , Util.Linear.V3
                      , Util.Linear.Vector
                      , Util.Position
+                     , Util.PrimVar
+                     , Util.Queue
                      , Util.Ring
                      , Util.Rotation
                      , Util.UUID
                      , Util.Word24
                      , World
+                     , World.Dimension
                      , World.Internal
 executable LCraft
   import:              common-options

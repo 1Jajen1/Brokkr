@@ -14,6 +14,8 @@ import Network.Util.VarNum
 import Util.Rotation
 import Data.Word
 import Data.Int
+import Data.Text
+import Network.Util.MCString
 
 data PlayPacket =
     SpawnEntity
@@ -42,7 +44,7 @@ data PlayPacket =
   | SetCooldown
   | PluginMessage
   | NamedSoundEffect
-  | Disconnect
+  | Disconnect Text
   | EntityStatus
   | Explosion
   | UnloadChunk Int Int
@@ -131,6 +133,7 @@ instance ToBinary PlayPacket where
     SpawnPosition pos angle -> put pos <> put angle
     KeepAlive w -> put w
     UnloadChunk x z -> put (fromIntegral @_ @Int32 x) <> put (fromIntegral @_ @Int32 z)
+    Disconnect t -> put (MCString t)
     _ -> error "Unsupported"
   {-# INLINE put #-}
 

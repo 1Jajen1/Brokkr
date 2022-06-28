@@ -135,6 +135,12 @@ instance FromNBT BlockStates where
               in pure . BlockStates . Indirect intPalette . P.unsafeDynamicFromForeignPtr bitsPerVal $ coerce blockStates
             | otherwise -> pure . BlockStates . Global . P.unsafeStaticFromForeignPtr $ coerce blockStates
     where
+      -- TODO This can further be optimized:
+      -- Currently this does a lookup into a ~22k sorted array based on the hash of (BlockName, BlockProps)
+      -- The hash function is fast, but maybe we can have the data in a less pointer heavy format to boost it further
+      -- The array can be shrunk down to fewer elements if I do two lookups, one for BlockName and one for the props
+      -- Also we have to sort props, that as well can be faster if its not in list form, we can and should just do it
+      -- over a mutable vector
       lookupTag :: Tag -> BlockState
       lookupTag (TagCompound m) = maybe (error $ show m) id $ do
         TagString name <- HM.lookup "Name" m
@@ -170,19 +176,20 @@ instance FromNBT Biomes where
 biomeMap :: HM.HashMap BS.ByteString Int
 biomeMap = HM.fromList $ zip (T.encodeUtf8 . T.pack . fst <$> all_biome_settings) [0..]
 
--- TODO unsafeCoerce ... get rid of it
 countBlocks :: BlockStates -> Int
 countBlocks (BlockStates (SingleValue val))
   | isAir $ BlockState val = 0
   | otherwise              = fromIntegral $ natVal @SectionSize undefined
 countBlocks (BlockStates (Global vec)) 
-  = P.countElems (unsafeCoerce $ S.fromList $ coerce @_ @[Int] [Air, VoidAir, CaveAir]) vec
+  = sz - P.countElems (unsafeCoerce $ S.fromList $ coerce @_ @[Int] [Air, VoidAir, CaveAir]) vec
+  where !sz = fromIntegral $ natVal @SectionSize undefined
 countBlocks (BlockStates (Indirect palette vec))
-  | S.null airs = fromIntegral $ natVal @SectionSize undefined
+  | S.null airs = sz
   -- | U.length airs == 1 = P.countElem (airs U.! 0) vec
-  | otherwise = P.countElems (unsafeCoerce airs) vec
+  | otherwise = sz - P.countElems (unsafeCoerce airs) vec
   where
     !airs = S.findIndices (\x -> isAir $ BlockState x) palette
+    !sz = fromIntegral $ natVal @SectionSize undefined
 {-# SCC countBlocks #-}
 
 isAir :: BlockState -> Bool
@@ -190,6 +197,7 @@ isAir Air     = True
 isAir VoidAir = True
 isAir CaveAir = True
 isAir _       = False
+{-# INLINE isAir #-}
 
 emptySection :: Int -> ChunkSection
 emptySection y = ChunkSection {

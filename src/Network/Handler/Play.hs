@@ -3,6 +3,7 @@
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 module Network.Handler.Play (
   playProtocol
+, joinPlayer
 ) where
   
 import Data.Text hiding (zip)
@@ -13,28 +14,41 @@ import qualified Network.Connection as Connection
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader (ReaderT)
 import Game.Monad (GameM)
-import Game.Command (Command(JoinPlayer))
-import Network.Connection.Internal
 import Player.Internal
 import Player
 import Util.Position
 import Util.Rotation
 import qualified Network.Packet.Server.Play as S
-import qualified Game.Command as Cmd
+import qualified Command.Connection as Cmd
 import qualified Data.Vector as V
 import World
 import Network.Protocol
+import Util.Exception
+import Game.State
+import Optics
+import Util.Disconnect
+import Network.Connection
+
+joinPlayer ::
+  ( MonadIO m
+  , MonadGameState m
+  , MonadBracket m
+  ) => Connection.Handle -> UUID -> Text -> m Connection.Handle
+joinPlayer conn uid _name = do
+  bracketOnError
+    (modifyGameState $ connection uid .~ (Just conn))
+    (\_ _ -> modifyGameState $ connection uid .~ Nothing)
+    (const $ (liftIO $ pushCommand conn $ Cmd.JoinPlayer player) >> pure conn)
+  where player = Player Creative (Position 0 200 0) (Rotation 0 0) OnGround Overworld uid
 
 playProtocol ::
   ( MonadIO m
+  , MonadBracket m
   , MonadReader Connection.Handle m
-  , MonadNetwork m
-  ) => Protocol -> UUID -> Text -> m ()
-playProtocol prot uid _text = do
-  let player = Player Creative (Position 0 200 0) (Rotation 0 0) OnGround Overworld uid
-
+  , MonadNetwork m 
+  ) => Protocol -> m ()
+playProtocol prot = do
   conn <- ask
-  liftIO . pushCommand conn $ JoinPlayer player
 
   let go = do
         -- TODO Instead of parsing the packet we could operate on the binary form and only copy the bytes we actually need
@@ -54,9 +68,21 @@ playProtocol prot uid _text = do
             , Cmd.UpdateMovingPlayer onGround
             ]
           S.PlayerMovement onGround -> liftIO $ pushCommand conn $ Cmd.UpdateMovingPlayer onGround
-          _ -> pure () -- Error here?
+          -- TODO Handle. What am I even supposed to do here if the id does not match a prev teleport?
+          S.TeleportConfirm _ -> pure ()
+          -- TODO
+          S.PlayerAbilities _ -> pure ()
+          -- TODO
+          S.KeepAlive _ -> pure ()
+           -- TODO handle these?
+          S.ClientSettings -> pure ()
+          S.PluginMessage -> pure ()
+          p -> error $ "Unhandled packet: " <> show p
         go
+  bracketOnError (pure ()) (\_ e -> do
+      case fromException @Connection.DisconnectException e of
+        Just _ -> pure ()
+        Nothing  -> liftIO $ pushCommand conn $ Cmd.Disconnect ClientDisconnect
+    ) $ const go
 
-  go
-
-{-# SPECIALIZE playProtocol :: Protocol -> UUID -> Text -> ReaderT Connection.Handle (NetworkM (GameM IO)) () #-}
+{-# SPECIALIZE playProtocol :: Protocol -> ReaderT Connection.Handle (NetworkM (GameM IO)) () #-}

@@ -2,6 +2,7 @@
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DeriveAnyClass #-}
 module Game.Monad (
   MonadGame(..)
 , GameM
@@ -22,6 +23,9 @@ import Control.Monad.Trans
 import Control.Monad.IO.Unlift
 import Control.Monad.Trans.Reader
 import Game.State
+import Control.Concurrent.Async
+import GHC.Conc (labelThread)
+import Util.Exception
 
 -- Make sure this is not available for either sync/async
 -- TODO This should not exist
@@ -36,6 +40,7 @@ class
 -- TODO Move to app
 newtype GameM m a = GameM { runGameM :: ReaderT (MVar GameState) (LogM 'Debug (EntityIdM m)) a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadUnliftIO, MonadEntityId, MonadLog, MonadTime, PrimMonad)
+  deriving anyclass MonadBracket
 
 instance MonadTrans GameM where
   lift = GameM . lift . lift . lift
@@ -57,8 +62,9 @@ instance MonadIO m => MonadGameState (GameM m) where
 
 instance (MonadUnliftIO m, PrimMonad m, MonadTime m) => MonadGame (GameM m) where
   setupNetwork = do
-    _ <- withRunInIO $ \unlift -> forkIO $ do 
+    as <- withRunInIO $ \unlift -> async $ do
+      myThreadId >>= flip labelThread ("Main network thread") 
       Network.serve (Network.Host "192.168.178.59") "25565" $ \(sock, _sockddr) -> do
         unlift (runNetwork sock $ runProtocol (Connection.new (Network.sendLazy sock))) >> pure ()
-    pure ()
+    liftIO $ link as
   {-# INLINE setupNetwork #-}

@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
-module Game.Event.PlayerMoved (
+module Event.Handler.PlayerMoved (
   playerMoved
 ) where
 
@@ -90,11 +90,13 @@ end every gametick:
 playerMoved ::
   ( MonadIO m
   , MonadState GameState m
-  ) => Player -> Maybe Position -> Connection.Handle -> m ()
-playerMoved p mpos conn = do
+  ) => Player -> Maybe Position -> m ()
+playerMoved p mpos = do
   st <- get
-  let !w = st ^. world dim
-  case mpos of
+  -- TODO 
+  let Just conn = st ^. connection (p ^. uuid) 
+      !w = st ^. world dim
+  w' <- case mpos of
     Nothing -> liftIO (updateViewPosition w conn p Nothing)
     Just pos -> do
       let !p' = position .~ pos $ p
@@ -102,16 +104,15 @@ playerMoved p mpos conn = do
           !st' = (player uid % _Just) .~ p' $ st
       put st'
       liftIO (updateViewPosition w conn p' (Just oldPos))
+  put $ world dim .~ w' $ st
   where
     !uid = p ^. uuid
     !dim = p ^. dimension
-{-# SPECIALIZE playerMoved :: Player -> Maybe Position -> Connection.Handle -> StateT GameState (GameM IO) () #-}
+{-# SPECIALIZE playerMoved :: Player -> Maybe Position -> StateT GameState (GameM IO) () #-}
 
 -- TODO https://stackoverflow.com/questions/398299/looping-in-a-spiral for a fast inclusivity check, tho having bitmaps seems fine as well
 -- since we don't need one per player as we can shift them
--- TODO Think about if we need to send/store chunks in sync or if we can async part of it 
--- I think we can fully send them async and just add them the tick they become available...
-updateViewPosition :: World -> Connection.Handle -> Player -> Maybe Position -> IO ()
+updateViewPosition :: World -> Connection.Handle -> Player -> Maybe Position -> IO World
 updateViewPosition !w !conn !p !mPrevPos = do
   let !newChunkPos = p ^. position % chunkPosition
       !(ChunkPos x z) = newChunkPos
@@ -127,19 +128,20 @@ updateViewPosition !w !conn !p !mPrevPos = do
       if (oldChunkPos /= newChunkPos)
         then do
           sendPacket conn (10, C.UpdateViewPosition x z)
+          -- TODO check if the player actually has these chunks?
           sendPackets conn $ (\(ChunkPos x' z') -> (16, C.UnloadChunk x' z')) <$> V.fromList (HS.toList toUnload)
-          sendChunks toSend
-        else pure ()
+          let w' = HS.foldl' unloadChunk w toUnload
+          sendChunks w' toSend
+        else pure w
     Nothing -> do
       sendPacket conn (10, C.UpdateViewPosition x z)
       -- TODO Handle teleport id correctly
       sendPacket conn (40, C.PlayerPositionAndLook (p ^. position) (p ^. rotation) (C.TeleportId 0) C.NoDismount)
-      sendChunks newChunks
+      sendChunks w newChunks
   where
-    sendChunks :: HS.HashSet ChunkPosition -> IO ()
-    sendChunks toSend = do
-      -- TOOD Since I moved sendPacket inside the client seems to really hate that
-      getOrLoadChunks w (V.fromList $ HS.toList toSend) $ \c -> sendPacket conn (C.ChunkDataAndUpdateLight <$> mkChunkData c)
+    -- TODO This currently sends chunks async, that's wrong if they have already been unloaded again
+    sendChunks :: World -> HS.HashSet ChunkPosition -> IO World
+    sendChunks w toSend = getOrLoadChunks w (V.fromList $ HS.toList toSend) $ \c -> sendPacket conn (C.ChunkDataAndUpdateLight <$> mkChunkData c)
     {-# INLINE sendChunks #-}
 
 {-

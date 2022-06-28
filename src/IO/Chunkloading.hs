@@ -22,8 +22,8 @@ import Control.Exception
 import Control.Concurrent.Async
 import qualified Data.Vector as V
 import Data.Bits
-import Control.Monad (replicateM)
-import GHC.Conc (numCapabilities)
+import Control.Monad (forM)
+import GHC.Conc (numCapabilities, labelThread)
 
 data Handle = Handle {
   loadChunk  :: ChunkPosition -> (Maybe Chunk -> IO ()) -> IO ()
@@ -45,7 +45,6 @@ instance Exception ChunkWorkerCrashed where
 
 newFromFolder :: String -> IO Handle
 newFromFolder path = do
-  tId <- myThreadId
   -- TODO A way to unload regionFiles
   let ringCap = 1024
       numWorkers = numCapabilities
@@ -66,20 +65,22 @@ newFromFolder path = do
         -- TODO: This can block indefinitely if we try to load more than ringCap chunks at once
         Ring.pushN reqs $ (\cp -> CR cp act) <$> cps
 
-  workers <- replicateM numWorkers $ async $ fix $ \loop -> do
-    !(CR cp@(ChunkPos x z) act) <- withMVar ringLock . const $ Ring.take reqs
-    let rX = x `div` 32
-        rZ = z `div` 32
-    withQueue rX rZ (readChunkData cp) >>= \case
-      Nothing -> do
-        throwTo tId $ ChunkWorkerCrashed "Chunk not in regionfile" rX rZ
-        error $ "Not generated: " <> show cp
-      Just chunkBs ->
-        case FP.runParser (get @(BinaryNBT Chunk)) chunkBs of
-          FP.OK (BinaryNBT chunk) _ -> act (Just chunk) >> loop
-          _ -> do
-            throwTo tId $ ChunkWorkerCrashed "Failed to parse chunk" rX rZ
-            error "TODO"
+  workers <- forM [0..numWorkers] $ \n -> async $ do
+    myThreadId >>= flip labelThread ("Chunkloading worker " <> show n)
+    fix $ \loop -> do
+      !(CR cp@(ChunkPos x z) act) <- withMVar ringLock . const $ Ring.take reqs
+      let rX = x `div` 32
+          rZ = z `div` 32
+      withQueue rX rZ (readChunkData cp) >>= \case
+        Nothing -> do
+          throwIO $ ChunkWorkerCrashed "Chunk not in regionfile" rX rZ
+        Just !chunkBs ->
+          case FP.runParser (get @(BinaryNBT Chunk)) chunkBs of
+            FP.OK (BinaryNBT !chunk) _ -> act (Just chunk) >> loop
+            _ -> do
+              throwIO $ ChunkWorkerCrashed "Failed to parse chunk" rX rZ
+
+  traverse_ link workers
 
   let close = do
         traverse_ cancel workers

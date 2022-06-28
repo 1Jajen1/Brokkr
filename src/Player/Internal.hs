@@ -12,7 +12,7 @@ import Data.UUID
 import Player.GameMode
 import Util.UUID
 import Optics
-import World
+import World.Dimension
 
 {- Note: [Players and Entities]
 

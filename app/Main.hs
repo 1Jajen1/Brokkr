@@ -7,6 +7,8 @@ import Game.State.Internal
 import World.Internal
 import qualified IO.Chunkloading as Chunkloading
 import Control.Exception
+import qualified Util.Queue as Queue
+import IO.ChunkCache
 
 main :: IO ()
 main = do
@@ -20,11 +22,10 @@ newGameState = do
 
   overworldCL <- Chunkloading.newFromFolder "server-dir/world/region"
 
-  let _worlds = (
-          World "Overworld" Overworld overworldCL mempty
-        , World "Nether" Nether overworldCL mempty
-        , World "TheEnd" TheEnd overworldCL mempty
-        )
-      _players = mempty
+  _worlds <-
+    (,,) <$> (World "Overworld" Overworld overworldCL emptyChunkCache <$> Queue.new 16)
+         <*> (World "Nether" Nether overworldCL emptyChunkCache <$> Queue.new 16)
+         <*> (World "TheEnd" TheEnd overworldCL emptyChunkCache <$> Queue.new 16)
+  let _players = mempty
       _connections = mempty
   pure GameState{..}

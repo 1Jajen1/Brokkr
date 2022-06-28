@@ -29,6 +29,7 @@ import Util.Time ( MonadTime )
 import Game.State (MonadGameState)
 import Network.Protocol
 import qualified Codec.Compression.Zlib as ZLib
+import Util.Exception
 
 class Monad m => MonadNetwork m where
   receiveBytes :: (ByteString -> Maybe (ByteString, ByteString)) -> m ByteString
@@ -55,6 +56,15 @@ instance MonadTrans NetworkM where
   lift = NetworkM . lift . lift
   {-# INLINE lift #-}
 
+instance MonadBracket m => MonadBracket (NetworkM m) where 
+  bracket acq clean act = do
+    sock <- NetworkM ask
+    st <- NetworkM $ lift $ get
+    (ret, st') <- lift $ bracket (runNetwork sock acq) (\a exc -> runNetwork sock $ clean a exc) $ flip runStateT st . flip runReaderT sock . runNetworkM . act
+    NetworkM $ lift $ put st'
+    pure ret
+  {-# INLINE bracket #-}
+
 instance MonadIO m => MonadNetwork (NetworkM m) where
   receiveBytes test = NetworkM $ do
     sock <- ask
@@ -62,7 +72,7 @@ instance MonadIO m => MonadNetwork (NetworkM m) where
     go sock bs
     where
       go sock bs = case test bs of
-        Just (res, rem') -> lift $ put rem' >> pure res
+        Just (!res, !rem') -> lift $ put rem' >> pure res
         Nothing -> Network.recv sock 1024 >>= \case
           Just new -> go sock (bs <> new)
           Nothing -> error "TODO Conn closed"
@@ -74,7 +84,7 @@ instance MonadIO m => MonadNetwork (NetworkM m) where
 
 readPacket :: forall a m . (MonadNetwork m, FromBinary a) => Protocol -> m a
 readPacket prot = do
-  packetBs <- receiveBytes $ \bs -> case runParser (Binary.get @VarInt >>= takeBs . fromIntegral) bs of
+  !packetBs <- receiveBytes $ \bs -> case runParser (Binary.get @VarInt >>= takeBs . fromIntegral) bs of
     OK res rem' -> Just (withCompression prot res, rem')
     Fail       -> Nothing
   case runParser (Binary.get @a) packetBs of

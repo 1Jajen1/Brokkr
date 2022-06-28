@@ -11,17 +11,23 @@ import Control.Monad
 import qualified Data.Text as T
 import Control.Monad.State.Strict
 import Game.State
-import Game.Command
-import Game.Event
+import Command.Connection
 import Sync.Monad
 import Sync.Handler.JoinPlayer (joinPlayer)
 import Sync.Handler.PlayerMovement (movePlayer, rotatePlayer, updateMovingPlayer)
+import Sync.Handler.DisconnectPlayer (disconnectPlayer)
 import Optics
 import Optics.Operators.Unsafe
-import Network.Connection.Internal
 import Util.UUID
 import Control.Concurrent.Async
 import Control.Monad.IO.Unlift
+import GHC.Conc (myThreadId, labelThread)
+import Network.Connection
+import qualified World.Internal as World
+import qualified Util.Queue as Queue
+import qualified Command.Handler.World
+import World.Dimension
+import qualified Event.Handler
 
 -- All of this should not be in the lib
 startServer :: (MonadUnliftIO m, MonadGame m) => m ()
@@ -30,27 +36,45 @@ startServer = do
   setupNetwork
   -- Start game loop
   as <- withRunInIO $ \runInIO -> do 
-    async $ runInIO $ gameLoop $ do
-      !initSt <- takeGameState
-      !(_, !newSt) <- flip runStateT initSt $
-        flip (traverseOf_ connections) initSt $ \conn -> do
-          !commands <- liftIO $ flushCommands conn
-          forM_ commands $ \cmd -> do
-            st <- get
+    async $ do
+      myThreadId >>= flip labelThread ("Main gameloop")
+      runInIO $ gameLoop $ do
+        !initSt <- takeGameState
+        !(_, !newSt) <- flip runStateT initSt $ do
 
-            -- Here st is readonly
-            -- TODO Handle player disconnecting
-            let p = st ^?! player (conn ^. uuid) % _Just
-                evs = runSync $ case cmd of
-                  (JoinPlayer p') -> joinPlayer p' st
-                  (MovePlayer pos) -> movePlayer p pos st
-                  (RotatePlayer rot) -> rotatePlayer p rot st
-                  (UpdateMovingPlayer onGround) -> updateMovingPlayer p onGround st
+          forOf_ worlds initSt $ \w -> do
+            !commands <- liftIO $ Queue.flush $ World._commandQueue w
+            let dim = w ^. dimension
+            forM_ commands $ \cmd -> do
+              st <- get
+              let w' = st ^. world dim
+                  evs = runSync $ Command.Handler.World.handle cmd w'
+              
+              forM_ evs Event.Handler.apply 
 
-            -- apply events and send packets
-            forM_ evs (applyEvent conn)
+          forOf_ connections initSt $ \conn -> do
+            !commands <- liftIO $ flushCommands conn
+            forM_ commands $ \cmd -> do
+              st <- get
 
-      putGameState newSt
+              -- Here st is readonly
+              -- TODO Handle player disconnecting
+              -- TODO Move this somewhere else and start moving all of this out to app
+              let p = st ^?! player (conn ^. uuid) % _Just
+                  evs = runSync $ case cmd of
+                    (JoinPlayer p') -> joinPlayer p' st
+                    (MovePlayer pos) -> movePlayer p pos st
+                    (RotatePlayer rot) -> rotatePlayer p rot st
+                    (UpdateMovingPlayer onGround) -> updateMovingPlayer p onGround st
+                    Disconnect r -> disconnectPlayer p r
+
+              -- apply events and send packets
+              forM_ evs Event.Handler.apply
+
+        liftIO $ print newSt
+        putGameState newSt
+
+  liftIO $ link as
 
   fix $ \loop -> do
     inp <- liftIO getLine

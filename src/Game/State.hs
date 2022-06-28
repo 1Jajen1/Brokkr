@@ -39,7 +39,9 @@ instance (MonadGameState m, MonadTrans t, Monad (t m)) => MonadGameState (Lift t
 --
 
 worlds :: IxFold Dimension GameState World
-worlds = error "TODO worlds fold"-- reindexed toEnum $ ifolding _worlds
+worlds = ifoldVL $ \f st ->
+  let (ow, ne, te) = _worlds st
+  in f Overworld ow *> f Nether ne *> f TheEnd te
 {-# INLINE worlds #-}
 
 world :: Dimension -> Lens' GameState World
