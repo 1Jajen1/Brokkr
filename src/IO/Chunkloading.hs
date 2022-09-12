@@ -46,6 +46,7 @@ instance Exception ChunkWorkerCrashed where
 newFromFolder :: String -> IO Handle
 newFromFolder path = do
   -- TODO A way to unload regionFiles
+  -- Probably just LRU and a fixed size here
   let ringCap = 1024
       numWorkers = numCapabilities
   !reqs <- Ring.newRingBuffer ringCap
@@ -75,6 +76,8 @@ newFromFolder path = do
         Nothing -> do
           throwIO $ ChunkWorkerCrashed "Chunk not in regionfile" rX rZ
         Just !chunkBs ->
+          -- TODO Parse this into an IOChunk, which is just a newtype around a foreign ptr
+          -- Then parse that into the real chunk. This allows me to bypass NBT completely
           case FP.runParser (get @(BinaryNBT Chunk)) chunkBs of
             FP.OK (BinaryNBT !chunk) _ -> act (Just chunk) >> loop
             _ -> do

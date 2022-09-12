@@ -20,6 +20,7 @@ import Control.Monad.Trans.State.Strict
 
 -- TODO Usage is very dangerous because of async errors, take/put is basically takeMVar/putMVar 
 -- Ideally this is only used top level, but some async tasks need this
+-- TODO This is ugly...
 class Monad m => MonadGameState m where
   takeGameState :: m GameState
   putGameState  :: GameState -> m ()

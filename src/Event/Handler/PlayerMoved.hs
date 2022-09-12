@@ -16,7 +16,7 @@ import Optics
 import Util.UUID
 import Network.Packet.Client.Play.ChunkData
 import Control.Monad.IO.Class
-import World.Internal
+import World
 import Game.Monad (GameM)
 import Util.Rotation
 import Control.Monad.State.Strict

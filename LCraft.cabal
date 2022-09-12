@@ -55,11 +55,12 @@ common common-options
                        -Wpartial-fields
                        -Wmissing-deriving-strategies
                        -O2
-                       --eventlog
+                       -eventlog
   default-extensions:  DerivingVia
                        LambdaCase
                        StrictData
                        OverloadedStrings
+                       DataKinds
   default-language:    GHC2021
 library
   import:              common-options

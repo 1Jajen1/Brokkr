@@ -28,6 +28,7 @@ import qualified Util.Queue as Queue
 import qualified Command.Handler.World
 import World.Dimension
 import qualified Event.Handler
+import Debug.Trace
 
 -- All of this should not be in the lib
 startServer :: (MonadUnliftIO m, MonadGame m) => m ()
@@ -38,12 +39,16 @@ startServer = do
   as <- withRunInIO $ \runInIO -> do 
     async $ do
       myThreadId >>= flip labelThread ("Main gameloop")
-      runInIO $ gameLoop $ do
+      runInIO $ gameLoop $ \_tick -> do
+        -- liftIO $ putStrLn $ "TICK: " <> show tick
         !initSt <- takeGameState
         !(_, !newSt) <- flip runStateT initSt $ do
 
           forOf_ worlds initSt $ \w -> do
             !commands <- liftIO $ Queue.flush $ World._commandQueue w
+
+            -- when (not $ V.null commands) $ liftIO $ print commands
+
             let dim = w ^. dimension
             forM_ commands $ \cmd -> do
               st <- get
@@ -54,6 +59,9 @@ startServer = do
 
           forOf_ connections initSt $ \conn -> do
             !commands <- liftIO $ flushCommands conn
+
+            -- when (not $ V.null commands) $ liftIO $ print commands
+
             forM_ commands $ \cmd -> do
               st <- get
 
@@ -71,7 +79,7 @@ startServer = do
               -- apply events and send packets
               forM_ evs Event.Handler.apply
 
-        liftIO $ print newSt
+        -- liftIO $ print newSt
         putGameState newSt
 
   liftIO $ link as
@@ -83,22 +91,24 @@ startServer = do
       _ -> loop
 {-# SPECIALIZE startServer :: GameM IO () #-}
 
-gameLoop :: MonadGame m => m () -> m ()
-gameLoop act = go
+gameLoop :: (MonadIO m, MonadGame m) => (Int -> m ()) -> m ()
+gameLoop act = go 0
   where
-    go = do
+    go !tick = do
       !start <- currentTime
 
-      act
+      act tick
 
       !end <- currentTime
 
       let !diff = max 0 $ end - start
-      when (diff > 10) . logWarn . T.pack $ "Tick took: " <> show diff
+      when (diff > 10) $ do
+        -- liftIO $ traceMarkerIO "Slow tick"
+        logWarn . T.pack $ "Tick took: " <> show diff
 
       delay $ 50 * 1000 - diff
 
-      go
+      go $ tick + 1
 {-# INLINE gameLoop #-}
 
 {-

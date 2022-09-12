@@ -39,6 +39,9 @@ import Data.Hashable
 import qualified Data.HashMap.Strict as HM
 
 -- | Content of a NBT
+-- TODO Benchmark against using an unboxed Sum and in general use unboxed values?
+-- Also use Int# for all numerical types?
+-- TODO First bench Tag as an unlifted datatype?
 data Tag =
     TagEnd
   | TagByte !Int8
@@ -94,6 +97,7 @@ tagFromId = \case
   _ -> FlatParse.Basic.empty
   where
     -- TODO use a different HashMap better geared towards small inserts, very small sizes and fast lookups to lower this cost some more
+    -- TODO Also bench against a mutable hashmap since this is only mutable in goCompound (linear types?)
     goCompound acc = do
       tid <- get @Int8
       if tid == 0
@@ -104,7 +108,6 @@ tagFromId = \case
           goCompound $ HM.insert key comp acc
 {-# INLINE tagFromId #-}
 {-# SCC tagFromId #-}
--- TODO This occupies a lot of time when loading chunks
 
 instance ToBinary Tag where
   put tag = case tag of
@@ -166,6 +169,7 @@ instance FromBinary NBT where
     -- Don't consume the tag id on failure so that the compound parser has an easier time determining if it finished correctly
     -- It uses many (get @NBT) thus when this fails we either have a faulty NBT (in that case the next thing is not TagEnd) or we are
     -- done (in which case we have TagEnd next). This may be problematic if the faulty nbt branch backtracks to right before a 0...
+    -- TODO It no longer does, but tbh this is only run once so no real cost anyway...
     tid <- lookahead $ get @Int8
     when (tid == 0) FlatParse.Basic.empty
     _ <- anyWord8
@@ -185,6 +189,7 @@ instance ToBinary NBT where
 --
 -- CPS'd parser, the first argument is the success continuation, the second the abort continuation
 -- Example: runParser p Just Nothing
+-- TODO: Test this against runParser :: forall {r} :: RuntimeRep, a :: TYPE' r . Tag -> (# a | #)
 newtype NBTParser a = NBTParser { runParser :: forall r . (a -> r) -> r -> Tag -> r }
 
 -- TODO Test laws.

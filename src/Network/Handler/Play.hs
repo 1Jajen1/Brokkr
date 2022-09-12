@@ -73,6 +73,8 @@ playProtocol prot = do
           -- TODO
           S.PlayerAbilities _ -> pure ()
           -- TODO
+          S.EntityAction -> pure ()
+          -- TODO
           S.KeepAlive _ -> pure ()
            -- TODO handle these?
           S.ClientSettings -> pure ()

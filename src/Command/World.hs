@@ -2,8 +2,11 @@ module Command.World (
   Command(..)
 ) where
 
-import Chunk (Chunk)
+import Chunk (Chunk, HasChunkPosition (chunkPosition))
+import Optics
 
 data Command =
     CacheLoadedChunk !Chunk
-  deriving stock Show
+
+instance Show Command where
+  show (CacheLoadedChunk c) = "CacheLoadedChunk " <> show (c ^. chunkPosition)

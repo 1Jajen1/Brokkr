@@ -59,6 +59,7 @@ import Data.Word
 -- TODO Check if it is worth avoiding the overflow/underflow checks that div imposes
 --  Unless vectors with a packed bitSize of 0 or > 64 are introduced, which are nonsense, this should never fail
 -- TODO Tests + Benchmarks (Compare against normal storable vectors to get a sense of what overhead we have)
+-- TODO Make data instances unlifted and newtype instances rep poly?
 
 -- | Either some 'Nat' value of a dynamic (usually runtime defined) value
 data DynamicNat = Static Nat | Dynamic
@@ -99,6 +100,7 @@ type family Mutable (v :: Type) = (mv :: Type -> Type) | mv -> v
 type instance Mutable (PackedVector sz bSz) = MutablePackedVector sz bSz
 
 -- | Generic immutable packed vectors
+-- TODO all methods from MPVector should be copied here
 class MPVector (Mutable a) => PVector a where
   -- | /O(1)/ Turn an immutable packed vector into a mutable vector without copying
   unsafeThaw :: PrimMonad m => a -> m (Mutable a (PrimState m))
@@ -423,5 +425,5 @@ nrWords bSz i = (i + perWord - 1) `divInt` perWord
   where perWord = 64 `divInt` bSz
 {-# INLINE nrWords #-}
 
--- TODO THis assumes Word is Word64, which is fine since our parser does so as well
+-- TODO This assumes Word is Word64, which is fine since our parser does so as well
 foreign import ccall unsafe "countElems" c_countElems :: Word8 -> Word32 -> Ptr Word8 -> Word32 -> Ptr Word -> Word32 -> Word32

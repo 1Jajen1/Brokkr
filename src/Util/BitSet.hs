@@ -19,6 +19,7 @@ import Util.Binary hiding (get)
 import Network.Util.VarNum
 import Control.DeepSeq
 
+-- TODO do a lot more here
 newtype BitSet = BitSet (Vector Word64)
   deriving newtype (Eq, Show, NFData)
 
