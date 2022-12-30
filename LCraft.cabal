@@ -12,13 +12,16 @@ category:            Game
 build-type:          Simple
 extra-doc-files:     README.md
                      CHANGELOG.md
-tested-with:         GHC == 9.2.1
+tested-with:         GHC == 9.4.3
 
 common common-options
 -- TODO Go through deps soon-ish
-  build-depends:       base ^>= 4.16.0.0
+  build-depends:       base ^>= 4.17.0.0
                      , data
                      , async
+                     , stm
+                     , stm-containers
+                     , monad-control
                      , primitive
                      , text ^>= 2.0
                      , flatparse
@@ -35,13 +38,10 @@ common common-options
                      , unordered-containers
                      , hashable
                      , deepseq
-                     , dlist
-                     , time
                      , transformers
-                     , mtl
-                     , unliftio-core
+                     , chronos
                      , optics
-                     , linear-base
+                     , bitfield
   
   ghc-options:         -Wall
                        -Wcompat
@@ -55,7 +55,6 @@ common common-options
                        -Wpartial-fields
                        -Wmissing-deriving-strategies
                        -O2
-                       -eventlog
   default-extensions:  DerivingVia
                        LambdaCase
                        StrictData
@@ -71,83 +70,65 @@ library
   --c-sources:         cbits/basic.c
   cc-options:          -O3
   exposed-modules:     LCraft
-                     , Block.Position
-                     , Chunk
-                     , Chunk.Internal
-                     , Chunk.Position
-                     , Chunk.Section
-                     , Command.Connection
-                     , Command.Handler.World
-                     , Command.World
-                     , Entity.Id.Monad
-                     , Entity.Internal
-                     , Event
-                     , Event.Handler
-                     , Event.Handler.ChunkCached
-                     , Event.Handler.PlayerDisconnected
-                     , Event.Handler.PlayerJoined
-                     , Event.Handler.PlayerMoved
-                     , Game.State
-                     , Game.State.Internal
-                     , Game.Monad
-                     , IO.ChunkCache
-                     , IO.Chunkloading
-                     , IO.RegionFile
-                     , Network
-                     , Network.Connection
-                     , Network.Connection.Internal
-                     , Network.Handler.Login
-                     , Network.Handler.Play
-                     , Network.Monad
-                     , Network.Packet.Client.Login
-                     , Network.Packet.Client.Play
-                     , Network.Packet.Client.Play.ChunkData
-                     , Network.Packet.Client.Play.JoinGame
-                     , Network.Packet.Server.Handshake
-                     , Network.Packet.Server.Login
-                     , Network.Packet.Server.Play
-                     , Network.Packet.Server.Play.PlayerAbilities
-                     , Network.Protocol
-                     , Network.Util.Builder
-                     , Network.Util.FromIntegral
-                     , Network.Util.MCString
-                     , Network.Util.Packet
-                     , Network.Util.SizePrefixed
-                     , Network.Util.VarNum
-                     , Player
-                     , Player.GameMode
-                     , Player.Internal
-                     , Sync.Handler.DisconnectPlayer
-                     , Sync.Handler.JoinPlayer
-                     , Sync.Handler.PlayerMovement
-                     , Sync.Monad
-                     , Util.Angle
-                     , Util.Binary
-                     , Util.BitSet
-                     , Util.ByteOrder
-                     , Util.Disconnect
-                     , Util.Exception
-                     , Util.Lift
-                     , Util.Log
-                     , Util.NBT
-                     , Util.NBT.Internal
-                     , Util.Time
-                     , Util.Type
-                     , Util.Vector.Packed
-                     , Util.Vector.Internal
-                     , Util.Linear.V2
-                     , Util.Linear.V3
-                     , Util.Linear.Vector
-                     , Util.Position
-                     , Util.PrimVar
-                     , Util.Queue
-                     , Util.Ring
-                     , Util.Rotation
-                     , Util.UUID
-                     , Util.Word24
-                     , World
-                     , World.Dimension
-                     , World.Internal
+                      , Block.Position
+                      , Command
+                      , Command.Handler
+                      , Command.Handler.Disconnect
+                      , Command.Handler.Login
+                      , Command.Handler.Movement
+                      , Control.Monad.STM.Class
+                      -- , Chunk
+                      , Chunk.Internal
+                      , Chunk.Position
+                      , Chunk.Section
+                      , Client
+                      , Client.GameMode
+                      , Client.Internal
+                      , Dimension
+                      , Dimension.Internal
+                      , Entity.EntityId
+                      -- , IO.ChunkCache
+                      , IO.RegionFile
+                      -- , Network
+                      , Network.Connection
+                      , Network.Exception
+                      , Network.Handler
+                      , Network.Monad
+                      , Network.Packet.Client.Login
+                      , Network.Packet.Client.Play
+                      , Network.Packet.Client.Play.ChunkData
+                      , Network.Packet.Client.Play.Login
+                      , Network.Packet.Server.Handshake
+                      , Network.Packet.Server.Login
+                      , Network.Packet.Server.Play
+                      , Network.Packet.Server.Play.ClientInformation
+                      , Network.Packet.Server.Play.PlayerAbilities
+                      , Network.Protocol
+                      , Network.Util.Builder
+                      , Network.Util.FromIntegral
+                      , Network.Util.MCString
+                      , Network.Util.Packet
+                      , Network.Util.SizePrefixed
+                      , Network.Util.VarNum
+                      , Server
+                      , Util.Angle
+                      , Util.Binary
+                      , Util.BitSet
+                      , Util.ByteOrder
+                      , Util.NBT
+                      , Util.NBT.Internal
+                      , Util.Vector.Packed
+                      , Util.Vector.Internal
+                      , Util.Linear.V2
+                      , Util.Linear.V3
+                      , Util.Linear.Vector
+                      , Util.Position
+                      , Util.PrimVar
+                      , Util.Queue
+                      , Util.Ring
+                      , Util.Rotation
+                      , Util.UUID
+                      , Util.Word24
 executable LCraft
   import:              common-options
   hs-source-dirs:      app

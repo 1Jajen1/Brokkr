@@ -81,7 +81,6 @@ readChunkData :: ChunkPosition -> RegionFile -> IO (Maybe ByteString)
 readChunkData (ChunkPos x z) RegionFile{..}
   | off == 0 && sz == 0 = pure Nothing
   | otherwise = do
-    -- TODO Move decompression out of here to make the critial phase where we hold the MVar lock smaller?
     compressedBs <- readAt file (unsafeShiftL (fromIntegral off) 12) (unsafeShiftL (fromIntegral sz) 12)
     case FP.runParser chunkDataP compressedBs of
       FP.OK res _ -> pure $ Just res
@@ -94,8 +93,8 @@ readChunkData (ChunkPos x z) RegionFile{..}
         compType <- get @Int8
         !bs <- takeBs . fromIntegral $ sizePre - 1
         case compType of
-          2 -> pure $! LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
           1 -> pure $! LBS.toStrict . GZip.decompress $ LBS.fromStrict bs
+          2 -> pure $! LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
           3 -> pure bs
           _ -> error "Unknown compression scheme" -- TODO error
 

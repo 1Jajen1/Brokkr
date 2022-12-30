@@ -17,12 +17,10 @@ module Registry.BiomeSettings (
 , FoliageColor(..)
 , GrassColor(..)
 , GrassColorModifier(..)
-, BiomeEffectSound(..)
 ) where
 
 import Data.Aeson
 import Data.Int
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Deriving.Aeson as A
 import GHC.Generics
@@ -30,9 +28,11 @@ import Language.Haskell.TH.Syntax (Lift)
 
 data BiomeSettings = BiomeSettings {
   _precipitation       :: Precipitation
+, _depth               :: Maybe Depth
 , _temperature         :: Temperature
+, _scale               :: Maybe Scale
 , _downfall            :: Downfall
-, _category            :: BiomeCategory
+, _category            :: Maybe BiomeCategory
 , _temperatureModifier :: Maybe TemperatureModifier
 , _effects             :: BiomeEffects
 -- TODO Remaining options
@@ -126,10 +126,6 @@ data BiomeEffects = BiomeEffects {
 , _waterFogColor      :: WaterFogColor
 , _fogColor           :: FogColor
 , _waterColor         :: WaterColor
-, _moodSound          :: Maybe BiomeEffectSound
--- , _foliageColor       :: Maybe FoliageColor
--- , _grassColor         :: Maybe GrassColor
--- , _grassColorModifier :: Maybe GrassColorModifier
 -- TODO Remaining options
 }
   deriving stock (Show, Eq, Generic, Lift)
@@ -169,14 +165,3 @@ instance FromJSON GrassColorModifier where
     "swamp" -> pure SwampM
     "dark_forest" -> pure DarkForestM
     _ -> fail "unknown value for grass_color_modifier"
-
-
-data BiomeEffectSound = BiomeEffectSound {
-  _tickDelay :: Int32
-, _offset    :: Double
-, _sound     :: Text
-}
-  deriving stock (Show, Eq, Generic, Lift)
-  deriving FromJSON via A.CustomJSON '[
-    A.FieldLabelModifier (A.CamelToSnake, A.StripPrefix "_")
-  ] BiomeEffectSound

@@ -1,6 +1,6 @@
 {-# LANGUAGE PatternSynonyms #-}
 module Network.Packet.Server.Handshake (
-  HandshakePacket(..)
+  Packet(..)
 , ProtocolVersion(..)
 , ServerAddress(..)
 , ServerPort(..)
@@ -17,16 +17,16 @@ import Data.Word
 import Network.Util.MCString
 import FlatParse.Basic
 
-data HandshakePacket = Handshake ProtocolVersion ServerAddress ServerPort NextState
+data Packet = Handshake ProtocolVersion ServerAddress ServerPort NextState
   deriving stock Show
 
-instance FromBinary HandshakePacket where
+instance FromBinary Packet where
   get = get @VarInt >>= \case
     VarInt 0 -> Handshake <$> get <*> get <*> get <*> get
     _ -> empty
   {-# INLINE get #-}
 
-instance ToBinary HandshakePacket where
+instance ToBinary Packet where
   put (Handshake pv sa sp n) = put (VarInt 0) <> put pv <> put sa <> put sp <> put n
 
 newtype ProtocolVersion = PV Int32

@@ -1,79 +1,114 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Network.Packet.Server.Play (
-  PlayPacket(..)
+  Packet(..)
 ) where
 
 import Util.Binary
 import Network.Util.VarNum
+import Network.Util.MCString
 import Network.Util.Packet
 import Data.Word
-import Player
+import Data.Int
+import Client
 import Util.Position
 import Util.Rotation
+
+import Data.ByteString (ByteString)
+import Data.Coerce
+import Data.Text (Text)
+
+import FlatParse.Basic (takeRestBs)
+
+import Network.Packet.Server.Play.ClientInformation
 import Network.Packet.Server.Play.PlayerAbilities
 
-data PlayPacket =
-    TeleportConfirm Int
-  | QueryBlockNBT
-  | SetDifficulty
+data Packet =
+    ConfirmTeleportation Int
+  | QueryBlockEntityTag
+  | ChangeDifficulty
+  | MessageAcknowledgment
+  | ChatCommand
   | ChatMessage
-  | ClientStatus
-  | ClientSettings
-  | TabComplete
-  | ClickWindowButton
-  | ClickWindow
-  | CloseWindow
-  | PluginMessage
+  | ChatPreview
+  | ClientCommand
+  | ClientInformation Locale ViewDistance ChatMode UseChatColors DisplayedSkinParts MainHand UseTextFiltering AllowServerListings
+  | CommandSuggestionsRequest
+  | ClickContainerButton
+  | ClickContainer
+  | CloseContainer
+  | PluginMessage Text ByteString
   | EditBook
-  | QueryEntityNBT
-  | InteractEntity
-  | GenerateStructure
-  | KeepAlive Word64
+  | QueryEntityTag
+  | Interact
+  | JigsawGenerate
+  | KeepAlive Int64
   | LockDifficulty
-  | PlayerPosition Position OnGround
-  | PlayerPositionAndRotation Position Rotation OnGround
-  | PlayerRotation Rotation OnGround
-  | PlayerMovement OnGround
-  | VehicleMove
-  | SteerBoat
+  | SetPlayerPosition Position OnGround
+  | SetPlayerPositionAndRotation Position Rotation OnGround
+  | SetPlayerRotation Rotation OnGround
+  | SetPlayerOnGround OnGround
+  | MoveVehicle
+  | PaddleBoat
   | PickItem
-  | CraftItemRequest
+  | PlaceRecipe
   | PlayerAbilities Abilities
-  | PlayerDigging
-  | EntityAction
+  | PlayerAction
+  | PlayerCommand
+  | PlayerInput
+  | Pong
+  | ChangeRecipeBookSettings
+  | SetSeenRecipe
+  | RenameItem
+  | ResourcePack
+  | SeenAdvancements
+  | SelectTrade
+  | SetBeaconEffect
+  | SetHeldItem
+  | ProgramCommandBlock
+  | ProgramCommandBlockMinecart
+  | SetCreativeModeSlot
+  | ProgramJigsawBlock
+  | ProgramStructureBlock
+  | UpdateSign
+  | SwingArm
+  | TeleportToEntity
+  | UseItemOn
+  | UseItem
   deriving stock Show
 
-instance FromBinary PlayPacket where
+instance FromBinary Packet where
   get = $$(mkPacketParser [
-      [|| teleportConfirm ||]
-    , [|| pure QueryBlockNBT ||]
-    , [|| pure SetDifficulty ||]
+      [|| confirmTeleport ||]
+    , [|| pure QueryBlockEntityTag ||]
+    , [|| pure ChangeDifficulty ||]
+    , [|| pure MessageAcknowledgment ||]
+    , [|| pure ChatCommand ||]
     , [|| pure ChatMessage ||]
-    , [|| pure ClientStatus ||]
-    , [|| pure ClientSettings ||]
-    , [|| pure TabComplete ||]
-    , [|| pure ClickWindowButton ||]
-    , [|| pure ClickWindow ||]
-    , [|| pure CloseWindow ||]
-    , [|| pure PluginMessage ||]
+    , [|| pure ChatPreview ||]
+    , [|| pure ClientCommand ||]
+    , [|| ClientInformation <$> get <*> get <*> get <*> get <*> get <*> get <*> get <*> get ||]
+    , [|| pure CommandSuggestionsRequest ||]
+    , [|| pure ClickContainerButton ||]
+    , [|| pure ClickContainer ||]
+    , [|| pure CloseContainer ||]
+    , [|| PluginMessage . coerce <$> get @MCString <*> takeRestBs ||]
     , [|| pure EditBook ||]
-    , [|| pure QueryEntityNBT ||]
-    , [|| pure InteractEntity ||]
-    , [|| pure GenerateStructure ||]
+    , [|| pure QueryEntityTag ||]
+    , [|| pure Interact ||]
+    , [|| pure JigsawGenerate ||]
     , [|| KeepAlive <$> get ||]
     , [|| pure LockDifficulty ||]
-    , [|| PlayerPosition <$> get <*> get ||]
-    , [|| PlayerPositionAndRotation <$> get <*> get <*> get ||]
-    , [|| PlayerRotation <$> get <*> get ||]
-    , [|| PlayerMovement <$> get ||]
-    , [|| pure VehicleMove ||]
-    , [|| pure SteerBoat ||]
+    , [|| SetPlayerPosition <$> get <*> get ||]
+    , [|| SetPlayerPositionAndRotation <$> get <*> get <*> get ||]
+    , [|| SetPlayerRotation <$> get <*> get ||]
+    , [|| SetPlayerOnGround <$> get ||]
+    , [|| pure MoveVehicle ||]
+    , [|| pure PaddleBoat ||]
     , [|| pure PickItem ||]
-    , [|| pure CraftItemRequest ||]
+    , [|| pure PlaceRecipe ||]
     , [|| PlayerAbilities <$> get ||]
-    , [|| pure PlayerDigging ||]
-    , [|| pure EntityAction ||]
+    , [|| pure PlayerAction ||]
     ])
     where
-      teleportConfirm = TeleportConfirm . fromIntegral <$> get @VarInt
+      confirmTeleport = ConfirmTeleportation . fromIntegral <$> get @VarInt
   {-# INLINE get #-}

@@ -22,5 +22,4 @@ pattern ChunkPos x z <- ChunkPosition !(V2_Int x z) where
 {-# INLINE CONLIKE ChunkPos #-}
 
 class HasChunkPosition a where
-  type Access a :: OpticKind
-  chunkPosition :: Optic' (Access a) NoIx a ChunkPosition
+  chunkPosition :: Getter a ChunkPosition

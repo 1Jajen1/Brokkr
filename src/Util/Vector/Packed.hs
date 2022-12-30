@@ -39,6 +39,8 @@ import qualified Foreign.ForeignPtr as FP
 import qualified Foreign.Storable as S
 import qualified Foreign.Marshal.Utils as S
 import qualified Data.Vector.Storable as S
+import qualified Data.Vector.Primitive as Prim
+import qualified Data.Primitive as Prim
 
 import GHC.ForeignPtr ( unsafeWithForeignPtr )
 import GHC.TypeLits ( KnownNat, Nat, natVal )
@@ -231,6 +233,8 @@ unsafeWrite vec !i !a =
 -- 
 -- With @0 < min(srcBitSize, dstBitSize) <= 64@ we can assert that the time complexity is always
 -- smaller than a naive implementation reading and writing each packed word individually.
+
+-- TODO Rebench and optimize traversals, this should not really be worth it
 unsafeCopy :: (MPVector a, MPVector b, PrimMonad m) => a (PrimState m) -> b (PrimState m) -> m ()
 -- The naive implementation here would be to read every word one by one and write it to the destination so O(n)
 -- 
@@ -367,17 +371,20 @@ foldl' f a v = runST $ do
   unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> go ptr 0 0 a
 {-# INLINE foldl' #-}
 
-countElems :: PVector v => S.Vector Word -> v -> Int
-countElems els v =
+-- Pass an Unboxed vector instead. Reason being: This uses an unsafe ffi call, so unboxed vectors are fine and
+-- don't carry as much penalty for allocation and fragmentation
+countElems :: PVector v => Prim.Vector Word -> v -> Int
+countElems (Prim.Vector off sz arr) v =
   runST $ do
     mv <- unsafeThaw v
     let fptr = backing mv
         len = length mv
         wLen = nrWords bSz len
         bSz = bitSz mv
-    unsafePrimToPrim $ S.unsafeWith els $ \ePtr -> unsafeWithForeignPtr fptr $ \ptr -> do
+        ePtr = Ptr.advancePtr @Word (coerce $ Prim.byteArrayContents arr) off
+    unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> do
       pure . fromIntegral $
-        c_countElems (fromIntegral bSz) (fromIntegral len) (coerce ptr) (fromIntegral wLen) ePtr (fromIntegral $ S.length els)
+        c_countElems (fromIntegral bSz) (fromIntegral len) (coerce ptr) (fromIntegral wLen) ePtr (fromIntegral sz)
 {-# INLINE countElems #-}
 
 -- Creating packed vectors

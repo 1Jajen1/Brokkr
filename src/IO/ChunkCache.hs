@@ -8,7 +8,7 @@ module IO.ChunkCache (
 , insertChunk
 ) where
 
-import Chunk
+-- import Chunk
 
 import Data.IntMap.Strict ( IntMap )
 

@@ -1,97 +1,93 @@
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 module Network.Connection (
-  Handle(
-    sendPacket
-  , sendPackets
-  )
-, DisconnectException(..)
+  Connection
 , new
-, pushCommand
-, pushCommands
+, SendPacket(..)
+, executeCommand, executeCommands
+, sendPacket, sendPackets
 , flushCommands
+, flushPackets
+, sendKeepAlive
+, ackKeepAlive
+, close
 ) where
 
-import Network.Connection.Internal
-import Network.Protocol
-import Network.Util.Builder
+import {-# SOURCE #-} Command
 
-import Util.Binary
-import qualified Util.Ring as Ring
+import Control.Concurrent
+import Control.Exception
+import Control.Monad
+
+import Data.Int
 
 import qualified Data.Vector as V
-import Control.Concurrent
-import Data.ByteString.Lazy hiding (last)
-import qualified Data.Time.Clock.POSIX as Time
-import qualified Network.Packet.Client.Play as C
-import Prelude hiding (last)
-import qualified Data.Time as Time
-import Data.UUID
-import Control.Concurrent.Async
-import GHC.Conc (labelThread)
-import qualified Data.Text as T
+
+import Network.Exception (ConnectionClosed(..), ClientTimedOut(..), InvalidKeepAlive(..))
+
+import Network.Packet.Client.Play (Packet(KeepAlive))
+
+import Util.Queue (Queue)
 import qualified Util.Queue as Queue
-import Command.Connection (Command)
 
--- TODO Is the send function here problematic for perf? I mean it is pointer passing and very small so ...
-new :: (ByteString -> IO ()) -> UUID -> Protocol -> IO Handle
-new send uid prot = do
-  ring <- Ring.newRingBuffer 512 -- This has to be larger than the max chunk batch size for one conn, so ~ (viewDistance * 2) ** 2
+import Util.Ring (Ring)
+import qualified Util.Ring as Ring
+
+data Connection = Conn {
+  commandQueue :: Queue Command
+, sendLock :: MVar ()
+, sendQueue :: Ring SendPacket
+, lastKeepAlive :: MVar Int64 -- Full means we sent the number, empty means the client responded correctly
+, threadId :: ThreadId
+}
+
+data SendPacket = SendPacket !Int !Packet
+
+new :: IO Connection
+new = do
+  commandQueue <- Queue.new 64
   sendLock <- newMVar ()
-  -- TODO use a specialized structure for the queue
-  commands <- Queue.new 64
-  let sendPacket p   = withMVar sendLock . const $ Ring.push ring p
-      sendPackets ps = withMVar sendLock . const $ Ring.pushN ring ps
-      showHandle = "" -- TODO add some information here?
-      keepAlive :: Int -> IO ()
-      keepAlive !last = do
-        now <- (\n -> floor $ 1e3 * n) . Time.nominalDiffTimeToSeconds <$> Time.getPOSIXTime
-        let delta = (timeBetweenKeepAlive * 2) - now + last
-        threadDelay . max 0 $ delta * 1000
-        sendPacket (10, C.KeepAlive $ fromIntegral now)
-        keepAlive now
-      timeBetweenKeepAlive = 20 * 1000
-      goSend = do
-        !toSend <- Ring.peekN ring
+  sendQueue <- Ring.newRingBuffer 512
+  lastKeepAlive <- newEmptyMVar
+  threadId <- myThreadId
+  pure Conn{..}
 
-        -- TODO This should be safe from async exceptions
-        -- Cutting of the connection mid send may crash the client and is anything but graceful
-        send . fromChunks $ fmap (\(szHint, packet) -> let !bs = toStrictSizePrefixedByteString prot szHint $ put packet in bs) (V.toList toSend)
+executeCommand :: Connection -> Command -> IO ()
+executeCommand Conn{..} c = Queue.push commandQueue c
 
-        Ring.advanceN ring $ fromIntegral (V.length toSend)
+executeCommands :: Connection -> V.Vector Command -> IO ()
+executeCommands Conn{..} cs = Queue.pushN commandQueue cs
 
-        goSend
+sendPacket :: Connection -> SendPacket -> IO ()
+sendPacket Conn{..} p = withMVar sendLock . const $ Ring.push sendQueue p
 
-  -- This should get shut down when the Handle is GC'd right?
-  connSender <- async $ do
-    myThreadId >>= flip labelThread ("Connection sender for " <> show uid)
-    goSend >> pure ()
-  -- TODO Does link rethrow Cancellation exceptions?
-  link connSender
-  
-  now <- (\n -> floor $ 1e3 * n) . Time.nominalDiffTimeToSeconds <$> Time.getPOSIXTime
-  connKeepAlive <- async $ do
-    myThreadId >>= flip labelThread ("Connection keepAlive for " <> show uid)
-    keepAlive $ now - timeBetweenKeepAlive
-  link connKeepAlive
+sendPackets :: Connection -> V.Vector SendPacket -> IO ()
+sendPackets Conn{..} ps = withMVar sendLock . const $ Ring.pushN sendQueue ps
 
-  connThread <- myThreadId
-  let close = do
-        cancel connSender
-        cancel connKeepAlive
-      disconnect reason = do
-        close
-        throwTo connThread DisconnectException
-        send $ fromStrict $! toStrictSizePrefixedByteString prot szEst $ put (C.Disconnect reason)
-        where szEst = 1 + T.length reason -- TODO Better estimate? This is fine for ascii only chars
+flushCommands :: Connection -> (V.Vector Command -> IO a) -> IO a
+flushCommands Conn{..} f = Queue.flush commandQueue >>= f
+{-# INLINE flushCommands #-}
 
-  pure Handle{..}
-{-# INLINE new #-}
+flushPackets :: Connection -> (V.Vector SendPacket -> IO a) -> IO a
+flushPackets Conn{..} f = do
+  ps <- Ring.peekN sendQueue
+  res <- f ps
+  Ring.advanceN sendQueue . fromIntegral $ V.length ps
+  pure res
+{-# INLINE flushPackets #-}
 
+sendKeepAlive :: Connection -> Int64 -> IO ()
+sendKeepAlive c@Conn{..} t = do
+  res <- tryPutMVar lastKeepAlive t
+  -- If the client hasn't yet responded, close the connection
+  unless res $ throwIO ClientTimedOut
+  sendPacket c . SendPacket 10 $ KeepAlive t
 
-pushCommand :: Handle -> Command -> IO ()
-pushCommand hdl c = Queue.push (commands hdl) c
-pushCommands :: Handle -> V.Vector Command -> IO ()
-pushCommands hdl cs = Queue.pushN (commands hdl) cs
-flushCommands :: Handle -> IO (V.Vector Command)
-flushCommands hdl = Queue.flush (commands hdl)
+ackKeepAlive :: Connection -> Int64 -> IO ()
+ackKeepAlive Conn{..} t = tryTakeMVar lastKeepAlive >>= \case
+  Just t' | t' == t -> pure ()
+  -- If the client responds with an invalid keepalive or one we did not expect, we close the connection
+  Just t' -> throwIO $ InvalidKeepAlive t t'
+  Nothing -> throwIO UnexpectedKeepAlive
+
+close :: Connection -> IO ()
+close Conn{..} = putStrLn "Closed" >> throwTo threadId ConnectionClosed

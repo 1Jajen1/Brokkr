@@ -12,10 +12,10 @@ category:            Data
 build-type:          Simple
 extra-doc-files:     README.md
                      CHANGELOG.md
-tested-with:         GHC == 9.2.1
+tested-with:         GHC == 9.4.3
 
 common common-options
-  build-depends:       base ^>= 4.16.0.0
+  build-depends:       base ^>= 4.17.0.0
                      , text
                      , aeson
                      , deriving-aeson

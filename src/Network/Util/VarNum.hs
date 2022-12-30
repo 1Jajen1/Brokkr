@@ -60,6 +60,7 @@ writeVarNumInternal !n !ptr
   | otherwise = do
       writeOffPtr ptr 0 . fromIntegral $ setBit (n .&. 127) 7
       writeVarNumInternal (unsafeShiftR n 7) (advancePtr ptr 1)
+{-# INLINABLE writeVarNumInternal #-}
 
 -- TODO Bench against repeated shift and mask if statements
 varIntSize :: Int -> Int

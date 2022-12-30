@@ -1,9 +1,9 @@
 module Util.UUID (
   HasUUID(..)
+, module Data.UUID
 ) where
 
 import Data.UUID
-import Optics
 
 class HasUUID a where
-  uuid :: Getter a UUID
+  uuid :: a -> UUID

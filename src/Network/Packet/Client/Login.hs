@@ -12,15 +12,16 @@ import Network.Util.VarNum
 data LoginPacket =
     Disconnect
   | EncryptionRequest
-  | LoginSuccess UUID Text
+  | LoginSuccess UUID Text -- Newtype to properly control size (16 bytes)
   | SetCompression Int
   deriving stock Show
 
 instance ToBinary LoginPacket where
   put a = packetId a <> case a of
-    LoginSuccess uid name -> put uid <> put (MCString name)
+    LoginSuccess uid name -> put uid <> put (MCString name) <> put (VarInt 0) -- TODO
     SetCompression i -> put (VarInt $ fromIntegral i)
     _ -> error "Unsupported"
+  {-# INLINE put #-}
 
 
 {- Note: Max byte sizes

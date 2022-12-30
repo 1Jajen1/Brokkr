@@ -4,12 +4,11 @@
 module Util.Rotation (
   Rotation(..)
 , pattern Rotation
-, HasRotation(..)
 ) where
+
 import Util.Linear.V2
 import Util.Binary
 import Util.Linear.Vector
-import Optics
 
 newtype Rotation = Rot (V2 Float)
   deriving stock Show
@@ -29,7 +28,3 @@ instance ToBinary Rotation where
 
 instance FromBinary Rotation where
   get = Rotation <$> get <*> get
-
-class HasRotation a where
-  type Access a :: OpticKind
-  rotation :: Optic' (Access a) NoIx a Rotation

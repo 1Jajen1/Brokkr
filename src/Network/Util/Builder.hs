@@ -8,14 +8,19 @@ import Network.Util.VarNum
 import Data.IORef
 import Data.ByteString
 import qualified Data.ByteString.Internal as BS
+import GHC.ForeignPtr
 import Foreign
-import Foreign.ForeignPtr.Unsafe
 import GHC.IO (unsafePerformIO)
 import qualified Mason.Builder.Internal as B
 import Network.Protocol
 import qualified Codec.Compression.Zlib as ZLib
 import qualified Data.ByteString.Lazy as LBS
 
+-- TODO Experiment with builders more:
+-- Basically: We know max sizes for many packets either statically or before building, hence we should
+-- get rid of size checks when that is the case! Could make this code close to optimal then. Right now each write
+-- will check if it is safe to write first
+-- TODO it's tempting to also do that on parsing, but that is user/client input and thus unsafe. With packets it is safe if we check/calculate beforehand
 toStrictSizePrefixedByteString :: Protocol -> Int -> B.Builder -> ByteString
 toStrictSizePrefixedByteString prot szEstimate bb = unsafePerformIO $ do
   -- This is almost an exact copy of toStrictByteString from mason, but handles prefixing the length, later on will deal with compression as well
@@ -25,7 +30,7 @@ toStrictSizePrefixedByteString prot szEstimate bb = unsafePerformIO $ do
       
       finalSzEst = szEstimate + prefixSz
       initSz = (finalSzEst + 64 - 1) .&. (complement $ 64 - 1) -- get some multiple of 64 larger than finalSzEst
-  fptr0 <- mallocForeignPtrBytes initSz
+  fptr0 <- mallocPlainForeignPtrBytes initSz
   bufRef <- newIORef fptr0
   let ptr0 = unsafeForeignPtrToPtr fptr0
   B.Buffer _ pos <- B.unBuilder bb (B.GrowingBuffer bufRef) (B.Buffer (plusPtr ptr0 initSz) (plusPtr ptr0 prefixSz))
@@ -45,7 +50,7 @@ toStrictSizePrefixedByteString prot szEstimate bb = unsafePerformIO $ do
          -- directly write the VarInt so that the data behind it is contiguous 
          _ <- writeVarNumInternal (fromIntegral sz) (plusPtr ptr pSize)
 
-         pure $ BS.BS (plusForeignPtr fptr pSize) finalLen
+         pure $! BS.BS (plusForeignPtr fptr pSize) finalLen
       
      -- We use compression, but our packet was small enough to be send uncompressed
      | Protocol (Threshold n) _ <- prot,
@@ -58,7 +63,7 @@ toStrictSizePrefixedByteString prot szEstimate bb = unsafePerformIO $ do
          -- TODO just write a byte directly, no need to go through writeVarNum
          _ <- writeVarNumInternal 0 (plusPtr ptr $ pSize + varSz)
    
-         pure $ BS.BS (plusForeignPtr fptr pSize) finalLen
+         pure $! BS.BS (plusForeignPtr fptr pSize) finalLen
      -- We use compression and have to actually compress our data
      | otherwise -> do
       -- TODO can we do this over strict bytestrings directly and over buffers I control?
@@ -69,11 +74,11 @@ toStrictSizePrefixedByteString prot szEstimate bb = unsafePerformIO $ do
            cLen = varIntSize sz + (fromIntegral $ LBS.length compressed)
            pSize = varIntSize cLen + varIntSize sz
 
-       prefix <- mallocForeignPtrBytes pSize
+       prefix <- mallocPlainForeignPtrBytes pSize
        let ptr' = unsafeForeignPtrToPtr prefix
 
        _ <- writeVarNumInternal (fromIntegral cLen) ptr'
        _ <- writeVarNumInternal (fromIntegral sz) (plusPtr ptr' (varIntSize cLen))
 
-       pure . LBS.toStrict $ LBS.fromStrict (BS.BS prefix pSize) <> compressed
+       pure $! LBS.toStrict $ LBS.fromStrict (BS.BS prefix pSize) <> compressed
 {-# INLINE toStrictSizePrefixedByteString #-}

@@ -23,6 +23,7 @@ import Control.Monad.ST ( runST )
 import GHC.Base
 import GHC.ForeignPtr ( unsafeWithForeignPtr )
 import qualified Data.Vector.Storable as S
+import qualified Data.Vector.Primitive as Prim
 
 import Util.Vector.Packed hiding (nrWords)
 
@@ -70,23 +71,23 @@ main = do
     bgroup "PackedVector" $
       [ env setupEnv $ \ ~(Env{..}) ->
         bgroup "countElemsNaive" $
-          [ bench "countElemsNaive 4"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV4
-          , bench "countElemsNaive 5"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV5
-          , bench "countElemsNaive 6"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV6
-          , bench "countElemsNaive 7"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV7
-          , bench "countElemsNaive 8"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV8
-          , bench "countElemsNaive 9"  $ nf (naiveCount $ S.fromList [0,3,5]) staticV9
-          , bench "countElemsNaive 15" $ nf (naiveCount $ S.fromList [0,3,5]) staticV15
+          [ bench "countElemsNaive 4"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV4
+          , bench "countElemsNaive 5"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV5
+          , bench "countElemsNaive 6"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV6
+          , bench "countElemsNaive 7"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV7
+          , bench "countElemsNaive 8"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV8
+          , bench "countElemsNaive 9"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV9
+          , bench "countElemsNaive 15" $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV15
           ]
       , env setupEnv $ \ ~(Env{..}) ->
         bgroup "countElems" $
-          [ bench "countElems 4"  $ nf (countElems $ S.fromList [0,3,5]) staticV4
-          , bench "countElems 5"  $ nf (countElems $ S.fromList [0,3,5]) staticV5
-          , bench "countElems 6"  $ nf (countElems $ S.fromList [0,3,5]) staticV6
-          , bench "countElems 7"  $ nf (countElems $ S.fromList [0,3,5]) staticV7
-          , bench "countElems 8"  $ nf (countElems $ S.fromList [0,3,5]) staticV8
-          , bench "countElems 9"  $ nf (countElems $ S.fromList [0,3,5]) staticV9
-          , bench "countElems 15" $ nf (countElems $ S.fromList [0,3,5]) staticV15
+          [ bench "countElems 4"  $ nf (countElems $ Prim.fromList [0,3,5]) staticV4
+          , bench "countElems 5"  $ nf (countElems $ Prim.fromList [0,3,5]) staticV5
+          , bench "countElems 6"  $ nf (countElems $ Prim.fromList [0,3,5]) staticV6
+          , bench "countElems 7"  $ nf (countElems $ Prim.fromList [0,3,5]) staticV7
+          , bench "countElems 8"  $ nf (countElems $ Prim.fromList [0,3,5]) staticV8
+          , bench "countElems 9"  $ nf (countElems $ Prim.fromList [0,3,5]) staticV9
+          , bench "countElems 15" $ nf (countElems $ Prim.fromList [0,3,5]) staticV15
           ]
       , bgroup "unsafeCopy" $
           [ env setupEnv $ \ ~(Env{..}) ->
@@ -131,8 +132,8 @@ main = do
       ]
     ]
 
-naiveCount :: PVector v => S.Vector Word -> v -> Int
-naiveCount els = \v -> coerce $ foldMap1 (\x -> if S.elem x els then Sum (1 :: Int) else Sum 0) v
+naiveCount :: PVector v => Prim.Vector Word -> v -> Int
+naiveCount els = \v -> coerce $ foldMap1 (\x -> if Prim.elem x els then Sum (1 :: Int) else Sum 0) v
 {-# INLINE naiveCount #-}
 
 foldMap1 :: (PVector v, Monoid m) => (Word -> m) -> v -> m

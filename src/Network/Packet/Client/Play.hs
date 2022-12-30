@@ -1,11 +1,11 @@
 module Network.Packet.Client.Play (
-  PlayPacket(..)
+  Packet(..)
 , TeleportId(..)
 , Dismount(..)
 ) where
 import Util.Binary
 import Network.Util.Packet
-import Network.Packet.Client.Play.JoinGame
+import Network.Packet.Client.Play.Login
 import Network.Packet.Client.Play.ChunkData
 import Block.Position (BlockPosition)
 import Util.Position
@@ -17,120 +17,124 @@ import Data.Int
 import Data.Text
 import Network.Util.MCString
 
-data PlayPacket =
+data Packet =
     SpawnEntity
   | SpawnExperienceOrb
-  | SpawnLivingEntity
-  | SpawnPainting
   | SpawnPlayer
-  | SculkVibration
   | EntityAnimation
-  | Statistics
-  | AckPlayerDigging
-  | BlockBreakAnimation
+  | AwardStatistics
+  | AckBlockChange
+  | SetBlockDestroyChange
   | BlockEntityData
   | BlockAction
-  | BlockChange
+  | BlockUpdate
   | BossBar
-  | ServerDifficulty
-  | ChatMessage
+  | ChangeDifficulty
+  | ChatPreview
   | ClearTitles
-  | TabComplete
-  | DeclareCommands
-  | CloseWindow
-  | WindowItems
-  | WindowProperty
-  | SetSlot
+  | CommandSuggestionsResponse
+  | Commands
+  | CloseContainer
+  | SetContainerContent
+  | SetContainerProperty
+  | SetContainerSlot
   | SetCooldown
+  | ChatSuggestions
   | PluginMessage
-  | NamedSoundEffect
+  | CustomSoundEffect
+  | HideMessage
   | Disconnect Text
-  | EntityStatus
+  | EntityEvent
   | Explosion
   | UnloadChunk Int Int
-  | ChangeGameState
-  | OpenHorseWindow
+  | GameEvent
+  | OpenHorseScreen
   | InitializeWorldBorder
-  | KeepAlive Word64
-  | ChunkDataAndUpdateLight {-# UNPACk #-} !ChunkData
-  | Effect
+  | KeepAlive Int64
+  | ChunkDataAndUpdateLight {-# UNPACk #-} ChunkData
+  | WorldEvent
   | Particle
   | UpdateLight
-  | JoinGame JoinGameData
+  | Login LoginData -- Some changes here
   | MapData
-  | TradeList
-  | EntityPosition
-  | EntityPositionAndRotation
-  | EntityRotation
-  | VehicleMove
+  | MerchantOffers
+  | UpdateEntityPosition
+  | UpdateEntityPositionAndRotation
+  | UpdateEntityRotation
+  | MoveVehicle
   | OpenBook
-  | OpenWindow
+  | OpenScreen
   | OpenSignEditor
   | Ping
-  | CraftRecipeResponse
+  | PlaceGhostRecipe
   | PlayerAbilities
-  | EndCombatEvent
-  | EnterCombatEvent
-  | DeathCombatEvent
+  | MessageHeader
+  | PlayerChatMessage
+  | EndCombat
+  | EnterCombat
+  | CombatDeath
   | PlayerInfo
-  | FacePlayer
-  | PlayerPositionAndLook Position Rotation TeleportId Dismount
-  | UnlockRecipes
-  | DestroyEntities
+  | LookAt
+  | SynchronizePlayerPosition Position Rotation TeleportId Dismount
+  | UpdateRecipeBook
+  | RemoveEntities
   | RemoveEntityEffect
-  | ResourcePackSend
+  | ResourcePack
   | Respawn
-  | EntityHeadLook
-  | MultiBlockChange
-  | SelectAdvancementTab
-  | ActionBar
-  | WorldBorderCenter
-  | WorldBorderLerpSize
-  | WorldBorderSize
-  | WorldBorderWarningDelay
-  | WorldBorderWarningReach
-  | Camera
-  | HeldItemChange
-  | UpdateViewPosition Int Int
-  | UpdateViewDistance
-  | SpawnPosition BlockPosition Float
-  | DisplayScoreboard
-  | EntityMetadata
-  | AttachEntity
-  | EntityVelocity
-  | EntityEquipment
+  | SetHeadRotation
+  | UpdateSectionBlocks
+  | SelectAdvancementsTab
+  | ServerData
+  | SetActionBarText
+  | SetBorderCenter
+  | SetBorderLerpSize
+  | SetBorderSize
+  | SetBorderWarningDelay
+  | SetBorderWarningReach
+  | SetCamera
+  | SetHeldItem
+  | SetCenterChunk Int Int
+  | SetRenderDistance
+  | SetDefaultSpawnPosition BlockPosition Float
+  | SetDisplayChatPreview
+  | DisplayObjective
+  | SetEntityMetadata
+  | LinkEntities
+  | SetEntityVelocity
+  | SetEquipment
   | SetExperience
-  | UpdateHealth
-  | ScoreboardObjective
+  | SetHealth
+  | UpdateObjectives
   | SetPassengers
-  | Teams
+  | UpdateTeams
   | UpdateScore
-  | UpdateSimulationDistance
-  | SetTitleSubTitle
-  | TimeUpdate
+  | SetSimulationDistance
+  | SetSubtitleText
+  | UpdateTime
   | SetTitleText
-  | SetTitleTimes
+  | SetTitleAnimationTimes
   | EntitySoundEffect
   | SoundEffect
   | StopSound
-  | PlayerListHeaderAndFooter
-  | NBTQueryResponse
-  | CollectItem
-  | EntityTeleport
-  | Advancements
-  | EntityProperties
+  | SystemChatMessage
+  | SetTabListHeaderAndFooter
+  | TagQueryResponse
+  | PickupItem
+  | TeleportEntity
+  | UpdateAdvancements
+  | UpdateAttributes
   | EntityEffect
-  | DeclareRecipes
-  | Tags
+  | UpdateRecipes
+  | UpdateTags
   deriving stock Show
 
-instance ToBinary PlayPacket where
+instance ToBinary Packet where
   put a = packetId a <> case a of
     ChunkDataAndUpdateLight d -> put d
-    JoinGame d -> put d
-    PlayerPositionAndLook pos rot tId dism -> put pos <> put rot <> put (0 :: Word8) <> put tId <> put dism
-    UpdateViewPosition chunkX chunkY -> put (VarInt $ fromIntegral chunkX) <> put (VarInt $ fromIntegral chunkY)
-    SpawnPosition pos angle -> put pos <> put angle
+    Login d -> put d
+    SynchronizePlayerPosition pos rot tId dism -> put pos <> put rot <> put (0 :: Word8) <> put tId <> put dism
+    SetCenterChunk chunkX chunkZ -> put (VarInt $ fromIntegral chunkX) <> put (VarInt $ fromIntegral chunkZ)
+    SetDefaultSpawnPosition pos angle -> put pos <> put angle
     KeepAlive w -> put w
     UnloadChunk x z -> put (fromIntegral @_ @Int32 x) <> put (fromIntegral @_ @Int32 z)
     Disconnect t -> put (MCString t)

@@ -92,7 +92,7 @@ genPaletteMapping = do
         loop !l !u
           | u <= l    = error $ show hs
           | otherwise =
-            let a = W# (indexWord64OffAddr# hsLit mid#)
+            let a = W# (word64ToWord# (indexWord64OffAddr# hsLit mid#))
             in case compare a hs of
               LT -> loop (mid + 1) u
               EQ -> indexInt32OffAddr# valLit mid#

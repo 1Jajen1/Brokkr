@@ -1,109 +1,138 @@
-{-# LANGUAGE LinearTypes  #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE PatternSynonyms #-}
 module Network.Monad (
-  MonadNetwork(..)
-, NetworkM
+  Network
 , runNetwork
+, getSocket -- Internals?
+, getServer
 , readPacket
-, sendPacket
+, sendBytes
 , sendPackets
+, withAsync
+, closeConnection
+, ConnectionClosed(..)
+, PacketFailure(..)
+, invalidProtocol
+, InvalidProtocol(..)
+, ClientTimedOut(..)
+, InvalidKeepAlive(..)
 ) where
 
-import Data.ByteString
-import qualified Data.ByteString.Lazy as LBS
-import Network.Simple.TCP
-import qualified Network.Simple.TCP as Network
-import Control.Monad.Trans.Reader
-import Control.Monad.Trans.State.Strict
-import Control.Monad.IO.Class
-import Control.Monad.Trans
-import qualified Util.Binary as Binary
-import Network.Util.Builder
-import Util.Binary (ToBinary, FromBinary)
-import Network.Util.VarNum
-import FlatParse.Basic
-import Entity.Id.Monad ( MonadEntityId )
-import Util.Lift
-import Util.Log ( MonadLog )
-import Util.Time ( MonadTime )
-import Game.State (MonadGameState)
-import Network.Protocol
 import qualified Codec.Compression.Zlib as ZLib
-import Util.Exception
 
-class Monad m => MonadNetwork m where
-  receiveBytes :: (ByteString -> Maybe (ByteString, ByteString)) -> m ByteString
-  sendBytes    :: LBS.ByteString -> m ()
+import Control.Concurrent.Async (Async)
+import qualified Control.Concurrent.Async as Async
 
-newtype NetworkM m a = NetworkM { runNetworkM :: ReaderT Socket (StateT ByteString m) a }
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadEntityId, MonadLog, MonadGameState)
-  deriving MonadTime via (Lift NetworkM m) 
+import Control.Exception
 
-deriving via (Lift (ReaderT r) m) instance MonadNetwork m => MonadNetwork (ReaderT r m) 
-deriving via (Lift (StateT s) m) instance MonadNetwork m => MonadNetwork (StateT s m) 
+import Control.Monad.IO.Class
+import Control.Monad.Trans.Class
+import Control.Monad.Trans.Reader
+import Control.Monad.Trans.State
 
-instance (Monad (t m), MonadTrans t, MonadNetwork m) => MonadNetwork (Lift t m) where
-  receiveBytes test = Lift . lift $ receiveBytes test
-  {-# INLINE receiveBytes #-}
-  sendBytes bs = Lift . lift $ sendBytes bs
-  {-# INLINE sendBytes #-}
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 
-runNetwork :: Monad m => Socket -> NetworkM m a -> m a
-runNetwork sock = flip evalStateT mempty . flip runReaderT sock . runNetworkM
+import FlatParse.Basic
+
+import Network.Exception
+
+import Network.Simple.TCP as Network
+
+import Network.Protocol
+
+import Network.Util.Builder
+import Network.Util.VarNum
+
+import Server
+
+import Util.Binary (FromBinary, ToBinary)
+import qualified Util.Binary as Binary
+
+newtype Network a = Network { unNetwork :: ReaderT Server (ReaderT Socket (StateT ByteString IO)) a }
+  deriving newtype (Functor, Applicative, Monad, MonadIO)
+
+runNetwork :: Server -> Socket -> Network a -> IO a
+runNetwork server sock (Network f) = evalStateT (runReaderT (runReaderT f server) sock) mempty
 {-# INLINE runNetwork #-}
 
-instance MonadTrans NetworkM where
-  lift = NetworkM . lift . lift
-  {-# INLINE lift #-}
+getServer :: Network Server
+getServer = Network ask
+{-# INLINE getServer #-}
 
-instance MonadBracket m => MonadBracket (NetworkM m) where 
-  bracket acq clean act = do
-    sock <- NetworkM ask
-    st <- NetworkM $ lift $ get
-    (ret, st') <- lift $ bracket (runNetwork sock acq) (\a exc -> runNetwork sock $ clean a exc) $ flip runStateT st . flip runReaderT sock . runNetworkM . act
-    NetworkM $ lift $ put st'
-    pure ret
-  {-# INLINE bracket #-}
+getSocket :: Network Socket
+getSocket = Network $ lift ask
+{-# INLINE getSocket #-}
 
-instance MonadIO m => MonadNetwork (NetworkM m) where
-  receiveBytes test = NetworkM $ do
-    sock <- ask
-    bs <- lift get
-    go sock bs
-    where
-      go sock bs = case test bs of
-        Just (!res, !rem') -> lift $ put rem' >> pure res
-        Nothing -> Network.recv sock 1024 >>= \case
-          Just new -> go sock (bs <> new)
-          Nothing -> error "TODO Conn closed"
-  {-# INLINE receiveBytes #-} -- ^^ TODO This can probably be better ...
-  sendBytes bs = NetworkM $ do
-    sock <- ask
-    liftIO $ Network.sendLazy sock bs
-  {-# INLINE sendBytes #-}
-
-readPacket :: forall a m . (MonadNetwork m, FromBinary a) => Protocol -> m a
+readPacket :: forall a . (Show a, FromBinary a) => Protocol -> Network a
 readPacket prot = do
+  -- TODO Binary.get @VarInt >>= will always allocate. Use CPS to avoid allocating.
+  -- ^- This seems to be true for most loops in the parser...
+  -- The ByteString will also be allocated, not good!
   !packetBs <- receiveBytes $ \bs -> case runParser (Binary.get @VarInt >>= takeBs . fromIntegral) bs of
-    OK res rem' -> Just (withCompression prot res, rem')
-    Fail       -> Nothing
+    OK res rem' -> case withCompression prot res of
+      Right res' -> Done res' rem'
+      Left e     -> Failed e
+    Fail         -> NeedMore
   case runParser (Binary.get @a) packetBs of
-    OK !p _ -> pure p -- TODO Decide wether or not the remaining bytes should be empty...
-    _ -> error $ "Failed to parse packet\n" <> show packetBs -- TODO
+    OK !p !r | BS.length r == 0 -> pure p
+    OK !p !r -> liftIO . throwIO $ FailedExtraBytes (Showable p) r
+    _ -> liftIO . throwIO $ FailedParse packetBs
   where
-    withCompression (Protocol NoCompression  _) bs = bs
+    withCompression (Protocol NoCompression  _) bs = Right bs
     withCompression (Protocol (Threshold _) _) bs =
       case runParser (Binary.get @VarInt) bs of
-        OK 0 rem' -> rem'
-        OK _ rem' -> LBS.toStrict . ZLib.decompress $ LBS.fromStrict rem'
-        _ -> error $ "Failed to decompress packet " <> show bs 
+        OK 0 rem' -> Right rem'
+        OK _ rem' -> Right . LBS.toStrict . ZLib.decompress $ LBS.fromStrict rem'
+        _         -> Left $ FailedDecompress bs
 {-# INLINE readPacket #-}
 
-sendPacket :: (ToBinary a, MonadNetwork m) => Protocol -> Int -> a -> m ()
-sendPacket prot szEstimate a = sendBytes (LBS.fromStrict $ toStrictSizePrefixedByteString prot szEstimate (Binary.put a))
-{-# INLINE sendPacket #-}
+data StreamParse =
+    Done {-# UNPACK #-} !ByteString {-# UNPACK #-} !ByteString
+  | NeedMore
+  | forall e . Exception e => Failed e
 
-sendPackets :: (ToBinary a, MonadNetwork m) => Protocol -> Int -> [a] -> m ()
+receiveBytes :: (ByteString -> StreamParse) -> Network ByteString
+receiveBytes test = Network $ do
+  sock <- lift ask
+  bs <- lift $ lift get
+  go sock bs
+  where
+    go sock bs = case test bs of
+      Done res rem' -> lift . lift $ put rem' >> pure res
+      NeedMore -> Network.recv sock 1024 >>= \case
+        Just new -> go sock (bs <> new)
+        Nothing -> liftIO $ throwIO ConnectionClosed
+      Failed e -> liftIO $ throwIO e
+{-# INLINE receiveBytes #-}
+
+sendBytes :: LBS.ByteString -> Network ()
+sendBytes bs = Network $ do
+  sock <- lift ask
+  liftIO $ Network.sendLazy sock bs
+{-# INLINE sendBytes #-}
+
+-- TODO: Check if this sufficiently inlines to avoid intermediate lists when
+  -- a) giving it fixed size lists
+  -- b) passing it lists created from vector slices
+-- TODO: Also it would be great if this is strict enough to not have any lazy refs after this is done, so we can use unsafe vector slices (no copies)
+-- If all else fails use TH?
+-- sendLazy alone will always expect a lazy bytestring so probably not worth it?
+-- TODO This needs work!
+sendPackets :: ToBinary a => Protocol -> Int -> [a] -> Network ()
 sendPackets prot szEstimate as = sendBytes (LBS.fromChunks $ fmap (\a -> toStrictSizePrefixedByteString prot szEstimate $ Binary.put a) as)
 {-# INLINE sendPackets #-}
 
+closeConnection :: Network a
+closeConnection = liftIO $ throwIO ConnectionClosed
+
+invalidProtocol :: InvalidProtocol -> Network a
+invalidProtocol = liftIO . throwIO
+
+withAsync :: IO a -> (Async a -> Network b) -> Network b
+withAsync inAsync f = Network $ do
+  server <- ask
+  sock <- lift ask
+  bs <- lift $ lift get
+  liftIO . Async.withAsync inAsync $ \as -> evalStateT (runReaderT (runReaderT (unNetwork $ f as) server) sock) bs
+{-# INLINE withAsync #-}
