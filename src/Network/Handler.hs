@@ -6,7 +6,7 @@ import Command
 
 import Control.Concurrent (threadDelay)
 
-import Control.Exception (bracket)
+import Control.Exception (bracket_)
 
 import qualified Chronos
 
@@ -93,7 +93,7 @@ handlePlay playerUUID playerName finalProtocol = do
           Conn.flushPackets conn $ \ps -> do
             -- TODO Ugly
             runNetwork server sock . sendBytes . LBS.fromChunks
-              $ fmap (\(Conn.SendPacket szHint packet) -> let !bs = toStrictSizePrefixedByteString finalProtocol szHint $ put packet in bs) (V.toList ps)
+              $ fmap (\(Conn.SendPacket szHint packet) -> let !bs = toStrictSizePrefixedByteString finalProtocol szHint $ put packet in bs) (traceShowId $ V.toList ps)
           go
       keepAlive = go
         where
@@ -119,10 +119,10 @@ handlePlay playerUUID playerName finalProtocol = do
       -- Enqueue a player join command      
       liftIO $ Conn.executeCommand conn JoinClient
 
-      liftIO $ bracket
+      liftIO $ bracket_
         (Client.addClient (Server.connectedClients server) player)
-        (const . liftIO $ Conn.executeCommand conn DisconnectClient)
-        . const . runNetwork server sock $ do
+        (liftIO $ Conn.executeCommand conn DisconnectClient)
+        . runNetwork server sock $ do
     
         -- packet loop
         let handlePlayPackets = do

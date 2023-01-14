@@ -21,6 +21,22 @@ source-repository-package
   location: git@github.com:parsonsmatt/bytesmith.git
   tag: cfe3b620058cf1b68097b3a73834cd59f4085eda
 
+source-repository-package
+  type: git
+  location: git@github.com:1Jajen1/bitfield.git
+  tag: cd735048fdfc65bf67359f78afd92e77b4cab10d
+
+source-repository-package
+  type: git
+  location: git@github.com:1Jajen1/hecs.git
+  tag: 1aa34e28a905418ce638168732eca5cda61f8b0e
+  subdir: hecs-core
+source-repository-package
+  type: git
+  location: git@github.com:1Jajen1/hecs.git
+  tag: 1aa34e28a905418ce638168732eca5cda61f8b0e
+  subdir: hecs
+
 -- GHC 9.2 support
 -- source-repository-package
 --   type: git

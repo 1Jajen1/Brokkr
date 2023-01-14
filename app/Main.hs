@@ -29,7 +29,7 @@ import qualified Server
 main :: IO ()
 main = do
   server <- Server.new
-  Async.withAsync (Network.serve (Network.Host "192.168.178.59") "25565" $ \(sock, _sockddr) -> do
+  Async.withAsync (Network.serve (Network.Host "192.168.178.105") "25565" $ \(sock, _sockddr) -> do
     runNetwork server sock handleConnection
     ) $ \as -> Async.link as >> gameLoop server
 

@@ -20,6 +20,8 @@ import Client
 import Registry.Biome
 import Registry.Dimension
 
+import Debug.Trace
+
 handle :: Client -> Handler ()
 handle p = do
     -- TODO all this is pretty temporary
@@ -56,7 +58,7 @@ handle p = do
       chatRegistry = C.ChatRegistry "minecraft:chat_type" mempty
 
   writePacket (connection p) 65536 (C.Login loginData)
-  writePacket (connection p) 16 (C.SetDefaultSpawnPosition (BlockPos 0 100 0) 0)
+  -- writePacket (connection p) 16 (C.SetDefaultSpawnPosition (BlockPos 0 100 0) 0)
 
   liftSTM $ writeTVar (joined p) True
 

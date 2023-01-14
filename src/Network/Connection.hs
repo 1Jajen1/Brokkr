@@ -41,6 +41,7 @@ data Connection = Conn {
 }
 
 data SendPacket = SendPacket !Int !Packet
+  deriving stock Show
 
 new :: IO Connection
 new = do

@@ -42,6 +42,8 @@ common common-options
                      , chronos
                      , optics
                      , bitfield
+                     , hecs
+                     , hecs-core
   
   ghc-options:         -Wall
                        -Wcompat
@@ -78,6 +80,7 @@ library
                       , Command.Handler.Movement
                       , Control.Monad.STM.Class
                       -- , Chunk
+                      , Chunk.Heightmap
                       , Chunk.Internal
                       , Chunk.Position
                       , Chunk.Section
@@ -87,6 +90,10 @@ library
                       , Dimension
                       , Dimension.Internal
                       , Entity.EntityId
+                      -- HECS
+                      , Hecs.Archetype.Internal
+                      , Hecs.Entity.Internal
+                      , Hecs.World.Internal
                       -- , IO.ChunkCache
                       , IO.RegionFile
                       -- , Network
@@ -117,6 +124,7 @@ library
                       , Util.ByteOrder
                       , Util.NBT
                       , Util.NBT.Internal
+                      , Util.PalettedVector
                       , Util.Vector.Packed
                       , Util.Vector.Internal
                       , Util.Linear.V2

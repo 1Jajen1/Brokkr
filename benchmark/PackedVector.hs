@@ -11,6 +11,7 @@ import Prelude hiding (length)
 import qualified Foreign.Storable as S
 import qualified Data.Primitive.Ptr as Ptr
 
+import qualified Data.Foldable
 import Data.Semigroup
 import Control.DeepSeq
 import GHC.Generics (Generic)
@@ -70,14 +71,24 @@ main = do
   defaultMain [
     bgroup "PackedVector" $
       [ env setupEnv $ \ ~(Env{..}) ->
-        bgroup "countElemsNaive" $
-          [ bench "countElemsNaive 4"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV4
-          , bench "countElemsNaive 5"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV5
-          , bench "countElemsNaive 6"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV6
-          , bench "countElemsNaive 7"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV7
-          , bench "countElemsNaive 8"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV8
-          , bench "countElemsNaive 9"  $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV9
-          , bench "countElemsNaive 15" $ nf (naiveCount $ Prim.fromList [0,3,5]) staticV15
+        bgroup "countElemsNaive1" $
+          [ bench "countElemsNaive1 4"  $ nf (naiveCount1 $ Prim.fromList [0,3,5]) staticV4
+          , bench "countElemsNaive1 5"  $ nf (naiveCount1 $ Prim.fromList [0,3,5]) staticV5
+          , bench "countElemsNaive1 6"  $ nf (naiveCount1 $ Prim.fromList [0,3,5]) staticV6
+          , bench "countElemsNaive1 7"  $ nf (naiveCount1 $ Prim.fromList [0,3,5]) staticV7
+          , bench "countElemsNaive1 8"  $ nf (naiveCount1 $ Prim.fromList [0,3,5]) staticV8
+          , bench "countElemsNaive1 9"  $ nf (naiveCount1 $ Prim.fromList [0,3,5]) staticV9
+          , bench "countElemsNaive1 15" $ nf (naiveCount1 $ Prim.fromList [0,3,5]) staticV15
+          ]
+      , env setupEnv $ \ ~(Env{..}) ->
+        bgroup "countElemsNaive2" $
+          [ bench "countElemsNaive2 4"  $ nf (naiveCount2 $ Prim.fromList [0,3,5]) staticV4
+          , bench "countElemsNaive2 5"  $ nf (naiveCount2 $ Prim.fromList [0,3,5]) staticV5
+          , bench "countElemsNaive2 6"  $ nf (naiveCount2 $ Prim.fromList [0,3,5]) staticV6
+          , bench "countElemsNaive2 7"  $ nf (naiveCount2 $ Prim.fromList [0,3,5]) staticV7
+          , bench "countElemsNaive2 8"  $ nf (naiveCount2 $ Prim.fromList [0,3,5]) staticV8
+          , bench "countElemsNaive2 9"  $ nf (naiveCount2 $ Prim.fromList [0,3,5]) staticV9
+          , bench "countElemsNaive2 15" $ nf (naiveCount2 $ Prim.fromList [0,3,5]) staticV15
           ]
       , env setupEnv $ \ ~(Env{..}) ->
         bgroup "countElems" $
@@ -109,35 +120,79 @@ main = do
           ,  env setupEnv $ \ ~(Env{..}) ->
             bench "unsafeCopy 4 - 4" $ nfIO $ copyArr staticV4 staticV4
           ]
-        , bgroup "naiveCopy" $
+        , bgroup "naiveCopy1" $
           [ env setupEnv $ \ ~(Env{..}) ->
-            bench "naiveCopy 5 - 4" $ nfIO $ naiveCopy staticV4 staticV5
+            bench "naiveCopy1 5 - 4" $ nfIO $ naiveCopy1 staticV4 staticV5
           , env setupEnv $ \ ~(Env{..}) ->
-            bench "naiveCopy 7 - 4" $ nfIO $ naiveCopy staticV4 staticV7
+            bench "naiveCopy1 7 - 4" $ nfIO $ naiveCopy1 staticV4 staticV7
           , env setupEnv $ \ ~(Env{..}) ->
-            bench "naiveCopy 9 - 4" $ nfIO $ naiveCopy staticV4 staticV9
+            bench "naiveCopy1 9 - 4" $ nfIO $ naiveCopy1 staticV4 staticV9
           , env setupEnv $ \ ~(Env{..}) ->
-            bench "naiveCopy 15 - 4" $ nfIO $ naiveCopy staticV4 staticV15
+            bench "naiveCopy1 15 - 4" $ nfIO $ naiveCopy1 staticV4 staticV15
           , env setupEnv $ \ ~(Env{..}) ->
-            bench "naiveCopy 4 - 5" $ nfIO $ naiveCopy staticV5 staticV4
+            bench "naiveCopy1 4 - 5" $ nfIO $ naiveCopy1 staticV5 staticV4
           , env setupEnv $ \ ~(Env{..}) ->
-            bench "naiveCopy 4 - 7" $ nfIO $ naiveCopy staticV7 staticV4
+            bench "naiveCopy1 4 - 7" $ nfIO $ naiveCopy1 staticV7 staticV4
           , env setupEnv $ \ ~(Env{..}) ->
-            bench "naiveCopy 4 - 9" $ nfIO $ naiveCopy staticV9 staticV4
+            bench "naiveCopy1 4 - 9" $ nfIO $ naiveCopy1 staticV9 staticV4
           , env setupEnv $ \ ~(Env{..}) ->
-            bench "naiveCopy 4 - 15" $ nfIO $ naiveCopy staticV15 staticV4
+            bench "naiveCopy1 4 - 15" $ nfIO $ naiveCopy1 staticV15 staticV4
           , env setupEnv $ \ ~(Env{..}) ->
-            bench "naiveCopy 4 - 4" $ nfIO $ naiveCopy staticV4 staticV4
+            bench "naiveCopy1 4 - 4" $ nfIO $ naiveCopy1 staticV4 staticV4
+          ]
+        , bgroup "naiveCopy2" $
+          [ env setupEnv $ \ ~(Env{..}) ->
+            bench "naiveCopy2 5 - 4" $ nfIO $ naiveCopy2 staticV4 staticV5
+          , env setupEnv $ \ ~(Env{..}) ->
+            bench "naiveCopy2 7 - 4" $ nfIO $ naiveCopy2 staticV4 staticV7
+          , env setupEnv $ \ ~(Env{..}) ->
+            bench "naiveCopy2 9 - 4" $ nfIO $ naiveCopy2 staticV4 staticV9
+          , env setupEnv $ \ ~(Env{..}) ->
+            bench "naiveCopy2 15 - 4" $ nfIO $ naiveCopy2 staticV4 staticV15
+          , env setupEnv $ \ ~(Env{..}) ->
+            bench "naiveCopy2 4 - 5" $ nfIO $ naiveCopy2 staticV5 staticV4
+          , env setupEnv $ \ ~(Env{..}) ->
+            bench "naiveCopy2 4 - 7" $ nfIO $ naiveCopy2 staticV7 staticV4
+          , env setupEnv $ \ ~(Env{..}) ->
+            bench "naiveCopy2 4 - 9" $ nfIO $ naiveCopy2 staticV9 staticV4
+          , env setupEnv $ \ ~(Env{..}) ->
+            bench "naiveCopy2 4 - 15" $ nfIO $ naiveCopy2 staticV15 staticV4
+          , env setupEnv $ \ ~(Env{..}) ->
+            bench "naiveCopy2 4 - 4" $ nfIO $ naiveCopy2 staticV4 staticV4
           ]
       ]
     ]
 
-naiveCount :: PVector v => Prim.Vector Word -> v -> Int
-naiveCount els = \v -> coerce $ foldMap1 (\x -> if Prim.elem x els then Sum (1 :: Int) else Sum 0) v
-{-# INLINE naiveCount #-}
+naiveCount1 :: PVector v => Prim.Vector Word -> v -> Int
+naiveCount1 els = \v -> coerce $ foldMap1 (\x -> if Prim.elem x els then Sum (1 :: Int) else Sum 0) v
+{-# INLINE naiveCount1 #-}
+
+naiveCount2 :: PVector v => Prim.Vector Word -> v -> Int
+naiveCount2 els = \v -> coerce $ foldMap2 (\x -> if Prim.elem x els then Sum (1 :: Int) else Sum 0) v
+{-# INLINE naiveCount2 #-}
 
 foldMap1 :: (PVector v, Monoid m) => (Word -> m) -> v -> m
 foldMap1 f v = runST $ do
+  mv <- unsafeThaw v
+  let len = Util.Vector.Packed.length mv
+      bSz = bitSz mv
+      fptr = backing mv
+      wLen = nrWords bSz len
+      perWord = 64 `divInt` bSz
+      loop !i !arrI !ptr !b
+        | i >= len  = pure b
+        | otherwise = (S.peek ptr) >>= (\w -> loopInner i arrI w 0 b) >>= loop (i + perWord) (arrI + 1) (Ptr.advancePtr ptr 1)
+      loopInner !i !arrI !w !n !b
+        | n >= perWord || i >= len = pure b
+        | otherwise                     = loopInner (i + 1) arrI w (n + 1) (f el)
+        where
+          el = fromIntegral $ ((unsafeShiftL 1 bSz) - 1) .&. (unsafeShiftR w $ i * bSz)
+  unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> loop (0 :: Int) (0 :: Int) ptr mempty
+  where
+{-# INLINE foldMap1 #-}
+
+foldMap2 :: (PVector v, Monoid m) => (Word -> m) -> v -> m
+foldMap2 f v = runST $ do
   mv <- unsafeThaw v
   let len = Util.Vector.Packed.length mv
       bSz = bitSz mv
@@ -150,8 +205,28 @@ foldMap1 f v = runST $ do
           let nAcc = acc <> (Prelude.foldMap (\i -> f . fromIntegral . (.&. ((unsafeShiftL 1 bSz) - 1)) $ unsafeShiftR w $ i * bSz) [0..((min perWord (len - x))) - 1])
           go (Ptr.advancePtr ptr 1) (n + 1) (x + perWord) nAcc
         | otherwise = pure acc
-  unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> go ptr 0 0 mempty
-{-# INLINE foldMap1 #-}
+  unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> go ptr (0 :: Int) (0 :: Int) mempty
+  where
+{-# INLINE foldMap2 #-}
+
+foldl'1 :: PVector v => (a -> Int -> Word -> a) -> a -> v -> a
+foldl'1 f a v = runST $ do
+  mv <- unsafeThaw v
+  let len = Util.Vector.Packed.length mv
+      bSz = bitSz mv
+      fptr = backing mv
+      wLen = nrWords bSz len
+      perWord = 64 `divInt` bSz
+      loop !i !arrI !ptr !b
+        | i >= len  = pure b
+        | otherwise = (S.peek ptr) >>= (\w -> loopInner i arrI w 0 b) >>= loop (i + perWord) (arrI + 1) (Ptr.advancePtr ptr 1)
+      loopInner !i !arrI !w !n !b
+        | n >= perWord || i >= len = pure b
+        | otherwise                = loopInner (i + 1) arrI w (n + 1) (f b i el)
+        where
+          el = fromIntegral $ ((unsafeShiftL 1 bSz) - 1) .&. (unsafeShiftR w $ i * bSz)
+  unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> loop (0 :: Int) (0 :: Int) ptr a
+{-# INLINE foldl'1 #-}
 
 copyArr :: (PVector v, PVector w) => v -> w -> IO ()
 copyArr v w = do
@@ -159,10 +234,16 @@ copyArr v w = do
   mw <- unsafeThaw w
   unsafeCopy mv mw
 
-naiveCopy :: (PVector v, PVector w) => v -> w -> IO ()
-naiveCopy v w = do
+naiveCopy1 :: (PVector v, PVector w) => v -> w -> IO ()
+naiveCopy1 v w = do
   mv <- unsafeThaw v
   foldl' (\acc i x -> acc >> unsafeWrite mv i x) (pure ()) w
+
+naiveCopy2 :: (PVector v, PVector w) => v -> w -> IO ()
+naiveCopy2 v w = do
+  mv <- unsafeThaw v
+  foldl'1 (\acc i x -> acc >> unsafeWrite mv i x) (pure ()) w
+
 
 --
 nrWords :: Int -> Int -> Int

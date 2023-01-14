@@ -49,6 +49,8 @@ import Server
 import Util.Binary (FromBinary, ToBinary)
 import qualified Util.Binary as Binary
 
+import Debug.Trace
+
 newtype Network a = Network { unNetwork :: ReaderT Server (ReaderT Socket (StateT ByteString IO)) a }
   deriving newtype (Functor, Applicative, Monad, MonadIO)
 
@@ -64,6 +66,9 @@ getSocket :: Network Socket
 getSocket = Network $ lift ask
 {-# INLINE getSocket #-}
 
+-- TODO Move Protocol to Type level
+-- We can introduce it from some config and specialize for all protocol and packet types. That should remove all abstraction cost and only
+-- leave my bad code to blame for perf.
 readPacket :: forall a . (Show a, FromBinary a) => Protocol -> Network a
 readPacket prot = do
   -- TODO Binary.get @VarInt >>= will always allocate. Use CPS to avoid allocating.
@@ -83,7 +88,7 @@ readPacket prot = do
     withCompression (Protocol (Threshold _) _) bs =
       case runParser (Binary.get @VarInt) bs of
         OK 0 rem' -> Right rem'
-        OK _ rem' -> Right . LBS.toStrict . ZLib.decompress $ LBS.fromStrict rem'
+        OK _ rem' -> Right . LBS.toStrict . ZLib.decompress $ LBS.fromStrict rem' -- TODO Check if I need the lazy bytestring...
         _         -> Left $ FailedDecompress bs
 {-# INLINE readPacket #-}
 

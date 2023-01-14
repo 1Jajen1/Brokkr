@@ -44,6 +44,19 @@ import qualified Util.Vector.Packed as P
 
 import Util.PalettedVector
 
+-- TODO
+{-
+
+pray I make it back here:
+
+- Preload chunks async whenever needed
+  - first join, or basically every dim join
+
+- Then just load in game tick for the few chunks needed later (but still concurrently)
+  - what happens if we lag behind?
+
+-}
+
 -- Parsed snapshot of a chunk on disk
 -- Used to serialize and deserialize chunks to disk
 data Chunk = Chunk {
