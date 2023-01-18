@@ -11,6 +11,10 @@ import Network.Util.MCString (MCString(..))
 
 import Util.Binary
 
+-- TODO Creating a dimension
+-- Create a new entity id
+-- Add Tag DimensionType to each -- TODO Hecs needs some sort of find first
+
 data Dimension = Dimension {
   -- chunkCache
   -- entities

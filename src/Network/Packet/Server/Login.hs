@@ -18,10 +18,7 @@ import qualified Data.Vector.Storable as S
 import Debug.Trace
 
 data LoginPacket =
-    LoginStart Text SignatureData (Maybe UUID)
-  deriving stock Show
-
-data SignatureData = NoSignatureData
+    LoginStart Text (Maybe UUID)
   deriving stock Show
 
 instance FromBinary LoginPacket where
@@ -31,14 +28,7 @@ instance FromBinary LoginPacket where
     where
       loginStart = do
         uName <- coerce <$> get @MCString
-        signatureData <- get >>= \case
-          True -> do
-            get @Int64
-            get @(SizePrefixed VarInt (S.Vector Word8))
-            get @(SizePrefixed VarInt (S.Vector Word8))
-            pure NoSignatureData -- TODO
-          False -> pure NoSignatureData
         uuid <- get >>= \case
           True -> Just <$> get
           False -> pure Nothing
-        pure $ LoginStart uName signatureData uuid
+        pure $ LoginStart uName uuid

@@ -2,51 +2,57 @@ module Network.Handler (
   handleConnection
 ) where
 
-import Command
-
+import Data.IORef
+import Chunk.Position
+import IO.Chunkloading
 import Control.Concurrent (threadDelay)
-
-import Control.Exception (bracket_)
-
+import Control.Concurrent.MVar
+import Control.Exception
 import qualified Chronos
-
 import qualified Control.Concurrent.Async as Async
-
+import Control.Monad
 import Control.Monad.IO.Class
-
 import qualified Data.ByteString.Lazy as LBS
-
 import Data.Text (Text)
-
-import Data.UUID
-
+import Util.UUID
 import qualified Data.Vector as V
-
+import Dimension (Dimension, Overworld, Nether, TheEnd)
 import qualified Dimension
-
-import qualified Entity.EntityId as EntityId
-
 import Network.Connection (Connection)
 import qualified Network.Connection as Conn
-
 import Network.Monad
 import Network.Protocol
-
 import qualified Network.Packet.Client.Login as Client.Login
-
+import qualified Network.Packet.Client.Play as Client.Play
 import qualified Network.Packet.Server.Handshake as Server.Handshake
 import qualified Network.Packet.Server.Login as Server.Login
 import qualified Network.Packet.Server.Play as Server.Play
-
+import Network.Packet.Client.Play.ChunkData (mkChunkData)
 import Network.Util.Builder
-
-import qualified Client hiding (new)
-import qualified Client.Internal as Client
-
-import Server (Server)
-import qualified Server
-
+import Monad
 import Util.Binary
+import qualified Client
+import Data.Coerce
+import Control.Monad.Trans.Control
+import Control.Concurrent.Async (Async)
+import qualified Control.Concurrent.Async as Async
+import Control.Concurrent.MVar (withMVar)
+import Data.Proxy
+import Util.Position
+import Util.Rotation
+import GHC.Conc (myThreadId, labelThread)
+import qualified Data.Text as T
+import qualified Data.Vector as V
+import qualified Network.Packet.Client.Play as C
+import qualified Network.Packet.Client.Play.Login as C 
+import Registry.Biome
+import Registry.Dimension
+import Client
+import Client.GameMode
+import Block.Position
+import qualified IO.Chunk as IO
+
+import qualified Monad as Hecs
 
 --
 import Debug.Trace
@@ -64,14 +70,14 @@ handleStatus = closeConnection
 handleLogin :: Network LoginResult
 handleLogin = do
   uName <- readPacket (Protocol NoCompression NoEncryption) >>= \case
-    Server.Login.LoginStart uName _ _ -> pure uName
+    Server.Login.LoginStart uName _ -> pure uName
     -- TODO Check for other packets and throw InvalidProtocol on those
 
   -- TODO generate proper uid
   let uid = nil
 
   -- TODO Have a config check if we use compression and what the threshold is
-  let thresh = 512 
+  let thresh = 512
   sendPackets (Protocol NoCompression NoEncryption) 10 [Client.Login.SetCompression thresh]
 
   let finalProtocol = Protocol (Threshold thresh) NoEncryption
@@ -83,18 +89,15 @@ data LoginResult = LoginRes UUID Text Protocol
 
 handlePlay :: UUID -> Text -> Protocol -> Network a
 handlePlay playerUUID playerName finalProtocol = do
-  server <- getServer
-  sock <- getSocket
-  conn <- liftIO Conn.new
+  !conn <- liftIO Conn.new
 
   let send = go
         where
-        go = do
-          Conn.flushPackets conn $ \ps -> do
-            -- TODO Ugly
-            runNetwork server sock . sendBytes . LBS.fromChunks
-              $ fmap (\(Conn.SendPacket szHint packet) -> let !bs = toStrictSizePrefixedByteString finalProtocol szHint $ put packet in bs) (traceShowId $ V.toList ps)
-          go
+          go = do
+            liftBaseWith $ \runInBase -> Conn.flushPackets conn $ \ps -> do
+              runInBase . sendBytes . LBS.fromChunks
+                $! fmap (\(Conn.SendPacket szHint packet) -> let !bs = toStrictSizePrefixedByteString finalProtocol szHint $ put packet in bs) $ V.toList ps
+            go
       keepAlive = go
         where
           -- TODO make a config option so testing is a little easier 
@@ -105,47 +108,126 @@ handlePlay playerUUID playerName finalProtocol = do
             Conn.sendKeepAlive conn t'
             go
 
-  withAsync send $ \sendAs ->
-    withAsync keepAlive $ \keepAliveAs -> do
-      -- If any of the linked threads crash, we must also crash since the connection will no longer work
-      liftIO $ Async.link sendAs
-      liftIO $ Async.link keepAliveAs
+  _ <- liftBaseWith $ \runInBase ->
+    -- TODO Label these threads
+    Async.withAsync (runInBase send) $ \sendAs ->
+      Async.withAsync keepAlive $ \keepAliveAs -> do
+        -- If any of the linked threads crash, we must also crash since the connection will no longer work
+        Async.link sendAs
+        Async.link keepAliveAs
 
-      -- Create/Load player data
-      eid <- liftIO . EntityId.allocateEntityId $ Server.freshEntityId server
-      let dim = Dimension.getDimension (Server.dimensions server) Dimension.Overworld
-      player <- liftIO $ Client.new conn dim eid playerUUID
+        -- Actually create the player entity, from that point on the connection is visible globally
+        bracket
+          (do
+            bracketOnError
+              (runInBase $ Hecs.newEntity)
+              (\eidSt -> runInBase $ restoreM eidSt >>= Hecs.freeEntity) -- TODO Log
+              (\eidSt -> runInBase $ restoreM eidSt >>= \eid -> joinPlayer conn eid >> pure eid)
+          ) (\_ -> putStrLn "Closed") -- TODO 
+            $ \clientSt -> runInBase $ restoreM clientSt >>= \client -> do
+              -- packet loop
+              let handlePlayPackets = do
+                    readPacket finalProtocol >>= handlePacket conn
+                    handlePlayPackets
 
-      -- Enqueue a player join command      
-      liftIO $ Conn.executeCommand conn JoinClient
-
-      liftIO $ bracket_
-        (Client.addClient (Server.connectedClients server) player)
-        (liftIO $ Conn.executeCommand conn DisconnectClient)
-        . runNetwork server sock $ do
-    
-        -- packet loop
-        let handlePlayPackets = do
-              readPacket finalProtocol >>= handlePacket server conn
               handlePlayPackets
 
-        _ <- handlePlayPackets
-      
-        -- The packet loop already diverges, but if for whatever reason we end up here, just kill the connection
-        closeConnection
+  -- The packet loop in the bracket already diverges, but if for whatever reason we end up here, just kill the connection
+  closeConnection
+
+joinPlayer :: Connection -> Hecs.EntityId -> Network ()
+joinPlayer conn eid = do
+  -- Create/Load player data -- SYNC Because we need to know where to join the player
+  -- TODO Move
+  let initialPosition = Position 0 150 0
+      initialRotation = Rotation 0 0
+      initialVelocity = Position 0 0 0
+  
+  initialWorld <- Hecs.getComponent @Dimension (coerce $ Hecs.getComponentId @Dimension.Overworld)
+    pure
+    (error "World singleton missing")
+
+  let loginData = C.LoginData
+        eid
+        (C.IsHardcore False)
+        Creative
+        C.Undefined
+        (V.fromList ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"])
+        (C.RegistryCodec dimRegistry biomeRegistry chatRegistry)
+        "minecraft:overworld" -- TODO proper type
+        "minecraft:overworld"
+        (C.HashedSeed 0)
+        (C.MaxPlayers 5)
+        (C.ViewDistance 8)
+        (C.SimulationDistance 8)
+        (C.ReducedDebugInfo False)
+        (C.EnableRespawnScreen False)
+        (C.IsDebug False)
+        (C.IsFlat False)
+        C.NoDeathLocation
+      dimRegistry = C.DimensionTypeRegistry
+        "minecraft:dimension_type"
+        (V.fromList
+          [
+            C.DimensionRegistryEntry "minecraft:overworld" 0 overworld
+          , C.DimensionRegistryEntry "minecraft:nether" 1 nether
+          , C.DimensionRegistryEntry "minecraft:the_end" 2 end
+          ]
+        )
+      biomeRegistry = C.BiomeRegistry "minecraft:worldgen/biome" . V.fromList $ do
+        (bid, (name, settings)) <- zip [0..] all_biome_settings
+        return $ C.BiomeRegistryEntry ("minecraft:" <> T.pack name) bid settings
+      chatRegistry = C.ChatRegistry "minecraft:chat_type" mempty
+
+  liftIO . Conn.sendPacket conn $ Conn.SendPacket 65536 (C.Login loginData)
+  liftIO . Conn.sendPacket conn $ Conn.SendPacket 10 (C.SetDefaultSpawnPosition (BlockPos 0 130 0) 0)
+
+  -- Preload chunks for this player -- SYNC Because we don't want to wait for this on the main thread and this will join the
+                                    --  player with chunks loaded and not in some void
+  chunkloading <- Hecs.getSingleton @Chunkloading
+  let viewDistance = 16
+      chunksToLoad = [ChunkPos x z | x <- [-viewDistance..viewDistance], z <- [-viewDistance..viewDistance] ]
+      numChunksToLoad = (viewDistance * 2 + 1) * (viewDistance * 2 + 1)
+  rPath <- Hecs.getComponent @Dimension.RegionFilePath (Dimension.entityId initialWorld) pure (error "TODO")
+
+  doneRef <- liftIO $ newEmptyMVar
+  numDoneRef <- liftIO $ newIORef numChunksToLoad
+
+  liftIO $ putStrLn $ "Loading " <> show numChunksToLoad <> " chunks"
+  --liftIO $ print chunksToLoad
+
+  liftIO $ loadChunks (coerce rPath) chunksToLoad chunkloading $ \mvar -> void . Async.async $ takeMVar mvar >>= \c -> do
+    let !(!sz, !cData) = mkChunkData c
+    Conn.sendPacket conn . Conn.SendPacket sz $! Client.Play.ChunkDataAndUpdateLight cData
+    done <- atomicModifyIORef' numDoneRef $ \(i :: Int) -> (i - 1, i - 1)
+    when (done == 0) $ putMVar doneRef ()
+  
+  liftIO $ takeMVar doneRef
+  liftIO $ putStrLn "Done sending chunks"
+  
+  liftIO . Conn.sendPacket conn $ Conn.SendPacket 10 (C.SetCenterChunk 0 0)
+  liftIO . Conn.sendPacket conn $ Conn.SendPacket 64 (C.SynchronizePlayerPosition (Position 0 130 0) (Rotation 180 0) (C.TeleportId 0) C.NoDismount)
+
+  Hecs.setComponent eid initialPosition
+  Hecs.setComponent eid initialRotation
+  Hecs.setComponent eid initialVelocity
+  Hecs.setComponent eid initialWorld
+  
+  -- This is the write that exposes us to the global state proper because that is what the JoinPlayer system queries on
+  Hecs.setComponent eid conn
 
 -- Handle play packets
-handlePacket :: Server -> Connection -> Server.Play.Packet -> Network ()
+handlePacket :: Connection -> Server.Play.Packet -> Network ()
 
-handlePacket _ conn (Server.Play.KeepAlive res) = liftIO $ Conn.ackKeepAlive conn res
+handlePacket conn (Server.Play.KeepAlive res) = liftIO $ Conn.ackKeepAlive conn res
 
-handlePacket _ conn (Server.Play.SetPlayerPositionAndRotation pos rot onGround) =
-  liftIO . Conn.executeCommand conn $ MoveAndRotateClient pos rot onGround
-handlePacket _ conn (Server.Play.SetPlayerPosition pos onGround) =
-  liftIO . Conn.executeCommand conn $ MoveClient pos onGround
-handlePacket _ conn (Server.Play.SetPlayerRotation rot onGround) =
-  liftIO . Conn.executeCommand conn $ RotateClient rot onGround
-handlePacket _ conn (Server.Play.SetPlayerOnGround onGround) =
-  liftIO . Conn.executeCommand conn $ SetOnGround onGround
+-- handlePacket _ conn (Server.Play.SetPlayerPositionAndRotation pos rot onGround) =
+--   liftIO . Conn.executeCommand conn $ MoveAndRotateClient pos rot onGround
+-- handlePacket _ conn (Server.Play.SetPlayerPosition pos onGround) =
+--   liftIO . Conn.executeCommand conn $ MoveClient pos onGround
+-- handlePacket _ conn (Server.Play.SetPlayerRotation rot onGround) =
+--   liftIO . Conn.executeCommand conn $ RotateClient rot onGround
+-- handlePacket _ conn (Server.Play.SetPlayerOnGround onGround) =
+--   liftIO . Conn.executeCommand conn $ SetOnGround onGround
 
-handlePacket _ _ p = trace ("Unhandled packet: " <> show p) $ pure ()
+handlePacket _ p = pure () -- trace ("Unhandled packet: " <> show p) $ pure ()

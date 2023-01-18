@@ -1,9 +1,21 @@
+{-# LANGUAGE UndecidableInstances #-}
 module Util.UUID (
-  HasUUID(..)
-, module Data.UUID
+  UUID
+, nil
 ) where
 
-import Data.UUID
+import qualified Data.UUID
 
-class HasUUID a where
-  uuid :: a -> UUID
+import Foreign.Storable
+
+import Util.Binary
+
+import Hecs
+
+newtype UUID = UUID (Data.UUID.UUID)
+  deriving newtype (Show, ToBinary, FromBinary, Storable)
+
+nil :: UUID
+nil = UUID (Data.UUID.nil)
+
+deriving via ViaStorable UUID instance Component UUID

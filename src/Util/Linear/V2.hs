@@ -1,5 +1,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Util.Linear.V2 (
   V2(..)
 ) where
@@ -8,15 +9,22 @@ import Control.DeepSeq
 import Util.Linear.Vector
 import Data.Hashable
 import GHC.Generics
+import Foreign.Storable
+
+import Hecs
 
 -- Use a data family so that GHC unpacks the fields
 data family V2 a
 data instance V2 Int = V2_Int !Int !Int
   deriving stock (Eq, Show, Generic)
   deriving anyclass Hashable
+  deriving Storable via (GenericFlat (V2 Int))
+  deriving Component via (ViaStorable (V2 Int))
 
 data instance V2 Float = V2_Float !Float !Float
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Generic)
+  deriving Storable via (GenericFlat (V2 Float))
+  deriving Component via (ViaStorable (V2 Float))
 
 instance NFData (V2 Int) where
   rnf (V2_Int _ _) = ()

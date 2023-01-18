@@ -371,8 +371,6 @@ foldl' f a v = runST $ do
   unsafePrimToPrim $ unsafeWithForeignPtr fptr $ \ptr -> go ptr 0 0 a
 {-# INLINE foldl' #-}
 
--- Pass an Unboxed vector instead. Reason being: This uses an unsafe ffi call, so unboxed vectors are fine and
--- don't carry as much penalty for allocation and fragmentation
 countElems :: PVector v => Prim.Vector Word -> v -> Int
 countElems (Prim.Vector off sz arr) v =
   runST $ do

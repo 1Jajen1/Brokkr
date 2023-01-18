@@ -1049,6 +1049,58 @@ instance ToId Moisture where
 instance Cardinality Moisture where
   cardinality = 7
 
+data SlotOccupied (n :: Nat) = SlotOccupied | SlotEmpty
+
+instance FromId (SlotOccupied n) where
+  fromId 0 = SlotEmpty
+  fromId 1 = SlotOccupied
+
+instance ToId (SlotOccupied n) where
+  toId SlotEmpty    = 0
+  toId SlotOccupied = 1
+
+instance Cardinality (SlotOccupied n) where
+  cardinality = 2
+
+data Bloom = Bloom | NoBloom
+
+instance FromId Bloom where
+  fromId 0 = NoBloom
+  fromId 1 = Bloom
+
+instance ToId Bloom where
+  toId NoBloom = 0
+  toId Bloom   = 1
+
+instance Cardinality Bloom where
+  cardinality = 2
+
+data CanSummon = CanSummon | CannotSummon
+
+instance FromId CanSummon where
+  fromId 0 = CannotSummon
+  fromId 1 = CanSummon
+
+instance ToId CanSummon where
+  toId CannotSummon = 0
+  toId CanSummon    = 1
+
+instance Cardinality CanSummon where
+  cardinality = 2
+
+data Shrieking = Shrieking | NotShrieking
+
+instance FromId Shrieking where
+  fromId 0 = NotShrieking
+  fromId 1 = Shrieking
+
+instance ToId Shrieking where
+  toId NotShrieking = 0
+  toId Shrieking    = 1
+
+instance Cardinality Shrieking where
+  cardinality = 2
+
 inRange :: Int -> Int -> Int -> Bool
 inRange x y z | y == z - 1 = x == y
               | otherwise  = y <= x && x < z

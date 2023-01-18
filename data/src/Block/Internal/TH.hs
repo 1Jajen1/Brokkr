@@ -90,7 +90,7 @@ genPaletteMapping = do
         !hsLit = $(hashLit)
         !valLit = $(valsLit)
         loop !l !u
-          | u <= l    = error $ show hs
+          | u <= l    = error $ "Unknown hash" <> show hs <> " for name " <> show n <> " and props " <> show props 
           | otherwise =
             let a = W# (word64ToWord# (indexWord64OffAddr# hsLit mid#))
             in case compare a hs of
@@ -184,14 +184,14 @@ conFromProps ty ("west", _)
   | ty == "RedstoneWire" = AppT (ConT . mkName $ T.unpack "RedstonePlacement") (PromotedT $ mkName "West")
   | otherwise = error $ "Unknown west: " <> T.unpack ty
 conFromProps ty ("up", _)
-  | isWall ty || ty == "Fire" || ty == "ChorusPlant" || ty == "GlowLichen" || ty == "Vine" 
+  | isWall ty || ty == "Fire" || ty == "ChorusPlant" || ty == "GlowLichen" || ty == "Vine" || ty == "SculkVein"
     = AppT (AppT (AppT (ConT . mkName $ T.unpack "Attached") (PromotedT $ mkName "True")) (PromotedT $ mkName "False")) (PromotedT $ mkName "Up")
   | isMushroomBlock ty = AppT (ConT . mkName $ T.unpack "MushroomExposed") (PromotedT $ mkName "Up")
   | otherwise = error $ "Unknown up: " <> T.unpack ty
 conFromProps ty ("down", _)
   | isMushroomBlock ty = AppT (ConT . mkName $ T.unpack "MushroomExposed") (PromotedT $ mkName "Down")
-  | ty == "ChorusPlant" || ty == "GlowLichen" = AppT (AppT (AppT (ConT . mkName $ T.unpack "Attached") (PromotedT $ mkName "False")) (PromotedT $ mkName "True")) (PromotedT $ mkName "Down")
-  | otherwise = error $ "Unknown up: " <> T.unpack ty
+  | ty == "ChorusPlant" || ty == "GlowLichen" || ty == "SculkVein" = AppT (AppT (AppT (ConT . mkName $ T.unpack "Attached") (PromotedT $ mkName "False")) (PromotedT $ mkName "True")) (PromotedT $ mkName "Down")
+  | otherwise = error $ "Unknown down: " <> T.unpack ty
 conFromProps _ ("waterlogged", _) = ConT $ mkName "Waterlogged"
 conFromProps _ ("powered", _) = ConT $ mkName "Powered"
 conFromProps ty ("facing", _)
@@ -200,7 +200,7 @@ conFromProps ty ("facing", _)
     ty == "BigDripleafStem" || ty == "Repeater" || ty == "Furnace" || ty == "EndPortalFrame" || ty == "Cocoa" || ty == "Bell" ||
     ty == "Beehive" || ty == "JackOLantern" || isAnvil ty || ty == "Comparator" || ty == "AttachedMelonStem" || ty == "AttachedPumpkinStem" ||
     ty == "Ladder" || ty == "Stonecutter" || ty == "Grindstone" || isDripleaf ty || isCampfire ty || ty == "Lectern" || ty == "Lever" ||
-    ty == "TripwireHook" || ty == "CarvedPumpkin" || ty == "BlastFurnace" || ty == "Loom"
+    ty == "TripwireHook" || ty == "CarvedPumpkin" || ty == "BlastFurnace" || ty == "Loom" || isHangingSign ty || ty == "ChiseledBookshelf"
     = facingNoUpNoDown
   | isShulkerBox ty || isCommandBlock ty || ty == "LightningRod" || ty == "Dropper" || ty == "AmethystCluster" || isAmethystBud ty ||
     isPiston ty || ty == "Dispenser" || ty == "Barrel" || ty == "EndRod" || ty == "Observer"
@@ -284,7 +284,7 @@ conFromProps ty ("age", _)
   | isVines ty || ty == "Kelp" = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 25)
   | ty == "Fire" || ty == "SugarCane" || ty == "Cactus"
     = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 15)
-  | ty == "Beetroots" || ty == "FrostedIce" || ty == "NetherWart" || ty == "SweetBerryBush"
+  | ty == "Beetroots" || ty == "FrostedIce" || ty == "NetherWart" || ty == "SweetBerryBush" || ty == "MangrovePropagule"
     = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 4)
   | ty == "Cocoa" = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 2)
   | ty == "Bamboo" = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 1)
@@ -292,12 +292,22 @@ conFromProps ty ("age", _)
     ty == "Wheat"
     = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 7)
   | ty == "ChorusFlower" = AppT (ConT $ mkName "Age") (LitT $ NumTyLit 5)
+conFromProps "ChiseledBookshelf" (pTy, _)
+  | pTy == "slot_0_occupied" = AppT (ConT $ mkName "SlotOccupied") (LitT $ NumTyLit 0)
+  | pTy == "slot_1_occupied" = AppT (ConT $ mkName "SlotOccupied") (LitT $ NumTyLit 1)
+  | pTy == "slot_2_occupied" = AppT (ConT $ mkName "SlotOccupied") (LitT $ NumTyLit 2)
+  | pTy == "slot_3_occupied" = AppT (ConT $ mkName "SlotOccupied") (LitT $ NumTyLit 3)
+  | pTy == "slot_4_occupied" = AppT (ConT $ mkName "SlotOccupied") (LitT $ NumTyLit 4)
+  | pTy == "slot_5_occupied" = AppT (ConT $ mkName "SlotOccupied") (LitT $ NumTyLit 5)
+conFromProps "SculkCatalyst" ("bloom", _) = ConT $ mkName "Bloom"
+conFromProps "SculkShrieker" ("can_summon", _) = ConT $ mkName "CanSummon"
+conFromProps "SculkShrieker" ("shrieking", _) = ConT $ mkName "Shrieking"
 conFromProps ty (pTy, _) = error $ "Unknown datatype: " <> T.unpack ty <> " : " <> T.unpack pTy 
 
 attachable :: Text -> Bool
 attachable ty =
   T.isSuffixOf "GlassPane" ty || ty == "Fire" || T.isSuffixOf "Fence" ty || ty == "ChorusPlant" || ty == "GlowLichen" ||
-  ty == "Vine" || ty == "IronBars" || ty == "Tripwire"
+  ty == "Vine" || ty == "IronBars" || ty == "Tripwire" || ty == "SculkVein"
 
 isSlab :: Text -> Bool
 isSlab ty = T.isSuffixOf "Slab" ty
@@ -371,6 +381,8 @@ isDripleaf ty = T.isSuffixOf "Dripleaf" ty
 isCampfire :: Text -> Bool
 isCampfire ty = T.isSuffixOf "Campfire" ty
 
+isHangingSign :: Text -> Bool
+isHangingSign ty = T.isSuffixOf "HangingSign" ty
 
 -- Reading blocks
 type BlockEntries = M.Map Text BE.BlockEntry

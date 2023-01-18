@@ -1,28 +1,30 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Util.Position (
   Position(..)
 , pattern Position
-, OnGround(..)
+, Falling(..)
 ) where
-
-import Chunk.Position
 
 import Data.Word
 
-import FlatParse.Basic (empty)
+import Foreign.Storable
 
-import Optics
+import FlatParse.Basic (empty)
 
 import Util.Binary
 
 import Util.Linear.V3
 import Util.Linear.Vector
 
+import Hecs
+
 newtype Position = Pos (V3 Double)
   deriving stock Show
-  deriving newtype Eq
+  deriving newtype (Eq, Storable)
+  deriving Component via (ViaStorable Position)
 
 deriving newtype instance VectorSpace Double Position
 
@@ -39,19 +41,16 @@ instance ToBinary Position where
 instance FromBinary Position where
   get = Position <$> get <*> get <*> get
 
-instance HasChunkPosition Position where
-  chunkPosition = to $ \(Position x _ z) -> ChunkPos (floor x `div` 16) (floor z `div` 16)
-  {-# INLINE chunkPosition #-}
-
-data OnGround = OnGround | InAir
+data Falling = OnGround | Falling
   deriving stock (Show, Eq)
+  deriving Component via (ViaBoxed Falling) -- TODO As Tags? If I ever need to iterate only Falling or only OnGround (like in Physics, I may do that)
 
-instance ToBinary OnGround where
+instance ToBinary Falling where
   put OnGround = put @Word8 1
-  put InAir = put @Word8 0
+  put Falling = put @Word8 0
 
-instance FromBinary OnGround where
+instance FromBinary Falling where
   get = get @Word8 >>= \case
-    0 -> pure InAir
+    0 -> pure Falling
     1 -> pure OnGround
     _ -> empty

@@ -1,18 +1,24 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Util.Rotation (
   Rotation(..)
 , pattern Rotation
 ) where
 
+import Foreign.Storable
+
 import Util.Linear.V2
 import Util.Binary
 import Util.Linear.Vector
 
+import Hecs
+
 newtype Rotation = Rot (V2 Float)
   deriving stock Show
-  deriving newtype Eq
+  deriving newtype (Eq, Storable)
+  deriving Component via (ViaStorable Rotation)
 
 deriving newtype instance VectorSpace Float Rotation
 

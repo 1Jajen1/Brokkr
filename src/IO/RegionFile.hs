@@ -21,18 +21,21 @@ import Prelude hiding (FilePath)
 import Control.Monad
 import Data.Coerce
 import Data.ByteString
+import Control.Exception
 import qualified Foreign.Storable as S
 import Chunk.Position
 import qualified FlatParse.Basic as FP
 import qualified Data.ByteString.Lazy as LBS
 import qualified Codec.Compression.Zlib as ZLib
+import qualified Codec.Compression.GZip as GZip
 import Data.Int
 import Util.Binary
-import qualified Codec.Compression.GZip as GZip
 import Data.String
 import System.IO
 import FlatParse.Basic
 import Control.DeepSeq
+
+import Debug.Trace
 
 data RegionFile = RegionFile {
   locationTable :: !(S.Vector ChunkLocation_)
@@ -73,30 +76,38 @@ openRegionFile folder regionX regionZ = do
   let path = folder <> "/r." <> fromString (show regionX) <> "." <> fromString (show regionZ) <> ".mca"
   file <- openBinaryFile path ReadWriteMode
   (BS.BS fptr sz) <- readAt file 0 sectorSize
-  when (sz /= sectorSize) $ error "Invalid location table size" -- TODO Error
+  when (sz /= sectorSize) $ throwIO $ InvalidLocationTable path regionX regionZ
   let locationTable = S.unsafeFromForeignPtr0 (coerce fptr) $ sectorSize `div` (S.sizeOf @ChunkLocation_ undefined)
   pure $! RegionFile{..}
 
-readChunkData :: ChunkPosition -> RegionFile -> IO (Maybe ByteString)
-readChunkData (ChunkPos x z) RegionFile{..}
-  | off == 0 && sz == 0 = pure Nothing
+data InvalidLocationTable = InvalidLocationTable String Int Int
+  deriving stock Show
+
+instance Exception InvalidLocationTable 
+
+readChunkData :: ChunkPosition -> RegionFile -> (Int8 -> ByteString -> IO a) -> IO a -> IO a
+readChunkData (ChunkPos x z) RegionFile{..} cont notPresent
+  | off == 0 && sz == 0 = notPresent
   | otherwise = do
     compressedBs <- readAt file (unsafeShiftL (fromIntegral off) 12) (unsafeShiftL (fromIntegral sz) 12)
     case FP.runParser chunkDataP compressedBs of
-      FP.OK res _ -> pure $ Just res
-      _ -> error "Failed decompressing chunk data" -- TODO Error
+      FP.OK (!compTy, !bs) _ -> cont compTy bs
+      _ -> throwIO $ FailedReadingCompressedChunk (ChunkPos x z)
     where
-      rIndex = x .&. 31 + unsafeShiftL (z .&. 31) 5
+      rIndex = x .&. 31 + 32 * (z .&. 31)
       (ChunkLocation off sz) = locationTable `S.unsafeIndex` rIndex
       chunkDataP = do
         sizePre <- get @Int32
         compType <- get @Int8
         !bs <- takeBs . fromIntegral $ sizePre - 1
-        case compType of
-          1 -> pure $! LBS.toStrict . GZip.decompress $ LBS.fromStrict bs
-          2 -> pure $! LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
-          3 -> pure bs
-          _ -> error "Unknown compression scheme" -- TODO error
+        pure (compType, bs)
+        
+{-# INLINE readChunkData #-}
 
 closeRegionFile :: RegionFile -> IO ()
 closeRegionFile RegionFile{file} = hClose file
+
+newtype FailedReadingCompressedChunk = FailedReadingCompressedChunk ChunkPosition
+  deriving stock Show
+
+instance Exception FailedReadingCompressedChunk

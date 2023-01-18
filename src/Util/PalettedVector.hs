@@ -9,7 +9,7 @@ import Data.Int
 
 import Data.Proxy
 
-import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Primitive as Prim
 
 import GHC.TypeLits
 
@@ -24,7 +24,7 @@ data PalettedVector (sz :: Nat) (globalBitSz :: Nat) =
     Global      {-# UNPACK #-} !(PackedVector ('Static sz) ('Static globalBitSz))
   | SingleValue {-# UNPACK #-} !Int
   -- TODO Use Unboxed vectors instead. They should be better for such small vectors
-  | Indirect    {-# UNPACK #-} !(U.Vector Int) {-# UNPACK #-} !(PackedVector ('Static sz) 'Dynamic)
+  | Indirect    {-# UNPACK #-} !(Prim.Vector Int) {-# UNPACK #-} !(PackedVector ('Static sz) 'Dynamic)
 
 instance (KnownNat sz, KnownNat mBSz) => Show (PalettedVector sz mBSz) where
   show (Global v)      = "Global " <> show v
@@ -49,8 +49,8 @@ instance (KnownNat sz, KnownNat mBSz) => ToBinary (PalettedVector sz mBSz) where
   put (SingleValue v) = put (0 :: Int8) <> put (VarInt $ fromIntegral v) <> put (VarInt 0) -- No data
   put (Indirect p v) =
        put (fromIntegral @_ @Int8 bitSz)
-    <> put (VarInt . fromIntegral $ U.length p)
-    <> U.foldMap (\x -> put $ VarInt $ fromIntegral x) p
+    <> put (VarInt . fromIntegral $ Prim.length p)
+    <> Prim.foldMap (\x -> put $ VarInt $ fromIntegral x) p
     <> put (VarInt $ fromIntegral numInt64)
     <> put v
     where

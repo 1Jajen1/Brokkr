@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Util.Linear.V3 (
   V3(..)
 ) where
@@ -6,12 +7,21 @@ module Util.Linear.V3 (
 import Control.DeepSeq
 import Util.Linear.Vector
 
+import GHC.Generics
+import Foreign.Storable
+
+import Hecs
+
 -- Use a data family so that GHC unpacks the fields
 data family V3 a
 data instance V3 Int = V3_Int {-# UNPACK #-} !Int {-# UNPACK #-} !Int {-# UNPACK #-} !Int
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Generic)
+  deriving Storable via (GenericFlat (V3 Int))
+  deriving Component via (ViaStorable (V3 Int))
 data instance V3 Double = V3_Double {-# UNPACK #-} !Double {-# UNPACK #-} !Double {-# UNPACK #-} !Double
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Generic)
+  deriving Storable via (GenericFlat (V3 Double))
+  deriving Component via (ViaStorable (V3 Double))
 
 instance NFData (V3 Int) where
   rnf (V3_Int _ _ _) = ()

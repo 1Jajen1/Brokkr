@@ -29,12 +29,12 @@ source-repository-package
 source-repository-package
   type: git
   location: git@github.com:1Jajen1/hecs.git
-  tag: 1aa34e28a905418ce638168732eca5cda61f8b0e
+  tag: a704f68981f67e23c16186ea4fef84339dd04756
   subdir: hecs-core
 source-repository-package
   type: git
   location: git@github.com:1Jajen1/hecs.git
-  tag: 1aa34e28a905418ce638168732eca5cda61f8b0e
+  tag: a704f68981f67e23c16186ea4fef84339dd04756
   subdir: hecs
 
 -- GHC 9.2 support

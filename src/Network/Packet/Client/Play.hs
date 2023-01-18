@@ -30,7 +30,6 @@ data Packet =
   | BlockUpdate
   | BossBar
   | ChangeDifficulty
-  | ChatPreview
   | ClearTitles
   | CommandSuggestionsResponse
   | Commands
@@ -41,21 +40,21 @@ data Packet =
   | SetCooldown
   | ChatSuggestions
   | PluginMessage
-  | CustomSoundEffect
-  | HideMessage
-  | Disconnect Text
+  | DeleteMessage
+  | Disconnect !Text
+  | DisguisedChatMessage
   | EntityEvent
   | Explosion
-  | UnloadChunk Int Int
+  | UnloadChunk !Int !Int
   | GameEvent
   | OpenHorseScreen
   | InitializeWorldBorder
-  | KeepAlive Int64
-  | ChunkDataAndUpdateLight {-# UNPACk #-} ChunkData
+  | KeepAlive !Int64
+  | ChunkDataAndUpdateLight {-# UNPACk #-} !ChunkData
   | WorldEvent
   | Particle
   | UpdateLight
-  | Login LoginData -- Some changes here
+  | Login !LoginData -- Some changes here
   | MapData
   | MerchantOffers
   | UpdateEntityPosition
@@ -68,14 +67,14 @@ data Packet =
   | Ping
   | PlaceGhostRecipe
   | PlayerAbilities
-  | MessageHeader
   | PlayerChatMessage
   | EndCombat
   | EnterCombat
   | CombatDeath
-  | PlayerInfo
+  | PlayerInfoRemove
+  | PlayerInfoUpdate
   | LookAt
-  | SynchronizePlayerPosition Position Rotation TeleportId Dismount
+  | SynchronizePlayerPosition !Position !Rotation !TeleportId !Dismount
   | UpdateRecipeBook
   | RemoveEntities
   | RemoveEntityEffect
@@ -93,10 +92,9 @@ data Packet =
   | SetBorderWarningReach
   | SetCamera
   | SetHeldItem
-  | SetCenterChunk Int Int
+  | SetCenterChunk !Int !Int
   | SetRenderDistance
-  | SetDefaultSpawnPosition BlockPosition Float
-  | SetDisplayChatPreview
+  | SetDefaultSpawnPosition !BlockPosition !Float
   | DisplayObjective
   | SetEntityMetadata
   | LinkEntities
@@ -123,6 +121,7 @@ data Packet =
   | TeleportEntity
   | UpdateAdvancements
   | UpdateAttributes
+  | FeatureFlags
   | EntityEffect
   | UpdateRecipes
   | UpdateTags

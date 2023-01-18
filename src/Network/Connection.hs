@@ -1,18 +1,19 @@
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Network.Connection (
   Connection
 , new
 , SendPacket(..)
-, executeCommand, executeCommands
+-- , executeCommand, executeCommands
 , sendPacket, sendPackets
-, flushCommands
+-- , flushCommands
 , flushPackets
 , sendKeepAlive
 , ackKeepAlive
 , close
 ) where
 
-import {-# SOURCE #-} Command
+-- import {-# SOURCE #-} Command
 
 import Control.Concurrent
 import Control.Exception
@@ -21,6 +22,8 @@ import Control.Monad
 import Data.Int
 
 import qualified Data.Vector as V
+
+import GHC.Generics
 
 import Network.Exception (ConnectionClosed(..), ClientTimedOut(..), InvalidKeepAlive(..))
 
@@ -32,31 +35,35 @@ import qualified Util.Queue as Queue
 import Util.Ring (Ring)
 import qualified Util.Ring as Ring
 
+import Hecs
+
 data Connection = Conn {
-  commandQueue :: Queue Command
-, sendLock :: MVar ()
+  -- TODO Command queue?
+  sendLock :: MVar ()
 , sendQueue :: Ring SendPacket
 , lastKeepAlive :: MVar Int64 -- Full means we sent the number, empty means the client responded correctly
 , threadId :: ThreadId
 }
+  deriving stock Generic
+  deriving Component via (ViaBoxed Connection)
 
 data SendPacket = SendPacket !Int !Packet
   deriving stock Show
 
 new :: IO Connection
 new = do
-  commandQueue <- Queue.new 64
+  -- commandQueue <- Queue.new 64
   sendLock <- newMVar ()
   sendQueue <- Ring.newRingBuffer 512
   lastKeepAlive <- newEmptyMVar
   threadId <- myThreadId
   pure Conn{..}
 
-executeCommand :: Connection -> Command -> IO ()
-executeCommand Conn{..} c = Queue.push commandQueue c
+-- executeCommand :: Connection -> Command -> IO ()
+-- executeCommand Conn{..} c = Queue.push commandQueue c
 
-executeCommands :: Connection -> V.Vector Command -> IO ()
-executeCommands Conn{..} cs = Queue.pushN commandQueue cs
+-- executeCommands :: Connection -> V.Vector Command -> IO ()
+-- executeCommands Conn{..} cs = Queue.pushN commandQueue cs
 
 sendPacket :: Connection -> SendPacket -> IO ()
 sendPacket Conn{..} p = withMVar sendLock . const $ Ring.push sendQueue p
@@ -64,9 +71,9 @@ sendPacket Conn{..} p = withMVar sendLock . const $ Ring.push sendQueue p
 sendPackets :: Connection -> V.Vector SendPacket -> IO ()
 sendPackets Conn{..} ps = withMVar sendLock . const $ Ring.pushN sendQueue ps
 
-flushCommands :: Connection -> (V.Vector Command -> IO a) -> IO a
-flushCommands Conn{..} f = Queue.flush commandQueue >>= f
-{-# INLINE flushCommands #-}
+-- flushCommands :: Connection -> (V.Vector Command -> IO a) -> IO a
+-- flushCommands Conn{..} f = Queue.flush commandQueue >>= f
+-- {-# INLINE flushCommands #-}
 
 flushPackets :: Connection -> (V.Vector SendPacket -> IO a) -> IO a
 flushPackets Conn{..} f = do

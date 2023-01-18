@@ -3,6 +3,10 @@
 {-# LANGUAGE MultiWayIf #-}
 module IO.Chunk (
   Chunk(..)
+, ChunkSection(..)
+, Biomes(..)
+, BlockStates(..)
+, countBlocks
 ) where
 
 import Registry.Biome
@@ -31,6 +35,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Primitive as Prim
 
 import GHC.Generics
 import GHC.TypeLits
@@ -44,27 +49,17 @@ import qualified Util.Vector.Packed as P
 
 import Util.PalettedVector
 
--- TODO
-{-
-
-pray I make it back here:
-
-- Preload chunks async whenever needed
-  - first join, or basically every dim join
-
-- Then just load in game tick for the few chunks needed later (but still concurrently)
-  - what happens if we lag behind?
-
--}
-
 -- Parsed snapshot of a chunk on disk
 -- Used to serialize and deserialize chunks to disk
 data Chunk = Chunk {
-  position       :: {-# UNPACK #-} ChunkPosition
-, lowestYSection :: {-# UNPACK #-} Int
-, sections       :: {-# UNPACK #-} (V.Vector ChunkSection)
-, heightmaps     :: {-# UNPACK #-} Heightmaps
+  position       :: {-# UNPACK #-} !ChunkPosition
+, lowestYSection :: {-# UNPACK #-} !Int
+, sections       :: {-# UNPACK #-} !(V.Vector ChunkSection)
+, heightmaps     :: {-# UNPACK #-} !Heightmaps
 }
+  deriving stock (Show, Generic)
+  deriving anyclass NFData
+  deriving (FromBinary) via BinaryNBT Chunk
 
 type NibbleVector = PackedVector ('Static 4096) ('Static 4)
 
@@ -79,8 +74,7 @@ data ChunkSection = ChunkSection {
   deriving stock (Show, Generic)
   deriving anyclass NFData
 
--- TODO Generate at compile time since 1 + Log2 is not actually correct if the HighestBlockStateId is a perfect power of 2 
-type BlockPaletteMaxBitsize = 1 + Log2 HighestBlockStateId 
+type BlockPaletteMaxBitsize = 1 + Log2 (HighestBlockStateId - 1) 
 type BiomePaletteMaxBitsze  = 6
 
 type SectionSize = 4096
@@ -97,16 +91,15 @@ newtype Biomes = Biomes (PalettedVector BiomeSectionSize BiomePaletteMaxBitsze)
 --
 instance FromNBT Chunk where
   parseNBT = withCompound $ \obj -> do
-    
-    xPos <- fromIntegral @Int32 <$> obj .: "xPos"
-    zPos <- fromIntegral @Int32 <$> obj .: "zPos"
-    let position = ChunkPos xPos zPos
+    !xPos <- fromIntegral @Int32 <$> obj .: "xPos"
+    !zPos <- fromIntegral @Int32 <$> obj .: "zPos"
+    let !position = ChunkPos xPos zPos
 
-    lowestYSection <- fromIntegral @Int32 <$> obj .: "yPos"
+    !lowestYSection <- fromIntegral @Int32 <$> obj .: "yPos"
 
-    sections <- obj .: "sections"
+    !sections <- obj .: "sections"
 
-    heightmaps <- obj .: "Heightmaps"
+    !heightmaps <- obj .: "Heightmaps"
 
     pure Chunk{..}
   {-# INLINE parseNBT #-}
@@ -138,7 +131,7 @@ instance FromNBT BlockStates where
          let bitsPerVal = len `div` 64 -- TODO Why does this work?
          if | bitsPerVal < 4 -> error "TODO" -- TODO Error messages
             | bitsPerVal < 9 -> 
-              let !intPalette = U.generate (V.length palette) $ (coerce . (V.!) palette) 
+              let !intPalette = Prim.generate (V.length palette) $ (coerce . (V.!) palette) 
               in pure . BlockStates . Indirect intPalette . P.unsafeDynamicFromForeignPtr bitsPerVal $ coerce blockStates
             | otherwise -> pure . BlockStates . Global . P.unsafeStaticFromForeignPtr $ coerce blockStates
     where
@@ -168,14 +161,14 @@ instance FromNBT Biomes where
   parseNBT = withCompound $ \obj -> do
     !intPalette <- lookupBiomes <$> obj .: "palette"
 
-    if | U.length intPalette == 1 -> pure . Biomes . SingleValue $ U.unsafeHead intPalette 
+    if | Prim.length intPalette == 1 -> pure . Biomes . SingleValue $ Prim.unsafeHead intPalette 
        | otherwise -> do
          (biomes, len) <- S.unsafeToForeignPtr0 @Int64 <$> obj .: "data"
          let bitsPerVal = if len == 4 then 3 else len -- TODO
          if | bitsPerVal < 4 -> pure . Biomes . Indirect intPalette . P.unsafeDynamicFromForeignPtr bitsPerVal $ coerce biomes
             | otherwise -> pure . Biomes . Global . P.unsafeStaticFromForeignPtr $ coerce biomes
     where
-      lookupBiomes v = U.generate (V.length v) $ \i -> lookupBiome (v V.! i)
+      lookupBiomes v = Prim.generate (V.length v) $ \i -> lookupBiome (v V.! i)
       lookupBiome :: Tag -> Int
       lookupBiome (TagString name) = fromMaybe (error $ show name) $ HM.lookup (BS.drop 10 $ coerce name) biomeMap
       lookupBiome _ = error "WUT=!"
@@ -188,14 +181,13 @@ countBlocks (BlockStates (SingleValue val))
   | isAir $ BlockState val = 0
   | otherwise              = fromIntegral $ natVal @SectionSize undefined
 countBlocks (BlockStates (Global vec)) 
-  = sz - P.countElems (coerce $ S.fromList $ coerce @_ @[Int] [Air, VoidAir, CaveAir]) vec
+  = sz - P.countElems (coerce $ Prim.fromList $ coerce @_ @[Int] [Air, VoidAir, CaveAir]) vec
   where !sz = fromIntegral $ natVal @SectionSize undefined
 countBlocks (BlockStates (Indirect palette vec))
-  | U.null airs = sz
-  -- | U.length airs == 1 = P.countElem (airs U.! 0) vec
+  | Prim.null airs = sz
   | otherwise = sz - P.countElems (coerce airs) vec
   where
-    !airs = U.findIndices (\x -> isAir $ BlockState x) palette
+    !airs = Prim.findIndices (\x -> isAir $ BlockState x) palette
     !sz = fromIntegral $ natVal @SectionSize undefined
 {-# SCC countBlocks #-}
 

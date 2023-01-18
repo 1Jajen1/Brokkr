@@ -38,7 +38,10 @@ common common-options
                      , unordered-containers
                      , hashable
                      , deepseq
+                     , mtl
                      , transformers
+                     , transformers-base
+                     , monad-control
                      , chronos
                      , optics
                      , bitfield
@@ -73,12 +76,6 @@ library
   cc-options:          -O3
   exposed-modules:     LCraft
                       , Block.Position
-                      , Command
-                      , Command.Handler
-                      , Command.Handler.Disconnect
-                      , Command.Handler.Login
-                      , Command.Handler.Movement
-                      , Control.Monad.STM.Class
                       -- , Chunk
                       , Chunk.Heightmap
                       , Chunk.Internal
@@ -86,17 +83,18 @@ library
                       , Chunk.Section
                       , Client
                       , Client.GameMode
-                      , Client.Internal
                       , Dimension
                       , Dimension.Internal
-                      , Entity.EntityId
-                      -- HECS
-                      , Hecs.Archetype.Internal
-                      , Hecs.Entity.Internal
-                      , Hecs.World.Internal
                       -- , IO.ChunkCache
+                      , IO.Chunk
+                      , IO.Chunkloading
                       , IO.RegionFile
                       -- , Network
+                      -- ECS
+                      -- TODO Rename to System? 
+                      , Monad
+                      , System.JoinPlayers
+                      -- 
                       , Network.Connection
                       , Network.Exception
                       , Network.Handler
@@ -117,7 +115,6 @@ library
                       , Network.Util.Packet
                       , Network.Util.SizePrefixed
                       , Network.Util.VarNum
-                      , Server
                       , Util.Angle
                       , Util.Binary
                       , Util.BitSet
@@ -136,6 +133,7 @@ library
                       , Util.Ring
                       , Util.Rotation
                       , Util.UUID
+                      , Util.Velocity
                       , Util.Word24
 executable LCraft
   import:              common-options
@@ -166,7 +164,7 @@ test-suite LCraft-test
                        -rtsopts
                        -with-rtsopts=-N
 
-benchmark NBT-benchmark
+benchmark NBT
   import:              common-options
   type:                exitcode-stdio-1.0
   hs-source-dirs:      benchmark
@@ -174,14 +172,14 @@ benchmark NBT-benchmark
   build-depends:       tasty-bench
                      , LCraft
                      , zlib
-benchmark Packed-vector-benchmark
+benchmark Packed-vector
   import:              common-options
   type:                exitcode-stdio-1.0
   hs-source-dirs:      benchmark
   main-is:             PackedVector.hs
   build-depends:       tasty-bench
                      , LCraft
-benchmark Chunkloading-benchmark
+benchmark Chunkloading
   import:              common-options
   type:                exitcode-stdio-1.0
   hs-source-dirs:      benchmark
@@ -189,7 +187,7 @@ benchmark Chunkloading-benchmark
   build-depends:       tasty-bench
                      , LCraft
   ghc-options:         -O2
-benchmark VarInt-benchmark
+benchmark VarInt
   import:              common-options
   type:                exitcode-stdio-1.0
   hs-source-dirs:      benchmark

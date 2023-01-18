@@ -1,13 +1,13 @@
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Network.Monad (
   Network
 , runNetwork
 , getSocket -- Internals?
-, getServer
+, getUniverse
 , readPacket
 , sendBytes
 , sendPackets
-, withAsync
 , closeConnection
 , ConnectionClosed(..)
 , PacketFailure(..)
@@ -19,15 +19,14 @@ module Network.Monad (
 
 import qualified Codec.Compression.Zlib as ZLib
 
-import Control.Concurrent.Async (Async)
-import qualified Control.Concurrent.Async as Async
-
 import Control.Exception
 
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.State
+import Control.Monad.Base
+import Control.Monad.Trans.Control
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -44,23 +43,34 @@ import Network.Protocol
 import Network.Util.Builder
 import Network.Util.VarNum
 
-import Server
+import Monad hiding (getUniverse)
+import qualified Monad
 
 import Util.Binary (FromBinary, ToBinary)
 import qualified Util.Binary as Binary
 
+import Hecs
+
 import Debug.Trace
 
-newtype Network a = Network { unNetwork :: ReaderT Server (ReaderT Socket (StateT ByteString IO)) a }
-  deriving newtype (Functor, Applicative, Monad, MonadIO)
+newtype Network a = Network { unNetwork :: ServerM (ReaderT Socket (StateT ByteString IO)) a }
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadBase IO, MonadBaseControl IO)
 
-runNetwork :: Server -> Socket -> Network a -> IO a
-runNetwork server sock (Network f) = evalStateT (runReaderT (runReaderT f server) sock) mempty
+deriving newtype instance MonadHecs Universe Network
+
+runNetwork :: Universe -> Socket -> Network a -> IO a
+-- We defer f because that means another thread (the main thread) will sync all changes, this ensures thread safety
+-- This does not affect reads and packets are not written as components, but put into a queue component -- TODO Alter once that is finalized
+-- This would technically sync after f finishes, but the network threads are designed to diverge. This means no thread running Network should
+-- finish without an exception
+runNetwork universe sock (Network f) = catch
+  (evalStateT (runReaderT (runServerM universe (defer f)) sock) mempty)
+  (\(e :: SomeException) -> print e >> throwIO e)
 {-# INLINE runNetwork #-}
 
-getServer :: Network Server
-getServer = Network ask
-{-# INLINE getServer #-}
+getUniverse :: Network Universe
+getUniverse = Network $ Monad.getUniverse
+{-# INLINE getUniverse #-}
 
 getSocket :: Network Socket
 getSocket = Network $ lift ask
@@ -133,11 +143,3 @@ closeConnection = liftIO $ throwIO ConnectionClosed
 
 invalidProtocol :: InvalidProtocol -> Network a
 invalidProtocol = liftIO . throwIO
-
-withAsync :: IO a -> (Async a -> Network b) -> Network b
-withAsync inAsync f = Network $ do
-  server <- ask
-  sock <- lift ask
-  bs <- lift $ lift get
-  liftIO . Async.withAsync inAsync $ \as -> evalStateT (runReaderT (runReaderT (unNetwork $ f as) server) sock) bs
-{-# INLINE withAsync #-}

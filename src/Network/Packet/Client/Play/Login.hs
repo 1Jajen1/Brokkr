@@ -28,7 +28,6 @@ import Util.Binary
 import Data.Int
 import Util.NBT
 import Data.Text
-import Entity.EntityId
 import Registry.Dimension
 import Registry.BiomeSettings
 import Network.Util.VarNum
@@ -39,6 +38,8 @@ import Network.Util.MCString
 import Data.Coerce
 import Util.Position
 import Data.String (IsString(..))
+
+import Hecs (EntityId(..))
 
 -- TODO Redesign datatypes
 -- TODO Load registries from json ...

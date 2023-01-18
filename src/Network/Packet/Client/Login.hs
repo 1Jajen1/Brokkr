@@ -2,7 +2,7 @@ module Network.Packet.Client.Login (
   LoginPacket(..)
 ) where
 
-import Data.UUID
+import Util.UUID
 import Data.Text
 import Util.Binary
 import Network.Util.Packet
@@ -18,7 +18,7 @@ data LoginPacket =
 
 instance ToBinary LoginPacket where
   put a = packetId a <> case a of
-    LoginSuccess uid name -> put uid <> put (MCString name) <> put (VarInt 0) -- TODO
+    LoginSuccess uid name -> put uid <> put (MCString name) <> put (VarInt 0) -- TODO properties
     SetCompression i -> put (VarInt $ fromIntegral i)
     _ -> error "Unsupported"
   {-# INLINE put #-}

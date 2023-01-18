@@ -7,9 +7,7 @@ import Util.Binary
 import Network.Util.VarNum
 import Network.Util.MCString
 import Network.Util.Packet
-import Data.Word
 import Data.Int
-import Client
 import Util.Position
 import Util.Rotation
 
@@ -29,7 +27,6 @@ data Packet =
   | MessageAcknowledgment
   | ChatCommand
   | ChatMessage
-  | ChatPreview
   | ClientCommand
   | ClientInformation Locale ViewDistance ChatMode UseChatColors DisplayedSkinParts MainHand UseTextFiltering AllowServerListings
   | CommandSuggestionsRequest
@@ -43,10 +40,10 @@ data Packet =
   | JigsawGenerate
   | KeepAlive Int64
   | LockDifficulty
-  | SetPlayerPosition Position OnGround
-  | SetPlayerPositionAndRotation Position Rotation OnGround
-  | SetPlayerRotation Rotation OnGround
-  | SetPlayerOnGround OnGround
+  | SetPlayerPosition Position Falling
+  | SetPlayerPositionAndRotation Position Rotation Falling
+  | SetPlayerRotation Rotation Falling
+  | SetPlayerOnGround Falling
   | MoveVehicle
   | PaddleBoat
   | PickItem
@@ -84,7 +81,6 @@ instance FromBinary Packet where
     , [|| pure MessageAcknowledgment ||]
     , [|| pure ChatCommand ||]
     , [|| pure ChatMessage ||]
-    , [|| pure ChatPreview ||]
     , [|| pure ClientCommand ||]
     , [|| ClientInformation <$> get <*> get <*> get <*> get <*> get <*> get <*> get <*> get ||]
     , [|| pure CommandSuggestionsRequest ||]
