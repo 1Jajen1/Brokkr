@@ -9,10 +9,9 @@ import Util.Binary
 import Data.Word
 import Data.Bits
 
-data BlockPosition = BlockPosition (V3 Int)
-
-instance Show BlockPosition where
-  show (BlockPos x y z) = "BlockPosition " <> show x <> " " <> show y <> " " <> show z
+newtype BlockPosition = BlockPosition (V3 Int)
+  deriving stock Show
+  deriving newtype Eq
 
 pattern BlockPos :: Int -> Int -> Int -> BlockPosition
 pattern BlockPos x y z = BlockPosition (V3_Int x y z)

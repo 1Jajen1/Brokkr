@@ -45,7 +45,7 @@ mkChunkData IO.Chunk{..} = (minPacketSz, ChunkData sectionsByteSize position hei
 
     -- TODO This is needlessly slow (immutable bitset is modified over and over again instead of a mutable one) and it assumes a few constants that may not be valid
     -- -4 is the lowest chunk section y value (is it? o.O)
-    -- 26 is the number of chunk sections for 320 up and -64 down worlds
+    -- 24 is the number of chunk sections for 320 up and -64 down worlds + 2 for light below and above the world
     makeLightBitSetAndArray sel = V.foldl'
       (\acc@(bSet, vec) sect -> maybe acc (\x -> (BitSet.set bSet $ (IO.y sect) + 5, V.snoc vec x)) (sel sect))
       (BitSet.emptyBitSet $ IO.numSections + 2, mempty)
@@ -83,50 +83,6 @@ mkChunkData IO.Chunk{..} = (minPacketSz, ChunkData sectionsByteSize position hei
         !bSz = runST $  PV.bitSz <$> PV.unsafeThaw v
         !len = runST $  PV.length <$> PV.unsafeThaw v
         !numLongs = PV.nrWords bSz len
-
--- data ChunkData = ChunkData !Int !ChunkPosition !Heightmaps !(Vector ChunkSection) !BitSet !BitSet !(Vector NibbleVector) !(Vector NibbleVector)
---   deriving stock (Show, Generic)
---   deriving anyclass NFData
--- 
--- mkChunkData :: Chunk -> (Int, ChunkData)
--- mkChunkData !Chunk{..} = (minPacketSz, ChunkData sectionsByteSize _position _heightmaps _sections skyLightBitSet blockLightBitSet skyLightArr blockLightArr)
---   where
---      -- TODO This is ugly and likely slow Convert to one mutable method and get the constant 26 somewhere else
---     !(!skyLightBitSet, !skyLightArr) = V.foldl' (\acc@(bSet, vec) ChunkSection{..} -> maybe acc (\x -> (BitSet.set bSet $ y + 1, V.snoc vec x)) skyLight) (BitSet.emptyBitSet 26, mempty) _sections
---     !(!blockLightBitSet, !blockLightArr) = V.foldl' (\acc@(bSet, vec) ChunkSection{..} -> maybe acc (\x -> (BitSet.set bSet $ y + 1, V.snoc vec x)) blockLight) (BitSet.emptyBitSet 26, mempty) _sections
---     !minPacketSz = -- TODO replace VarInt sizes with varIntSize and make sure it is evaluated at compile time!
---         1 -- PacketId
---       + 4 + 4 -- Chunkposition
---       + 1 + 2 -- NBT Compound header empty name
---       + 1 + 2 + 15 + 4 + 37 * 8 -- NBT Long array with a single heightmap with 256 9 bit values, so floor (64 / 9) = 7 and ceil (256 / 7) = 37
---       + 1 -- End tag
---       + (varIntSize sectionsByteSize) -- Size prefix for the sections data
---       + sectionsByteSize -- sections data
---       + 1 -- No block entities for now -- TODO
---       + 1 -- Trust edges bool -- TODO
---       -- TODO This can be done smarter ... But the problem is java bitsets are sent as 0 if empty... and if we ever go beyond one long we might face more differences...
---       + BitSet.byteSize skyLightBitSet -- Skylight bitset
---       + BitSet.byteSize blockLightBitSet -- Blocklight bitset
---       + BitSet.byteSize (BitSet.complement skyLightBitSet) -- Complement Skylight bitset
---       + BitSet.byteSize (BitSet.complement blockLightBitSet) -- Complement Blocklight bitset
---       + 1 + (varIntSize 2048) + 2048 * V.length skyLightArr -- Skylight, varInt prefixed
---       + 1 + (varIntSize 2048) + 2048 * V.length blockLightArr -- BlockLight, varInt prefixed
---     
---     -- This needs to be exact, minPacketSz could use an approximation
---     !sectionsByteSize = V.foldl' (\acc s -> acc + sectionByteSize s) 0 _sections
---     sectionByteSize ChunkSection{..} = 2 + paletteContainerSz (coerce blocks) + paletteContainerSz (coerce biomes)
---     paletteContainerSz (Global v) = 1 + (varIntSize numLongs) + 8 * numLongs
---       where
---         !bSz = runST $ PV.bitSz <$> PV.unsafeThaw v
---         !len = runST $ PV.length <$> PV.unsafeThaw v
---         !numLongs = PV.nrWords bSz len
---     paletteContainerSz (SingleValue v) = 1 + varIntSize v + 1
---     paletteContainerSz (Indirect p v) = 1 + (varIntSize $ S.length p) + paletteByteSz + (varIntSize numLongs) + 8 * numLongs
---       where
---         !paletteByteSz = getSum $ S.foldMap (\el -> Sum $ varIntSize $ el) p
---         !bSz = runST $  PV.bitSz <$> PV.unsafeThaw v
---         !len = runST $  PV.length <$> PV.unsafeThaw v
---         !numLongs = PV.nrWords bSz len
 -- 
 instance ToBinary ChunkData where
   put (ChunkData sectionsByteSize (ChunkPos x z) heightmaps sections  skyLightMask blockLightMask skyLight blockLight) =
@@ -145,7 +101,7 @@ instance ToBinary ChunkData where
     <> put (VarInt . fromIntegral $ V.length blockLight)
     <> V.foldMap (\i -> put (VarInt 2048) <> put i) blockLight
     where
-      !sectionsBytes = V.foldMap putSection sections -- Do we send all here? Including the y = -1 section?
+      !sectionsBytes = V.foldMap putSection sections
       putSection IO.ChunkSection{blockCount,blocks,biomes} =
            put (fromIntegral @_ @Int16 blockCount)
         <> put blocks

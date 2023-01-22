@@ -28,9 +28,6 @@ newtype Position = Pos (V3 Double)
 
 deriving newtype instance VectorSpace Double Position
 
-instance Semigroup Position where
-  (<>) = (|+|)
-
 pattern Position :: Double -> Double -> Double -> Position
 pattern Position x y z = Pos (V3_Double x y z)
 {-# COMPLETE Position #-}

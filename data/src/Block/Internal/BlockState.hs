@@ -35,6 +35,15 @@ data Facing (up :: Bool) (down :: Bool) where
   Up    :: Facing 'True down
   Down  :: Facing up 'True
 
+deriving stock instance Show (Facing 'True  'True )
+deriving stock instance Show (Facing 'False 'False)
+deriving stock instance Show (Facing 'False 'True )
+deriving stock instance Show (Facing 'True  'False)
+deriving stock instance Eq (Facing 'True  'True )
+deriving stock instance Eq (Facing 'False 'False)
+deriving stock instance Eq (Facing 'False 'True )
+deriving stock instance Eq (Facing 'True  'False)
+
 instance FromId (Facing 'False 'False) where
   fromId 0 = North
   fromId 1 = South

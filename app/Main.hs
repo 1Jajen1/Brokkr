@@ -13,8 +13,6 @@ import qualified Control.Concurrent.Async as Async
 
 import qualified IO.Chunkloading as Chunkloading
 
-import qualified Network.Connection as Conn
-
 import qualified Network.Simple.TCP as Network
 
 import Network.Handler
@@ -26,8 +24,6 @@ import Control.Monad.Trans.Control
 import Server (Server, newWorld, runServerM)
 import qualified Server as Hecs
 import qualified Hecs
-
-import Client (Joined)
 
 import System.JoinPlayers
 import System.NetworkCommands

@@ -14,7 +14,6 @@ module Chunk.Internal (
 import qualified Data.Vector as V
 import Chunk.Position
 import Chunk.Section
-import Util.NBT
 import GHC.Generics (Generic)
 import Control.DeepSeq
 

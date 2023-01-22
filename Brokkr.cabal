@@ -74,7 +74,8 @@ library
 --else
   --c-sources:         cbits/basic.c
   cc-options:          -O3
-  exposed-modules:      Block.Position
+  exposed-modules:      Block.BlockFace
+                      , Block.Position
                       -- , Chunk
                       , Chunk.Heightmap
                       , Chunk.Internal
@@ -84,6 +85,8 @@ library
                       , Client.GameMode
                       , Dimension
                       , Dimension.Internal
+                      -- Entity
+                      , Entity.Util.Hand
                       -- , IO.ChunkCache
                       , IO.Chunk
                       , IO.Chunkloading
@@ -107,7 +110,9 @@ library
                       , Network.Packet.Server.Play
                       , Network.Packet.Server.Play.ClientInformation
                       , Network.Packet.Server.Play.PlayerAbilities
+                      , Network.Packet.Server.Play.PlayerAction
                       , Network.Packet.Server.Play.PlayerCommand
+                      , Network.Packet.Server.Play.UseItemOn
                       , Network.Protocol
                       , Network.Util
                       , Network.Util.Builder
@@ -116,6 +121,7 @@ library
                       , Network.Util.MCString
                       , Network.Util.Packet
                       , Network.Util.SizePrefixed
+                      , Network.Util.Slot
                       , Network.Util.VarNum
                       , Util.Angle
                       , Util.Binary

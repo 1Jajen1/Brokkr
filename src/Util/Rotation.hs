@@ -13,7 +13,7 @@ import Util.Linear.V2
 import Util.Binary
 import Util.Linear.Vector
 
-import Hecs (Component, ViaBox, ViaFlat)
+import Hecs (Component, ViaFlat)
 
 newtype Rotation = Rot (V2 Float)
   deriving stock Show
@@ -21,9 +21,6 @@ newtype Rotation = Rot (V2 Float)
   deriving Component via (ViaFlat Rotation)
 
 deriving newtype instance VectorSpace Float Rotation
-
-instance Semigroup Rotation where
-  (<>) = (|+|)
 
 pattern Rotation :: Float -> Float -> Rotation
 pattern Rotation yaw pitch = Rot (V2_Float yaw pitch)

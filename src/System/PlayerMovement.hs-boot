@@ -1,6 +1,6 @@
 module System.PlayerMovement (
-  Translate(..)
-, Rotate(..)
+  Translate
+, Rotate
 , Land, Fly
 ) where
 

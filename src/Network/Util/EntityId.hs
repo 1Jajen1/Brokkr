@@ -5,7 +5,6 @@ module Network.Util.EntityId (
 import Data.Kind
 
 import Network.Util.FromIntegral
-import Network.Util.VarNum
 
 import Util.Binary
 

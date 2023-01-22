@@ -3,25 +3,32 @@ module Network.Packet.Server.Play (
   Packet(..)
 ) where
 
-import Util.Binary
-import Network.Util
-import Network.Util.Packet
-import Data.Int
-import Util.Position
-import Util.Rotation
+import Block.BlockFace
+import Block.Position
 
+import Data.Int
 import Data.ByteString (ByteString)
 import Data.Coerce
-import Data.Functor
 import Data.Text (Text)
+import Data.Word
+import Data.Bitfield (Bitfield)
+
+import Entity.Util.Hand
 
 import FlatParse.Basic (takeRestBs)
 
-import Network.Util.EntityId
-
 import Network.Packet.Server.Play.ClientInformation
 import Network.Packet.Server.Play.PlayerAbilities
+import Network.Packet.Server.Play.PlayerAction
 import Network.Packet.Server.Play.PlayerCommand
+import Network.Packet.Server.Play.UseItemOn
+
+import Network.Util
+import Network.Util.Packet
+
+import Util.Binary
+import Util.Position
+import Util.Rotation
 
 data Packet =
     ConfirmTeleportation Int
@@ -35,7 +42,7 @@ data Packet =
   | CommandSuggestionsRequest
   | ClickContainerButton
   | ClickContainer
-  | CloseContainer
+  | CloseContainer !Word8
   | PluginMessage Text ByteString
   | EditBook
   | QueryEntityTag
@@ -51,11 +58,12 @@ data Packet =
   | PaddleBoat
   | PickItem
   | PlaceRecipe
-  | PlayerAbilities Abilities
-  | PlayerAction
+  | PlayerAbilities !(Bitfield Word8 Abilities)
+  | PlayerAction !PlayerAction !VarInt -- TODO Newtype the varint to Seqence
   | PlayerCommand !(EntityId VarInt) !PlayerCommand
   | PlayerInput
   | Pong
+  | PlayerSession
   | ChangeRecipeBookSettings
   | SetSeenRecipe
   | RenameItem
@@ -66,13 +74,13 @@ data Packet =
   | SetHeldItem
   | ProgramCommandBlock
   | ProgramCommandBlockMinecart
-  | SetCreativeModeSlot
+  | SetCreativeModeSlot !SlotIndex !Slot
   | ProgramJigsawBlock
   | ProgramStructureBlock
   | UpdateSign
-  | SwingArm
+  | SwingArm !Hand
   | TeleportToEntity
-  | UseItemOn
+  | UseItemOn !Hand !BlockPosition !BlockFace !Cursor !HeadInBlock !VarInt -- TODO Newtype VarInt to Seqence
   | UseItem
   deriving stock Show
 
@@ -89,7 +97,7 @@ instance FromBinary Packet where
     , [|| pure CommandSuggestionsRequest ||]
     , [|| pure ClickContainerButton ||]
     , [|| pure ClickContainer ||]
-    , [|| pure CloseContainer ||]
+    , [|| CloseContainer <$> get ||]
     , [|| PluginMessage . coerce <$> get @MCString <*> takeRestBs ||]
     , [|| pure EditBook ||]
     , [|| pure QueryEntityTag ||]
@@ -106,8 +114,29 @@ instance FromBinary Packet where
     , [|| pure PickItem ||]
     , [|| pure PlaceRecipe ||]
     , [|| PlayerAbilities <$> get ||]
-    , [|| pure PlayerAction ||]
+    , [|| PlayerAction <$> get <*> get ||]
     , [|| PlayerCommand <$> get <*> get ||]
+    , [|| pure PlayerInput ||]
+    , [|| pure Pong ||]
+    , [|| pure PlayerSession ||]
+    , [|| pure ChangeRecipeBookSettings ||]
+    , [|| pure SetSeenRecipe ||]
+    , [|| pure RenameItem ||]
+    , [|| pure ResourcePack ||]
+    , [|| pure SeenAdvancements ||]
+    , [|| pure SelectTrade ||]
+    , [|| pure SetBeaconEffect ||]
+    , [|| pure SetHeldItem ||]
+    , [|| pure ProgramCommandBlock ||]
+    , [|| pure ProgramCommandBlockMinecart ||]
+    , [|| SetCreativeModeSlot <$> get <*> get ||]
+    , [|| pure ProgramJigsawBlock ||]
+    , [|| pure ProgramStructureBlock ||]
+    , [|| pure UpdateSign ||]
+    , [|| SwingArm <$> get ||]
+    , [|| pure TeleportToEntity ||]
+    , [|| UseItemOn <$> get <*> get <*> get <*> get <*> get <*> get ||]
+    , [|| pure UseItem ||]
     ])
     where
       confirmTeleport = ConfirmTeleportation . fromIntegral <$> get @VarInt

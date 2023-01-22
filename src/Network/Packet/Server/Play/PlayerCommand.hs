@@ -32,6 +32,7 @@ instance FromBinary PlayerCommand where
     6 -> get @Word8 $> StopHorseJump
     7 -> get @Word8 $> OpenHorseInventory
     8 -> get @Word8 $> StartFlyingWithElytra
+    -- TODO Handle error case
 
 newtype HorseJumpBoost = HorseJumpBoost Int
   deriving stock Show

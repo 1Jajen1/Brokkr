@@ -13,7 +13,7 @@ import Util.Binary
 import Util.Linear.V3
 import Util.Linear.Vector
 
-import Hecs (Component, ViaBox, ViaFlat)
+import Hecs (Component, ViaFlat)
 
 newtype Velocity = Vel (V3 Double)
   deriving stock Show
@@ -21,9 +21,6 @@ newtype Velocity = Vel (V3 Double)
   deriving Component via (ViaFlat Velocity)
 
 deriving newtype instance VectorSpace Double Velocity
-
-instance Semigroup Velocity where
-  (<>) = (|+|)
 
 pattern Velocity :: Double -> Double -> Double -> Velocity
 pattern Velocity x y z = Vel (V3_Double x y z)

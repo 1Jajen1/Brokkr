@@ -41,7 +41,7 @@ instance FromBinary ChatMode where
     VarInt 0 -> pure Enabled
     VarInt 1 -> pure CommandOnly
     VarInt 2 -> pure Hidden
-    _ -> empty
+    -- TODO Handle error case
 
 newtype UseChatColors = UseChatColors Bool
   deriving stock Show
@@ -62,7 +62,7 @@ instance FromBinary MainHand where
   get = get >>= \case
     VarInt 0 -> pure LeftHand
     VarInt 1 -> pure RightHand
-    _ -> empty
+    -- TODO Handle error case
 
 newtype UseTextFiltering = UseTextFiltering Bool
   deriving stock Show
