@@ -7,6 +7,7 @@ module IO.Chunk (
 , Biomes(..)
 , BlockStates(..)
 , countBlocks
+, numSections
 ) where
 
 import Registry.Biome
@@ -96,7 +97,9 @@ instance FromNBT Chunk where
 
     !lowestYSection <- fromIntegral @Int32 <$> obj .: "yPos"
 
-    !sections <- obj .: "sections"
+    -- TODO This relies on the storage order. This is not technically correct and also may contain gaps
+    !sectionsUnordered <- obj .: "sections"
+    let !sections = V.fromListN (V.length sectionsUnordered) . sortOn y $ V.toList sectionsUnordered
 
     !heightmaps <- obj .: "Heightmaps"
 
@@ -196,3 +199,6 @@ isAir VoidAir = True
 isAir CaveAir = True
 isAir _       = False
 {-# INLINE isAir #-}
+
+numSections :: Int
+numSections = 24 -- TODO config, also this depends on the dimension settings?!

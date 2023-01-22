@@ -57,7 +57,7 @@ deriving newtype instance MonadHecs Universe Network
 
 runNetwork :: Universe -> Socket -> Network a -> IO a
 -- We defer f because that means another thread (the main thread) will sync all changes, this ensures thread safety
--- This does not affect reads and packets are not written as components, but put into a queue component -- TODO Alter once that is finalized
+-- This does not affect reads, and packets are not written as components, but put into a queue
 -- This would technically sync after f finishes, but the network threads are designed to diverge. This means no thread running Network should
 -- finish without an exception
 runNetwork universe sock (Network f) = catch

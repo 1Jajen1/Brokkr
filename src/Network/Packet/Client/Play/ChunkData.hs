@@ -47,8 +47,8 @@ mkChunkData IO.Chunk{..} = (minPacketSz, ChunkData sectionsByteSize position hei
     -- -4 is the lowest chunk section y value (is it? o.O)
     -- 26 is the number of chunk sections for 320 up and -64 down worlds
     makeLightBitSetAndArray sel = V.foldl'
-      (\acc@(bSet, vec) sect -> maybe acc (\x -> (BitSet.set bSet $ (IO.y sect) + 4, V.snoc vec x)) (sel sect))
-      (BitSet.emptyBitSet 26, mempty)
+      (\acc@(bSet, vec) sect -> maybe acc (\x -> (BitSet.set bSet $ (IO.y sect) + 5, V.snoc vec x)) (sel sect))
+      (BitSet.emptyBitSet $ IO.numSections + 2, mempty)
       sections
 
     !minPacketSz =
