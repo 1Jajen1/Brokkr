@@ -74,8 +74,7 @@ library
 --else
   --c-sources:         cbits/basic.c
   cc-options:          -O3
-  exposed-modules:     Brokkr
-                      , Block.Position
+  exposed-modules:      Block.Position
                       -- , Chunk
                       , Chunk.Heightmap
                       , Chunk.Internal

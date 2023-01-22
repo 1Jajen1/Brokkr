@@ -97,7 +97,7 @@ instance FromNBT Chunk where
 
     !lowestYSection <- fromIntegral @Int32 <$> obj .: "yPos"
 
-    -- TODO This relies on the storage order. This is not technically correct and also may contain gaps
+    -- TODO This may contain gaps (can it?)
     !sectionsUnordered <- obj .: "sections"
     let !sections = V.fromListN (V.length sectionsUnordered) . sortOn y $ V.toList sectionsUnordered
 
