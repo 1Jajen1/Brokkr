@@ -25,17 +25,12 @@ import Control.Exception
 import qualified Foreign.Storable as S
 import Chunk.Position
 import qualified FlatParse.Basic as FP
-import qualified Data.ByteString.Lazy as LBS
-import qualified Codec.Compression.Zlib as ZLib
-import qualified Codec.Compression.GZip as GZip
 import Data.Int
 import Util.Binary
 import Data.String
 import System.IO
 import FlatParse.Basic
 import Control.DeepSeq
-
-import Debug.Trace
 
 data RegionFile = RegionFile {
   locationTable :: !(S.Vector ChunkLocation_)

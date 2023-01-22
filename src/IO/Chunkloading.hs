@@ -29,11 +29,10 @@ import qualified Codec.Compression.GZip as GZip
 import qualified FlatParse.Basic as FP
 
 import GHC.Conc (myThreadId, labelThread)
-import GHC.Generics
 
 import qualified IO.RegionFile as RegionFile
 
-import Util.Binary
+import qualified Util.Binary as Binary
 import Util.Queue (Queue)
 import qualified Util.Queue as Queue
 
@@ -45,7 +44,7 @@ data Chunkloading = Chunkloading
   ![Async.Async ()] -- Worker threads
   !(MVar ()) -- Workers sleep on this variable
   !(MVar (IntMap (String, Queue Chunkload))) -- TODO Use normal growable array if I have the whole thing enclosed in an MVar anyway
-  deriving Component via (ViaBoxed Chunkloading)
+  deriving Component via (ViaBox Chunkloading)
 
 instance NFData Chunkloading where
   rnf (Chunkloading _ _ _) = ()
@@ -62,7 +61,7 @@ loadChunk rPath pos@(ChunkPos x z) (Chunkloading _ sleep ref) = modifyMVar ref $
       Queue.push q (Chunkload pos ret)
       pure $ IM.insert rId (rPath, q) im
 
-  tryPutMVar sleep () -- wake up any sleeping worker
+  void $ tryPutMVar sleep () -- wake up any sleeping worker
   pure (newM, ret)
   where
     (rX, rZ) = (x `unsafeShiftR` 5, z `unsafeShiftR` 5)
@@ -95,7 +94,7 @@ new workers = do
   as <- spawnWorkers sleep ref workers []
   pure $ Chunkloading as sleep ref
   where
-    spawnWorkers sleep ref 0 xs = pure xs
+    spawnWorkers _ _ 0 xs = pure xs
     spawnWorkers sleep ref n xs = bracketOnError
       (Async.async $ chunkWorker sleep ref n)
       (\a -> Async.cancel a)
@@ -116,7 +115,7 @@ new workers = do
                 let (rX, rZ) = (fromIntegral . fromIntegral @_ @Int32 $ (rId `unsafeShiftR` 32) .&. 0xFFFFFFFF, fromIntegral . fromIntegral @_ @Int32 $ rId .&. 0xFFFFFFFF)
                 bracket
                   (RegionFile.openRegionFile rPath rX rZ)
-                  (\rf -> putStrLn ("Chunk worker crashed on: " <> show (rX, rZ)) >> RegionFile.closeRegionFile rf) $ \rf -> catch (do
+                  (RegionFile.closeRegionFile) $ \rf -> catch (do
                     -- load chunks
                     V.forM_ ls $ \(Chunkload pos ret) -> RegionFile.readChunkData pos rf
                       {- Note: Why do we run decompression and parsing in a separate thread?
@@ -129,18 +128,20 @@ new workers = do
                       -}
                       (\compType compressedBs -> do
                         as <- Async.async $ do
+                          -- TODO I don't actually like this too much. Maybe this should be done in the region file part
                           bs <- case compType of
                             1 -> pure $! LBS.toStrict . GZip.decompress $ LBS.fromStrict compressedBs
                             2 -> pure $! LBS.toStrict . ZLib.decompress $ LBS.fromStrict compressedBs
                             3 -> pure compressedBs
                             _ -> throwIO (UnknownDecompressionFlag pos)
-                          case FP.runParser (get @Chunk) bs of
+                          case FP.runParser (Binary.get @Chunk) bs of
                             FP.OK c _ -> putMVar ret c
                             _ -> throwIO (ChunkParseFail pos)
                         Async.link as
                       )
                       (throwIO (MissingChunk pos))
-                    go)  (\(e :: SomeException) -> print e >> throwIO e)
+                    )  (\(e :: SomeException) -> print e >> throwIO e)
+                go
       go
 
 newtype ChunkParseFail = ChunkParseFail ChunkPosition

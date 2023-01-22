@@ -4,16 +4,15 @@ module Network.Connection (
   Connection
 , new
 , SendPacket(..)
--- , executeCommand, executeCommands
+, pushCommand, pushCommands
 , sendPacket, sendPackets
--- , flushCommands
+, flushCommands
 , flushPackets
 , sendKeepAlive
 , ackKeepAlive
 , close
+, Command(..)
 ) where
-
--- import {-# SOURCE #-} Command
 
 import Control.Concurrent
 import Control.Exception
@@ -35,35 +34,38 @@ import qualified Util.Queue as Queue
 import Util.Ring (Ring)
 import qualified Util.Ring as Ring
 
+import Util.Position
+import Util.Rotation
+
 import Hecs
 
 data Connection = Conn {
-  -- TODO Command queue?
-  sendLock :: MVar ()
+  queue :: Queue Command 
+, sendLock :: MVar ()
 , sendQueue :: Ring SendPacket
 , lastKeepAlive :: MVar Int64 -- Full means we sent the number, empty means the client responded correctly
 , threadId :: ThreadId
 }
   deriving stock Generic
-  deriving Component via (ViaBoxed Connection)
+  deriving Component via (ViaBox Connection)
 
 data SendPacket = SendPacket !Int !Packet
   deriving stock Show
 
 new :: IO Connection
 new = do
-  -- commandQueue <- Queue.new 64
+  queue <- Queue.new 64
   sendLock <- newMVar ()
   sendQueue <- Ring.newRingBuffer 512
   lastKeepAlive <- newEmptyMVar
   threadId <- myThreadId
   pure Conn{..}
 
--- executeCommand :: Connection -> Command -> IO ()
--- executeCommand Conn{..} c = Queue.push commandQueue c
+pushCommand :: Connection -> Command -> IO ()
+pushCommand Conn{..} c = Queue.push queue c
 
--- executeCommands :: Connection -> V.Vector Command -> IO ()
--- executeCommands Conn{..} cs = Queue.pushN commandQueue cs
+pushCommands :: Connection -> V.Vector Command -> IO ()
+pushCommands Conn{..} cs = Queue.pushN queue cs
 
 sendPacket :: Connection -> SendPacket -> IO ()
 sendPacket Conn{..} p = withMVar sendLock . const $ Ring.push sendQueue p
@@ -71,9 +73,9 @@ sendPacket Conn{..} p = withMVar sendLock . const $ Ring.push sendQueue p
 sendPackets :: Connection -> V.Vector SendPacket -> IO ()
 sendPackets Conn{..} ps = withMVar sendLock . const $ Ring.pushN sendQueue ps
 
--- flushCommands :: Connection -> (V.Vector Command -> IO a) -> IO a
--- flushCommands Conn{..} f = Queue.flush commandQueue >>= f
--- {-# INLINE flushCommands #-}
+flushCommands :: Connection -> (V.Vector Command -> IO a) -> IO a
+flushCommands Conn{..} f = Queue.flush queue >>= f
+{-# INLINE flushCommands #-}
 
 flushPackets :: Connection -> (V.Vector SendPacket -> IO a) -> IO a
 flushPackets Conn{..} f = do
@@ -99,3 +101,10 @@ ackKeepAlive Conn{..} t = tryTakeMVar lastKeepAlive >>= \case
 
 close :: Connection -> IO ()
 close Conn{..} = putStrLn "Closed" >> throwTo threadId ConnectionClosed
+
+-- Commands
+data Command =
+    MoveAndRotateClient !Position !Rotation !Falling
+  | MoveClient !Position !Falling
+  | RotateClient !Rotation !Falling
+  | SetOnGround !Falling

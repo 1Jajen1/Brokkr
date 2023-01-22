@@ -1,6 +1,6 @@
 # Changelog
 
-`LCraft` uses [PVP Versioning][1].
+`Brokkr` uses [PVP Versioning][1].
 
 ## 0.0.0.0
 

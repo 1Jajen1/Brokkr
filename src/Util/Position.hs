@@ -19,12 +19,12 @@ import Util.Binary
 import Util.Linear.V3
 import Util.Linear.Vector
 
-import Hecs
+import Hecs (Component, ViaBox, ViaFlat)
 
 newtype Position = Pos (V3 Double)
   deriving stock Show
   deriving newtype (Eq, Storable)
-  deriving Component via (ViaStorable Position)
+  deriving Component via (ViaFlat Position)
 
 deriving newtype instance VectorSpace Double Position
 
@@ -43,7 +43,7 @@ instance FromBinary Position where
 
 data Falling = OnGround | Falling
   deriving stock (Show, Eq)
-  deriving Component via (ViaBoxed Falling) -- TODO As Tags? If I ever need to iterate only Falling or only OnGround (like in Physics, I may do that)
+  deriving Component via (ViaBox Falling) -- TODO As Tags? If I ever need to iterate only Falling or only OnGround (like in Physics, I may do that)
 
 instance ToBinary Falling where
   put OnGround = put @Word8 1

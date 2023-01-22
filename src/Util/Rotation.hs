@@ -13,12 +13,12 @@ import Util.Linear.V2
 import Util.Binary
 import Util.Linear.Vector
 
-import Hecs
+import Hecs (Component, ViaBox, ViaFlat)
 
 newtype Rotation = Rot (V2 Float)
   deriving stock Show
   deriving newtype (Eq, Storable)
-  deriving Component via (ViaStorable Rotation)
+  deriving Component via (ViaFlat Rotation)
 
 deriving newtype instance VectorSpace Float Rotation
 

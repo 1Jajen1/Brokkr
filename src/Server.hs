@@ -1,7 +1,9 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
-module Monad (
+{-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-orphans #-} -- Orphan specilization
+module Server (
   ServerM
 , Server
 , newWorld
@@ -9,16 +11,15 @@ module Monad (
 , getUniverse
 , Universe
 , getSingleton
-, getComponentId, filterDSL, getColumn
-, module Hecs
+, getComponentId
+, getColumn
+, filterDSL
+, component
 , system
 ) where
 
-import Hecs hiding (getComponentId, filterDSL, getColumn)
-import qualified Hecs
-import Hecs.Monad
-
-import Control.Concurrent.MVar
+import Hecs
+import Hecs.Monad (getWorld)
 
 import Control.Monad.IO.Class
 import Control.Monad.Trans
@@ -26,21 +27,23 @@ import Control.Monad.Base
 import Control.Monad.Trans.Control
 
 import Data.Coerce
-import Data.Proxy
 
 -- Components
 -- Network
-import {-# SOURCE #-} Client (Joined)
+import Client (Joined)
 import {-# SOURCE #-} Network.Connection (Connection)
 -- Common
 import Util.Position (Position, Falling)
 import Util.Rotation (Rotation)
-import Util.UUID (UUID)
+-- import Util.UUID (UUID)
 import Util.Velocity (Velocity)
+import Util.Hecs (Previous)
 -- Dimension
-import {-# SOURCE #-} Dimension (Dimension, Overworld, Nether, TheEnd, DimensionName, RegionFilePath)
+import {-# SOURCE #-} Dimension (Dimension, DimensionType(..), DimensionName, RegionFilePath)
 -- misc
 import IO.Chunkloading (Chunkloading)
+-- Systems
+import {-# SOURCE #-} System.PlayerMovement (Translate, Rotate, Land, Fly)
 
 makeWorld "Universe"
   [ -- Network related components
@@ -50,16 +53,18 @@ makeWorld "Universe"
   , ''Position -- Position and velocity both have a V3 Double underneath. This could be modeled with (Position, V3 Double) and (Velocity, V3 Double) instead
   , ''Velocity --  but this encoding makes it easier to have type safe functions where this distinction is necessary
   , ''Rotation -- Same as above, this is technically V2 Float, but it makes sense to use the newtype
-  , ''Falling -- TODO I might want this to be a tag instead. Might have to change a little bit of logic on the network side then
+  , ''Falling
+  -- Common utils
+  , ''Previous
   -- Dimension stuff
   , ''Dimension
-  , ''Overworld
-  , ''Nether
-  , ''TheEnd
+  , 'Overworld, 'Nether, 'TheEnd
   , ''DimensionName
   , ''RegionFilePath
   -- misc
   , ''Chunkloading
+  -- Systems
+  , ''Translate, ''Rotate, ''Land, ''Fly
   ]
 
 type Server a = ServerM IO a
@@ -69,34 +74,21 @@ newtype ServerM m a = ServerM (HecsM Universe m a)
 
 deriving newtype instance (MonadBase IO m, MonadBaseControl IO m) => MonadHecs Universe (ServerM m)
 
-runServerM :: MonadBaseControl IO m => Universe -> ServerM m a -> m a
-runServerM universe (ServerM h) = runHecsM universe $ do
-  h
+runServerM :: Universe -> ServerM m a -> m a
+runServerM universe (ServerM h) = runHecsM universe h
 
 getUniverse :: MonadIO m => ServerM m Universe
 getUniverse = ServerM getWorld
 
-getSingleton :: forall c m . (NoTagBackend (Backend c) ReadTagMsg, Has Universe c, MonadHecs Universe m) => m c
+getSingleton :: forall c m . (BranchRel c, Component c, Has Universe c, MonadHecs Universe m) => m c
 getSingleton =
-  Hecs.getComponent @c (coerce $ Hecs.getComponentId @Universe @c)
+  get @c (coerce $ getComponentId @c)
     pure
     (error "Singleton missing")
 {-# INLINE getSingleton #-}
 
-getComponentId :: forall c . Has Universe c => ComponentId c
-getComponentId = Hecs.getComponentId @Universe @c
-{-# INLINE getComponentId #-}
-
-filterDSL :: forall xs . FilterDSL Universe (FilterFromList xs) => Filter (FilterFromList xs) (HasMain (FilterFromList xs))
-filterDSL = Hecs.filterDSL @Universe @xs
-{-# INLINE filterDSL #-}
-
-getColumn :: forall c ty m . (Has Universe c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> m (Backend c)
-getColumn = Hecs.getColumn @Universe @c
-{-# INLINE getColumn #-}
-
 system :: Filter ty HasMainId -> (TypedArchetype ty -> Server ()) -> Server ()
-system fi act = Hecs.defer $ do
+system fi act = defer $ do
   Hecs.filter fi
     (\aty _ -> act aty)
     (pure ())

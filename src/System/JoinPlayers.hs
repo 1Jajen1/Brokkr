@@ -2,41 +2,23 @@ module System.JoinPlayers (
   joinPlayers
 ) where
 
-import Control.Monad.IO.Class
-
-import qualified Data.Text as T
-import qualified Data.Vector as V
-
-import qualified Network.Packet.Client.Play as C
-import qualified Network.Packet.Client.Play.Login as C 
-
-import Registry.Biome
-import Registry.Dimension
-
 import Client
-import Client.GameMode
 import Network.Connection
 
-import Block.Position
-
-import Util.Position
-import Util.Rotation
-
-import Monad (Server)
-import qualified Monad as Hecs
+import Server as Hecs
+import Hecs
 
 -- iterate all connections with Not Joined
--- TODO Change api to use something like FoldM from foldl or similar to avoid all of this boilerplate
 -- TODO Change to query, although this is probably never going to matter perf wise
 joinPlayers :: Server ()
 joinPlayers = Hecs.system
-  (Hecs.filterDSL @'[Connection, Hecs.Not Joined])
+  (Hecs.filterDSL @'[Connection, Hecs.Not (Hecs.Tag Joined)])
   $ \aty -> do
     connections <- Hecs.getColumn @Connection aty
     Hecs.iterateArchetype aty $ \n eid -> do
-      conn <- Hecs.readStored connections n
+      _conn <- Hecs.readColumn connections n
 
-      -- By this point we have chunks already, so we need to send Login (Play)
+      -- The player is technically on the server by now, but other players don't know yet
 
       -- TODO Actually join instead of just setting the tag...
-      Hecs.setTag @Joined eid
+      Hecs.addTag @Joined eid

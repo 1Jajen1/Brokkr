@@ -18,4 +18,4 @@ newtype UUID = UUID (Data.UUID.UUID)
 nil :: UUID
 nil = UUID (Data.UUID.nil)
 
-deriving via ViaStorable UUID instance Component UUID
+deriving via ViaFlat UUID instance Component UUID

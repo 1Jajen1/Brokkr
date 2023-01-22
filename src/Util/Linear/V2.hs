@@ -18,13 +18,11 @@ data family V2 a
 data instance V2 Int = V2_Int !Int !Int
   deriving stock (Eq, Show, Generic)
   deriving anyclass Hashable
-  deriving Storable via (GenericFlat (V2 Int))
-  deriving Component via (ViaStorable (V2 Int))
+  deriving (Component, Storable) via (GenericFlat (V2 Int))
 
 data instance V2 Float = V2_Float !Float !Float
   deriving stock (Eq, Show, Generic)
-  deriving Storable via (GenericFlat (V2 Float))
-  deriving Component via (ViaStorable (V2 Float))
+  deriving (Component, Storable) via (GenericFlat (V2 Float))
 
 instance NFData (V2 Int) where
   rnf (V2_Int _ _) = ()

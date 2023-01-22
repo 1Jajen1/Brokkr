@@ -1,10 +1,8 @@
 module Dimension (
   Dimension
-, Overworld
-, Nether
-, TheEnd
-, DimensionName
+, DimensionType(..)
 , RegionFilePath
+, DimensionName
 ) where
 
 import Hecs
@@ -12,17 +10,10 @@ import Hecs
 data Dimension
 instance Component Dimension
 
-data Overworld
-instance Component Overworld
-
-data Nether
-instance Component Nether
-
-data TheEnd
-instance Component TheEnd
-
-data DimensionName
-instance Component DimensionName
+data DimensionType = Overworld | Nether | TheEnd
 
 data RegionFilePath
 instance Component RegionFilePath
+
+data DimensionName
+instance Component DimensionName

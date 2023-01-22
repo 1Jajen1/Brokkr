@@ -13,12 +13,12 @@ import Util.Binary
 import Util.Linear.V3
 import Util.Linear.Vector
 
-import Hecs
+import Hecs (Component, ViaBox, ViaFlat)
 
 newtype Velocity = Vel (V3 Double)
   deriving stock Show
   deriving newtype (Eq, Storable)
-  deriving Component via (ViaStorable Velocity)
+  deriving Component via (ViaFlat Velocity)
 
 deriving newtype instance VectorSpace Double Velocity
 

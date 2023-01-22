@@ -34,7 +34,6 @@ import qualified Data.Text.Encoding as T
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as S
-import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Primitive as Prim
 
 import GHC.Generics

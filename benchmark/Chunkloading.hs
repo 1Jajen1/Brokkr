@@ -14,8 +14,8 @@ import IO.Chunk hiding (countBlocks)
 import qualified IO.Chunk
 import qualified IO.Chunkloading as CL
 import IO.RegionFile
-import "LCraft" Util.NBT
-import "LCraft" Util.NBT.Internal
+import "Brokkr" Util.NBT
+import "Brokkr" Util.NBT.Internal
 import qualified Data.Vector as V
 import qualified Data.HashMap.Strict as HM
 import GHC.Generics

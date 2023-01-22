@@ -31,20 +31,17 @@ import Data.Text
 import Registry.Dimension
 import Registry.BiomeSettings
 import Network.Util.VarNum
-import Dimension hiding (DimensionType) -- TODO
+import Dimension hiding (DimensionType)
 import Client.GameMode
-import Network.Util.FromIntegral
-import Network.Util.MCString
+import Network.Util
 import Data.Coerce
 import Util.Position
 import Data.String (IsString(..))
 
-import Hecs (EntityId(..))
-
 -- TODO Redesign datatypes
 -- TODO Load registries from json ...
 data LoginData = LoginData {
-  _entityId            :: EntityId
+  _entityId            :: EntityId Int32
 , _isHardcore          :: IsHardcore
 , _gamemode            :: GameMode
 , _prevGamemode        :: PrevGamemode
@@ -66,7 +63,7 @@ data LoginData = LoginData {
 
 instance ToBinary LoginData where
   put LoginData{..} =
-       put @Int32 (fromIntegral $ unEntityId _entityId)
+       put _entityId
     <> put _isHardcore
     <> put _gamemode
     <> put _prevGamemode

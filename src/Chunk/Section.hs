@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 module Chunk.Section (
-  ChunkSection
+  ChunkSection(..)
 , BlockStates(..)
 , Biomes(..)
 ) where

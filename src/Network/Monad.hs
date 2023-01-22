@@ -24,7 +24,7 @@ import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
-import Control.Monad.Trans.State
+import Control.Monad.Trans.State as StateT
 import Control.Monad.Base
 import Control.Monad.Trans.Control
 
@@ -43,15 +43,12 @@ import Network.Protocol
 import Network.Util.Builder
 import Network.Util.VarNum
 
-import Monad hiding (getUniverse)
-import qualified Monad
+import Server hiding (getUniverse)
+import qualified Server
+import Hecs
 
 import Util.Binary (FromBinary, ToBinary)
 import qualified Util.Binary as Binary
-
-import Hecs
-
-import Debug.Trace
 
 newtype Network a = Network { unNetwork :: ServerM (ReaderT Socket (StateT ByteString IO)) a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadBase IO, MonadBaseControl IO)
@@ -69,7 +66,7 @@ runNetwork universe sock (Network f) = catch
 {-# INLINE runNetwork #-}
 
 getUniverse :: Network Universe
-getUniverse = Network $ Monad.getUniverse
+getUniverse = Network $ Server.getUniverse
 {-# INLINE getUniverse #-}
 
 getSocket :: Network Socket
@@ -110,7 +107,7 @@ data StreamParse =
 receiveBytes :: (ByteString -> StreamParse) -> Network ByteString
 receiveBytes test = Network $ do
   sock <- lift ask
-  bs <- lift $ lift get
+  bs <- lift $ lift StateT.get
   go sock bs
   where
     go sock bs = case test bs of

@@ -23,18 +23,13 @@ source-repository-package
 
 source-repository-package
   type: git
-  location: git@github.com:1Jajen1/bitfield.git
-  tag: cd735048fdfc65bf67359f78afd92e77b4cab10d
-
-source-repository-package
-  type: git
   location: git@github.com:1Jajen1/hecs.git
-  tag: a704f68981f67e23c16186ea4fef84339dd04756
+  tag: b0b8d531da5350fe74861ed32fe4b8d4a3a56f43
   subdir: hecs-core
 source-repository-package
   type: git
   location: git@github.com:1Jajen1/hecs.git
-  tag: a704f68981f67e23c16186ea4fef84339dd04756
+  tag: b0b8d531da5350fe74861ed32fe4b8d4a3a56f43
   subdir: hecs
 
 -- GHC 9.2 support
@@ -64,7 +59,7 @@ source-repository-package
 --   tag: 42b42a7407f33c6c74fa4e8c84906aebfed28daf
 --   subdir: autodocodec-yaml
 
-packages: ./LCraft.cabal
+packages: ./Brokkr.cabal
 packages: ./data/data.cabal
 
 -- profiling: True

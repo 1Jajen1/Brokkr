@@ -4,8 +4,7 @@ module Network.Packet.Server.Play (
 ) where
 
 import Util.Binary
-import Network.Util.VarNum
-import Network.Util.MCString
+import Network.Util
 import Network.Util.Packet
 import Data.Int
 import Util.Position
@@ -13,12 +12,16 @@ import Util.Rotation
 
 import Data.ByteString (ByteString)
 import Data.Coerce
+import Data.Functor
 import Data.Text (Text)
 
 import FlatParse.Basic (takeRestBs)
 
+import Network.Util.EntityId
+
 import Network.Packet.Server.Play.ClientInformation
 import Network.Packet.Server.Play.PlayerAbilities
+import Network.Packet.Server.Play.PlayerCommand
 
 data Packet =
     ConfirmTeleportation Int
@@ -50,7 +53,7 @@ data Packet =
   | PlaceRecipe
   | PlayerAbilities Abilities
   | PlayerAction
-  | PlayerCommand
+  | PlayerCommand !(EntityId VarInt) !PlayerCommand
   | PlayerInput
   | Pong
   | ChangeRecipeBookSettings
@@ -104,6 +107,7 @@ instance FromBinary Packet where
     , [|| pure PlaceRecipe ||]
     , [|| PlayerAbilities <$> get ||]
     , [|| pure PlayerAction ||]
+    , [|| PlayerCommand <$> get <*> get ||]
     ])
     where
       confirmTeleport = ConfirmTeleportation . fromIntegral <$> get @VarInt

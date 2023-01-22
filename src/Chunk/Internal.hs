@@ -15,11 +15,8 @@ import qualified Data.Vector as V
 import Chunk.Position
 import Chunk.Section
 import Util.NBT
-import Data.Int
 import GHC.Generics (Generic)
 import Control.DeepSeq
-import Util.Vector.Packed
-import Optics
 
 import Chunk.Heightmap
 
@@ -35,7 +32,3 @@ data Chunk = Chunk {
   deriving stock (Show, Generic)
   deriving anyclass NFData
 
---
-instance HasChunkPosition Chunk where
-  chunkPosition = to _position
-  {-# INLINE chunkPosition #-}

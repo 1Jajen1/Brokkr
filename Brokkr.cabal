@@ -1,5 +1,5 @@
 cabal-version:       2.4
-name:                LCraft
+name:                Brokkr
 version:             0.0.0.0
 synopsis:            See README for more info
 description:         See README for more info
@@ -74,7 +74,7 @@ library
 --else
   --c-sources:         cbits/basic.c
   cc-options:          -O3
-  exposed-modules:     LCraft
+  exposed-modules:     Brokkr
                       , Block.Position
                       -- , Chunk
                       , Chunk.Heightmap
@@ -90,10 +90,10 @@ library
                       , IO.Chunkloading
                       , IO.RegionFile
                       -- , Network
-                      -- ECS
-                      -- TODO Rename to System? 
-                      , Monad
+                      , Server
                       , System.JoinPlayers
+                      , System.NetworkCommands
+                      , System.PlayerMovement
                       -- 
                       , Network.Connection
                       , Network.Exception
@@ -108,8 +108,11 @@ library
                       , Network.Packet.Server.Play
                       , Network.Packet.Server.Play.ClientInformation
                       , Network.Packet.Server.Play.PlayerAbilities
+                      , Network.Packet.Server.Play.PlayerCommand
                       , Network.Protocol
+                      , Network.Util
                       , Network.Util.Builder
+                      , Network.Util.EntityId
                       , Network.Util.FromIntegral
                       , Network.Util.MCString
                       , Network.Util.Packet
@@ -119,6 +122,7 @@ library
                       , Util.Binary
                       , Util.BitSet
                       , Util.ByteOrder
+                      , Util.Hecs
                       , Util.NBT
                       , Util.NBT.Internal
                       , Util.PalettedVector
@@ -135,23 +139,23 @@ library
                       , Util.UUID
                       , Util.Velocity
                       , Util.Word24
-executable LCraft
+executable Brokkr
   import:              common-options
   hs-source-dirs:      app
   main-is:             Main.hs
-  build-depends:       LCraft
+  build-depends:       Brokkr
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N
                        -O2
-test-suite LCraft-test
+test-suite Brokkr-test
   import:              common-options
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
   other-modules:       NBT.NBTSpec
   build-tool-depends:  sydtest-discover:sydtest-discover
-  build-depends:       LCraft
+  build-depends:       Brokkr
                      , sydtest
                      , validity
                      , genvalidity
@@ -170,7 +174,7 @@ benchmark NBT
   hs-source-dirs:      benchmark
   main-is:             Util/NBT.hs
   build-depends:       tasty-bench
-                     , LCraft
+                     , Brokkr
                      , zlib
 benchmark Packed-vector
   import:              common-options
@@ -178,14 +182,14 @@ benchmark Packed-vector
   hs-source-dirs:      benchmark
   main-is:             PackedVector.hs
   build-depends:       tasty-bench
-                     , LCraft
+                     , Brokkr
 benchmark Chunkloading
   import:              common-options
   type:                exitcode-stdio-1.0
   hs-source-dirs:      benchmark
   main-is:             Chunkloading.hs
   build-depends:       tasty-bench
-                     , LCraft
+                     , Brokkr
   ghc-options:         -O2
 benchmark VarInt
   import:              common-options
@@ -193,7 +197,7 @@ benchmark VarInt
   hs-source-dirs:      benchmark
   main-is:             VarInt.hs
   build-depends:       tasty-bench
-                     , LCraft
+                     , Brokkr
                      , random
                      , mwc-random
   ghc-options:         -O2

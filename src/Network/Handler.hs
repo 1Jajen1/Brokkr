@@ -16,9 +16,9 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import Util.UUID
 import qualified Data.Vector as V
-import Dimension (Dimension, Overworld, Nether, TheEnd)
+import Dimension (Dimension, DimensionType(Overworld))
 import qualified Dimension
-import Network.Connection (Connection)
+import Network.Connection (Connection, Command(..))
 import qualified Network.Connection as Conn
 import Network.Monad
 import Network.Protocol
@@ -29,33 +29,25 @@ import qualified Network.Packet.Server.Login as Server.Login
 import qualified Network.Packet.Server.Play as Server.Play
 import Network.Packet.Client.Play.ChunkData (mkChunkData)
 import Network.Util.Builder
-import Monad
 import Util.Binary
-import qualified Client
 import Data.Coerce
 import Control.Monad.Trans.Control
-import Control.Concurrent.Async (Async)
-import qualified Control.Concurrent.Async as Async
-import Control.Concurrent.MVar (withMVar)
-import Data.Proxy
 import Util.Position
 import Util.Rotation
-import GHC.Conc (myThreadId, labelThread)
 import qualified Data.Text as T
-import qualified Data.Vector as V
 import qualified Network.Packet.Client.Play as C
 import qualified Network.Packet.Client.Play.Login as C 
 import Registry.Biome
 import Registry.Dimension
-import Client
 import Client.GameMode
 import Block.Position
-import qualified IO.Chunk as IO
+import qualified Data.Bitfield as Bitfield
 
-import qualified Monad as Hecs
+import qualified Server as Hecs
+import qualified Hecs
+import Hecs.Entity.Internal (Entity(..))
 
 --
-import Debug.Trace
 
 handleConnection :: Network ()
 handleConnection = do
@@ -88,13 +80,13 @@ handleLogin = do
 data LoginResult = LoginRes UUID Text Protocol
 
 handlePlay :: UUID -> Text -> Protocol -> Network a
-handlePlay playerUUID playerName finalProtocol = do
+handlePlay _playerUUID _playerName finalProtocol = do
   !conn <- liftIO Conn.new
 
   let send = go
         where
           go = do
-            liftBaseWith $ \runInBase -> Conn.flushPackets conn $ \ps -> do
+            _ <- liftBaseWith $ \runInBase -> Conn.flushPackets conn $ \ps -> do
               runInBase . sendBytes . LBS.fromChunks
                 $! fmap (\(Conn.SendPacket szHint packet) -> let !bs = toStrictSizePrefixedByteString finalProtocol szHint $ put packet in bs) $ V.toList ps
             go
@@ -124,7 +116,7 @@ handlePlay playerUUID playerName finalProtocol = do
               (\eidSt -> runInBase $ restoreM eidSt >>= Hecs.freeEntity) -- TODO Log
               (\eidSt -> runInBase $ restoreM eidSt >>= \eid -> joinPlayer conn eid >> pure eid)
           ) (\_ -> putStrLn "Closed") -- TODO 
-            $ \clientSt -> runInBase $ restoreM clientSt >>= \client -> do
+            $ \clientSt -> runInBase $ restoreM clientSt >>= \_client -> do
               -- packet loop
               let handlePlayPackets = do
                     readPacket finalProtocol >>= handlePacket conn
@@ -143,12 +135,12 @@ joinPlayer conn eid = do
       initialRotation = Rotation 0 0
       initialVelocity = Position 0 0 0
   
-  initialWorld <- Hecs.getComponent @Dimension (coerce $ Hecs.getComponentId @Dimension.Overworld)
+  initialWorld <- Hecs.get @Dimension (coerce $ Hecs.getComponentId @Dimension.Overworld)
     pure
     (error "World singleton missing")
-
+  let viewDistance = 32 -- Sync with PlayerMovement until I store it as a component
   let loginData = C.LoginData
-        eid
+        (fromIntegral . Bitfield.get @"eid" $ Hecs.unEntityId eid)
         (C.IsHardcore False)
         Creative
         C.Undefined
@@ -158,7 +150,7 @@ joinPlayer conn eid = do
         "minecraft:overworld"
         (C.HashedSeed 0)
         (C.MaxPlayers 5)
-        (C.ViewDistance 8)
+        (C.ViewDistance viewDistance)
         (C.SimulationDistance 8)
         (C.ReducedDebugInfo False)
         (C.EnableRespawnScreen False)
@@ -185,10 +177,9 @@ joinPlayer conn eid = do
   -- Preload chunks for this player -- SYNC Because we don't want to wait for this on the main thread and this will join the
                                     --  player with chunks loaded and not in some void
   chunkloading <- Hecs.getSingleton @Chunkloading
-  let viewDistance = 16
-      chunksToLoad = [ChunkPos x z | x <- [-viewDistance..viewDistance], z <- [-viewDistance..viewDistance] ]
+  let chunksToLoad = [ChunkPos x z | x <- [-viewDistance..viewDistance], z <- [-viewDistance..viewDistance] ]
       numChunksToLoad = (viewDistance * 2 + 1) * (viewDistance * 2 + 1)
-  rPath <- Hecs.getComponent @Dimension.RegionFilePath (Dimension.entityId initialWorld) pure (error "TODO")
+  rPath <- Hecs.get @Dimension.RegionFilePath (Dimension.entityId initialWorld) pure (error "TODO")
 
   doneRef <- liftIO $ newEmptyMVar
   numDoneRef <- liftIO $ newIORef numChunksToLoad
@@ -208,26 +199,26 @@ joinPlayer conn eid = do
   liftIO . Conn.sendPacket conn $ Conn.SendPacket 10 (C.SetCenterChunk 0 0)
   liftIO . Conn.sendPacket conn $ Conn.SendPacket 64 (C.SynchronizePlayerPosition (Position 0 130 0) (Rotation 180 0) (C.TeleportId 0) C.NoDismount)
 
-  Hecs.setComponent eid initialPosition
-  Hecs.setComponent eid initialRotation
-  Hecs.setComponent eid initialVelocity
-  Hecs.setComponent eid initialWorld
+  Hecs.set eid initialPosition
+  Hecs.set eid initialRotation
+  Hecs.set eid initialVelocity
+  Hecs.set eid initialWorld
   
   -- This is the write that exposes us to the global state proper because that is what the JoinPlayer system queries on
-  Hecs.setComponent eid conn
+  Hecs.set eid conn
 
 -- Handle play packets
 handlePacket :: Connection -> Server.Play.Packet -> Network ()
 
 handlePacket conn (Server.Play.KeepAlive res) = liftIO $ Conn.ackKeepAlive conn res
 
--- handlePacket _ conn (Server.Play.SetPlayerPositionAndRotation pos rot onGround) =
---   liftIO . Conn.executeCommand conn $ MoveAndRotateClient pos rot onGround
--- handlePacket _ conn (Server.Play.SetPlayerPosition pos onGround) =
---   liftIO . Conn.executeCommand conn $ MoveClient pos onGround
--- handlePacket _ conn (Server.Play.SetPlayerRotation rot onGround) =
---   liftIO . Conn.executeCommand conn $ RotateClient rot onGround
--- handlePacket _ conn (Server.Play.SetPlayerOnGround onGround) =
---   liftIO . Conn.executeCommand conn $ SetOnGround onGround
+handlePacket conn (Server.Play.SetPlayerPositionAndRotation pos rot onGround) =
+  liftIO . Conn.pushCommand conn $ MoveAndRotateClient pos rot onGround
+handlePacket conn (Server.Play.SetPlayerPosition pos onGround) =
+  liftIO . Conn.pushCommand conn $ MoveClient pos onGround
+handlePacket conn (Server.Play.SetPlayerRotation rot onGround) =
+  liftIO . Conn.pushCommand conn $ RotateClient rot onGround
+handlePacket conn (Server.Play.SetPlayerOnGround onGround) =
+  liftIO . Conn.pushCommand conn $ SetOnGround onGround
 
-handlePacket _ p = pure () -- trace ("Unhandled packet: " <> show p) $ pure ()
+handlePacket _ p = liftIO $ putStrLn ("Unhandled packet: " <> show p)

@@ -3,9 +3,7 @@
 module Dimension (
   Dimension
 , entityId
-, Overworld
-, Nether
-, TheEnd
+, DimensionType(..)
 , new
 , DimensionName(..)
 , RegionFilePath(..)
@@ -20,41 +18,36 @@ import Foreign.Storable
 
 import Util.Binary
 
-import Monad (Universe)
-
+import Server
 import Hecs
--- TODO These imports aren't nice
-import Hecs.World (Has)
-import Hecs.Component.Internal (TagBackend)
 
 -- TODO Modify and add RegionFileFolderPath to this, so that we don't need too many lookups
 -- also they cannot be logically seperate anyway..
 newtype Dimension = Dimension EntityId
   deriving newtype (Eq, Storable)
-  deriving Component via (ViaStorable Dimension)
+  deriving Component via (ViaFlat Dimension)
 
 entityId :: Dimension -> EntityId
 entityId (Dimension eid) = eid
 {-# INLINE entityId #-}
 
-data Overworld deriving Component via (ViaTag Overworld)
-data Nether    deriving Component via (ViaTag Nether   )
-data TheEnd    deriving Component via (ViaTag TheEnd   )
+data DimensionType = Overworld | Nether | TheEnd
 
 -- TODO Move to common DimensionSettings or something similar
 newtype RegionFilePath = RegionFilePath String
   deriving newtype IsString
-  deriving Component via (ViaBoxed RegionFilePath)
+  deriving Component via (ViaBox RegionFilePath)
 
-new :: forall t m . (Backend t ~ TagBackend, MonadHecs Universe m, Has Universe t) => RegionFilePath -> EntityId -> m Dimension
+-- TODO Specialise
+new :: forall (t :: DimensionType) . Has Universe t => RegionFilePath -> EntityId -> Server Dimension
 new regionFolder dim = do
-  Hecs.setTag @t dim
-  Hecs.setComponent dim regionFolder
+  addTag @t dim
+  set dim regionFolder
   pure $ Dimension dim
 
 newtype DimensionName = DimensionName Text
   deriving stock Show
   deriving newtype (Eq, IsString)
   deriving (ToBinary, FromBinary) via MCString
-  deriving Component via (ViaBoxed DimensionName)
+  deriving Component via (ViaBox DimensionName)
 
