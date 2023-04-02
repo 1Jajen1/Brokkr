@@ -4,11 +4,13 @@ module Main (main) where
 import Test.Tasty.Bench
 
 import Control.Exception
+import Control.Monad.ST.Strict (runST)
 
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 
 import Data.Int
+import Data.Primitive
 
 import Data.Vector.Storable qualified as S
 
@@ -54,26 +56,43 @@ benchFile name =
     , bench "encode"  $ nf encodeNBT envNBT 
     ]
 
-benchByteSwap :: (Num a, S.Storable a) => String -> (S.Vector a -> IO (S.Vector b)) -> Benchmark
+benchByteSwap :: (Num a, S.Storable a) => String -> (S.Vector a -> S.Vector b) -> Benchmark
 benchByteSwap n f = bgroup n
   [ env (evaluate . force $ S.generate 4 gen) $ \ ~v ->
-    bench "4" $ nfIO (f v)
+    bench "4" $ nf f v
   , env (evaluate . force $ S.generate 16 gen) $ \ ~v ->
-    bench "16" $ nfIO (f v)
+    bench "16" $ nf f v
   , env (evaluate . force $ S.generate 128 gen) $ \ ~v ->
-    bench "128" $ nfIO (f v)
+    bench "128" $ nf f v
   , env (evaluate . force $ S.generate 400 gen) $ \ ~v ->
-    bench "400" $ nfIO (f v)
+    bench "400" $ nf f v
   , env (evaluate . force $ S.generate 4096 gen) $ \ ~v ->
-    bench "4096" $ nfIO (f v)
+    bench "4096" $ nf f v
   , env (evaluate . force $ S.generate 8000 gen) $ \ ~v ->
-    bench "8000" $ nfIO (f v)
+    bench "8000" $ nf f v
   , env (evaluate . force $ S.generate 1048576 gen) $ \ ~v ->
-    bench "1048576" $ nfIO (f v)
+    bench "1048576" $ nf f v
   , env (evaluate . force $ S.generate 1500000 gen) $ \ ~v ->
-    bench "1500000" $ nfIO (f v)
+    bench "1500000" $ nf f v
   ]
   where gen i = fromIntegral $ (i * i * 255 + i * 7) `mod` 100
+
+mkRecList :: (NBT, BS.ByteString)
+mkRecList =
+  let hugeNbt = NBT "" $ nestedList 1000000
+      smallArrEmpty = runST $ newSmallArray 0 (error "SmallArr empty") >>= unsafeFreezeSmallArray
+      smallArrSingleton x = runST $ newSmallArray 1 x >>= unsafeFreezeSmallArray
+      nestedList :: Int -> Tag
+      nestedList 0 = TagList smallArrEmpty
+      nestedList !n = TagList $ smallArrSingleton $ nestedList (n - 1)
+      encodedBs = encodeNBT hugeNbt
+  in (hugeNbt, encodedBs)
+
+benchRecList :: Benchmark
+benchRecList = env (evaluate . force $ mkRecList) $ \ ~(hugeNbt, hugeBs) -> bgroup "huge recursive list"
+  [ bench "decode" $ nf parseBsNBT hugeBs
+  , bench "encode" $ nf encodeNBT hugeNbt
+  ]
 
 main :: IO ()
 main = defaultMain [
@@ -89,18 +108,19 @@ main = defaultMain [
     ]
   , bgroup "Byteswapping" [
       -- Benchmark byteswap in place
-      benchByteSwap "bswap32 (unsafe)" unsafeArrSwapBE32
+      benchByteSwap @Int32 "bswap32 (unsafe)" unsafeArrSwapBE32
       -- Benchmark copying and byteswapping
       -- First just the copy. This allocates a new vector and copies it
-    , benchByteSwap @Int32 @Int32 "memcopy32" (\v -> S.thaw v >>= S.unsafeFreeze)
+    , benchByteSwap @Int32 @Int32 "memcopy32" (\v -> runST $ S.thaw v >>= S.unsafeFreeze)
       -- Next benchmark copy and byteswap fused. This allocates a new vector
       -- and then copies and byteswaps at the same time
-    , benchByteSwap "bswap32" arrSwapBE32
+    , benchByteSwap @Int32 "bswap32" arrSwapBE32
       -- Same for 64 bit numbers
-    , benchByteSwap "bswap64 (unsafe)" unsafeArrSwapBE64
-    , benchByteSwap @Int64 @Int64 "memcopy64" (\v -> S.thaw v >>= S.unsafeFreeze)
-    , benchByteSwap "bswap64" arrSwapBE64
+    , benchByteSwap @Int64 "bswap64 (unsafe)" unsafeArrSwapBE64
+    , benchByteSwap @Int64 @Int64 "memcopy64" (\v -> runST $ S.thaw v >>= S.unsafeFreeze)
+    , benchByteSwap @Int64 "bswap64" arrSwapBE64
     ]
+  , benchRecList
   -- TODO Add modified-utf-8 validation and conversion benchmarks
   ]
 

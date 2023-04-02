@@ -21,6 +21,8 @@ common common-options
                      , flatparse
                      , vector
                      , mason
+                     , text
+                     , template-haskell
   
   ghc-options:         -Wall
                        -Wcompat
@@ -46,6 +48,7 @@ library
   cc-options:          -O3
   exposed-modules:     Brokkr.NBT
                        Brokkr.NBT.ByteOrder
+                       Brokkr.NBT.Codec
                        Brokkr.NBT.Internal
                        Brokkr.NBT.NBTString
                        Brokkr.NBT.NBTString.Internal
@@ -62,6 +65,7 @@ test-suite brokkr-nbt-test
                      , tasty-hunit
                      , tasty-hedgehog
                      , hedgehog
+  other-modules:       CodecSpec
 benchmark brokkr-nbt-benchmark
   import:              common-options
   type:                exitcode-stdio-1.0

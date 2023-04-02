@@ -21,4 +21,6 @@ packages: ./brokkr-block/brokkr-block.cabal
 packages: ./brokkr-registry/brokkr-registry.cabal
 packages: ./brokkr-packed-vector/brokkr-packed-vector.cabal
 
+tests: true
+benchmarks: true
 -- profiling: True
