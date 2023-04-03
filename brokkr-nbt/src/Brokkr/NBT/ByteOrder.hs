@@ -11,6 +11,9 @@ module Brokkr.NBT.ByteOrder (
 , arrSwapBE64
 , unsafeArrSwapBE32
 , unsafeArrSwapBE64
+, toBE16
+, toBE32
+, toBE64
 ) where
 
 import Control.Monad.ST.Strict (runST)
@@ -86,6 +89,14 @@ unsafeArrSwapBE32 :: (Coercible a Int32, Storable a) => S.Vector a -> S.Vector (
 unsafeArrSwapBE64 :: (Coercible a Int64, Storable a) => S.Vector a -> S.Vector (Swapped a)
 {-# INLINE unsafeArrSwapBE64 #-}
 
+-- Convert a word from host endianess into big endian
+toBE16 :: Int16 -> Int16
+{-# INLINE toBE16 #-}
+toBE32 :: Int32 -> Int32
+{-# INLINE toBE32 #-}
+toBE64 :: Int64 -> Int64
+{-# INLINE toBE64 #-}
+
 #ifdef WORDS_BIGENDIAN
 
 swapBE32 = id
@@ -96,6 +107,10 @@ arrSwapBE64 = Unsafe.unsafeCoerce
 
 unsafeArrSwapBE32 = Unsafe.unsafeCoerce
 unsafeArrSwapBE64 = Unsafe.unsafeCoerce
+
+toBE16 = id
+toBE32 = id
+toBE64 = id
 
 #else
 
@@ -120,5 +135,9 @@ unsafeArrSwapBE64 v = seq (c_vec_bswap64 (Ptr addr) (Ptr addr) (fromIntegral sz)
 
 foreign import ccall unsafe "vec_bswap32" c_vec_bswap32 :: Ptr Int32BE -> Ptr Int32 -> CSize -> ()
 foreign import ccall unsafe "vec_bswap64" c_vec_bswap64 :: Ptr Int64BE -> Ptr Int64 -> CSize -> ()
+
+toBE16 = fromIntegral . byteSwap16 . fromIntegral
+toBE32 = fromIntegral . byteSwap32 . fromIntegral
+toBE64 = fromIntegral . byteSwap64 . fromIntegral
 
 #endif

@@ -21,7 +21,7 @@ import Brokkr.NBT.NBTString
 import Brokkr.NBT.Slice
 
 import GHC.Exts
-import GHC.Float (castWord32ToFloat,castWord64ToDouble)
+import GHC.Float
 import GHC.Word
 
 import FlatParse.Basic qualified as FP
@@ -208,6 +208,7 @@ getTagId !tag = (I# (dataToTag# tag)) + 1
 putTag :: Tag -> B.Builder
 {-# INLINE putTag #-}
 putTag (TagByte i)   = B.int8 i
+-- TODO Investigate why ghc performs 2,4,8 bytewise writes instead of a larger write all at once with byteswap
 putTag (TagShort i)  = B.int16BE i
 putTag (TagInt i)    = B.int32BE i
 putTag (TagLong i)   = B.int64BE i

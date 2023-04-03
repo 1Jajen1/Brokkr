@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell, DataKinds #-}
 -- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all -ddump-splices -fforce-recomp #-}
+-- {-# OPTIONS_GHC -ddump-splices #-}
 module CodecSpec (
   testCodec
 ) where
@@ -21,8 +22,9 @@ import Mason.Builder qualified as B
 import Test.Tasty
 import Test.Tasty.HUnit
 
+testCodec :: TestTree
 testCodec = testGroup "Codec decoding" [
-    -- testDecodeFromNBT
+    testDecodeFromNBT
   ]
 
 testDecodeFromNBT :: TestTree
@@ -37,16 +39,17 @@ testDecodeFromNBT = testCase "Decode from nbt" $ do
       --             <*#> requiredField @Int16 "Fourteen" .= [|| snd ||]
       --   in genNBTReader co)
       binParseCodec = $$(
-        let co = compound "root" $ requiredField @Int32 "World2"
-        -- let co = compound "root" $ [|| (,) ||]
-        --           <$#> requiredField @Int32 "World" .= [|| fst ||]
-        --           <*#> requiredField @Int16 "Fourteen" .= [|| snd ||]
+        -- let co = compound "root" $ requiredField @Int32 "World2"
+        let co = compound "root" $ [|| (,) ||]
+                  <$#> requiredField @Int32 "World" .= [|| fst ||]
+                  -- <*#> requiredField @Int16 "Fourteen" .= [|| snd ||]
+                  <*#> requiredField @Int16 "Fourteen" .= [|| snd ||]
         in genParser co)
   -- case parseCodec nbt of
   --   Left err -> assertFailure $ "Failed decoding nbt. Got the following error: " <> show err
   --   Right el -> assertEqual "Read result" el (32,13)
   case FP.runParser binParseCodec bs of
-    FP.OK res remBs | BS.null remBs -> assertEqual "Equal parse" 32 res
+    FP.OK res remBs | BS.null remBs -> assertEqual "Equal parse" (32,13) res
     _ -> assertFailure $ "Failed to parse"
 
 encodeNBT :: NBT -> BS.ByteString

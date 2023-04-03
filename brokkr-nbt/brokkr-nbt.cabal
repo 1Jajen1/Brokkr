@@ -76,3 +76,4 @@ benchmark brokkr-nbt-benchmark
                      , deepseq
                      , zlib
                      , hedgehog
+  other-modules:       BigTest

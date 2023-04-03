@@ -1,4 +1,5 @@
-{-# LANGUAGE DerivingStrategies, DeriveAnyClass, RecordWildCards, OverloadedStrings #-}
+{-# LANGUAGE DerivingStrategies, DeriveAnyClass, RecordWildCards, OverloadedStrings, DataKinds, TemplateHaskell #-}
+-- {-# OPTIONS_GHC -ddump-splices -dsuppress-all -ddump-simpl #-}
 module Main (main) where
 
 import Test.Tasty.Bench
@@ -23,8 +24,11 @@ import Mason.Builder qualified as B
 import Control.DeepSeq
 import GHC.Generics (Generic)
 
+import Brokkr.NBT.Codec
 import Brokkr.NBT.Internal
 import Brokkr.NBT.ByteOrder
+
+import BigTest
 
 instance NFData NBT where
   -- Both arguments to NBT are strict
@@ -54,7 +58,10 @@ benchFile name =
   bgroup name $
     [ bench "decode"  $ nf parseBsNBT envBs
     , bench "encode"  $ nf encodeNBT envNBT 
-    ]
+    ] <> if name == "bigtest.nbt" then
+        [ bench "decode (schema)" $ nf parseBigTest envBs
+        ]
+      else []
 
 benchByteSwap :: (Num a, S.Storable a) => String -> (S.Vector a -> S.Vector b) -> Benchmark
 benchByteSwap n f = bgroup n
@@ -131,3 +138,10 @@ parseBsNBT !bs = case FP.runParser parseNBT bs of
 
 encodeNBT :: NBT -> BS.ByteString
 encodeNBT !nbt = B.toStrictByteString (putNBT nbt)
+
+parseBigTest :: BS.ByteString -> BigTest
+parseBigTest bs = case FP.runParser
+  $$(genParser bigTestCodec) bs of
+  FP.OK res "" -> res
+  FP.Err e -> error $ show e
+  _ -> error "Failed to parse NBT"
