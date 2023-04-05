@@ -11,6 +11,8 @@ module Brokkr.NBT.NBTString.Internal (
 , toUtf8
 ) where
 
+import Brokkr.NBT.NBTError
+
 import Control.Monad
 
 import Data.Char (ord)
@@ -21,7 +23,6 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal qualified as BS
 
-import Data.Int
 import Data.String
 
 import Data.Text (Text)
@@ -32,7 +33,7 @@ import FlatParse.Basic qualified as FP
 
 import Foreign.C.Types (CSize(..), CInt(..))
 
-import GHC.Exts (Addr#, Ptr)
+import GHC.Exts (Addr#, Ptr, Int(..))
 import GHC.ForeignPtr
 import GHC.Word
 
@@ -101,26 +102,35 @@ instance Show NBTString where
 -- Either use 'Data.ByteString.copy' or any of the
 -- utf8 conversion methods that always copy to release
 -- the original input.
-parseNBTString :: FP.ParserT st e NBTString
-parseNBTString = withAnyInt16be $ \len -> do
-  bs <- FP.take $ fromIntegral len
-  unless (isValidModifiedUtf8 bs) FP.empty
+parseNBTString :: FP.ParserT st NBTError NBTString
+parseNBTString = withAnyWord16be $ \len -> do
+  let !(I# len#) = fromIntegral len
+  -- This specifc conversion from W16 -> Int cannot be negative, so
+  -- the check on FP.take makes no sense
+  bs <- FP.takeUnsafe# len#
+  unless (isValidModifiedUtf8 bs) . FP.err $ InvalidStringEncoding bs
   pure $ NBTString bs
 {-# INLINE parseNBTString #-}
 
-withNBTString :: (NBTString -> FP.ParserT st e a) -> FP.ParserT st e a
+withNBTString :: (NBTString -> FP.ParserT st NBTError a) -> FP.ParserT st NBTError a
 {-# INLINE withNBTString #-}
-withNBTString f = withAnyInt16be $ \len -> do
-  bs <- FP.take $ fromIntegral len
-  unless (isValidModifiedUtf8 bs) FP.empty
+withNBTString f = withAnyWord16be $ \len -> do
+  let !(I# len#) = fromIntegral len
+  -- See above
+  bs <- FP.takeUnsafe# len#
+  unless (isValidModifiedUtf8 bs) . FP.err $ InvalidStringEncoding bs
   f (NBTString bs)
 
-withAnyInt16be :: (Int16 -> FP.ParserT st e a) -> FP.ParserT st e a
-{-# INLINE withAnyInt16be #-}
+withAnyWord16be :: (Word16 -> FP.ParserT st e a) -> FP.ParserT st e a
+{-# INLINE withAnyWord16be #-}
 #ifdef WORDS_BIGENDIAN
-withAnyInt16be = FP.withAnyWord16 pure
+withAnyWord16be = FP.withAnyWord16 pure
 #else
-withAnyInt16be f = FP.withAnyWord16 (f . fromIntegral . byteSwap16)
+-- Going byteSwap16 does wordToWord16 . byteSwap16 . word16ToWord
+-- This involves an and# (2^16 - 1) which should be redundant?
+-- We can remove that by converting the 'Word' result of byteSwap16#
+-- directly, but that gives basically no speed up, so not worth
+withAnyWord16be f = FP.withAnyWord16 (f . byteSwap16)
 #endif
 
 -- | Encode a NBT-String
@@ -133,7 +143,6 @@ putNBTString (NBTString bs) = B.int16BE (fromIntegral $ BS.length bs) <> B.byteS
 
 -- | Check if a bytestring is valid java modified utf8
 isValidModifiedUtf8 :: ByteString -> Bool
-isValidModifiedUtf8 (BS.BS _ 0) = True
 isValidModifiedUtf8 (BS.BS fptr len) = BS.accursedUnutterablePerformIO $ BS.unsafeWithForeignPtr fptr $ \ptr -> do
   i <- c_is_valid_modified_utf8 ptr (fromIntegral len)
   pure $ i /= 0

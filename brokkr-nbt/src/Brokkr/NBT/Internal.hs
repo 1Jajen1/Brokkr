@@ -19,6 +19,7 @@ import Data.Vector.Storable qualified as S
 import Brokkr.NBT.ByteOrder
 import Brokkr.NBT.NBTString
 import Brokkr.NBT.Slice
+import Brokkr.NBT.NBTError
 
 import GHC.Exts
 import GHC.Float
@@ -70,7 +71,7 @@ data Tag where
 -- With these constraints the actual parse is (almost) minimal.
 -- "Almost", because we store the 'NBT' in compound tags in sorted
 -- order so that we can query them quickly.
-parseNBT :: FP.ParserT st e NBT
+parseNBT :: FP.ParserT st NBTError NBT
 parseNBT = do
   tagId <- FP.anyWord8
   name <- parseNBTString
@@ -78,7 +79,7 @@ parseNBT = do
   pure $ NBT name tag
 
 -- | Parse a single nbt tag given the tags type
-parseTag :: Word8 -> FP.ParserT st e Tag
+parseTag :: Word8 -> FP.ParserT st NBTError Tag
 {-# INLINE parseTag #-}
 -- Primitive types
 parseTag  1 = TagByte  <$> FP.anyInt8
@@ -101,6 +102,7 @@ parseTag  9 = parseList
       W8# tagId <- FP.anyWord8
       len@(I# len#) <- fromIntegral <$> FP.anyInt32be
       localST $ do
+        -- TODO Check against stupidly large lists
         SmallMutableArray mut <- FP.liftST $ newSmallArray len (error "parse nbt list")
         go mut 0# len# tagId
         arr <- FP.liftST $ unsafeFreezeSmallArray (SmallMutableArray mut)
@@ -122,7 +124,7 @@ parseTag 10 = parseCompound
         (SmallArray arr) <- FP.liftST $ unsafeFreezeSmallArray (SmallMutableArray mut')
         pure . TagCompound $ Slice arr sz
       where
-        go :: SmallMutableArray# s NBT -> Int# -> Int# -> (SmallMutableArray# s NBT -> Int# -> FP.ParserST s e r) -> FP.ParserST s e r
+        go :: SmallMutableArray# s NBT -> Int# -> Int# -> (SmallMutableArray# s NBT -> Int# -> FP.ParserST s NBTError r) -> FP.ParserST s NBTError r
         go mut cap sz f = do
           tagId <- FP.anyWord8
           if tagId == 0
@@ -162,15 +164,24 @@ parseTag 10 = parseCompound
 -- anything else fails
 -- Note: We don't parse TagEnd, parseCompound and parseList
 -- parse it seperately, so a TagEnd here would be invalid nbt
-parseTag _  = FP.empty
+parseTag _ = FP.empty
+-- Throwing this error causes a 2x slowdown. TODO Investigate why
+-- parseTag t = FP.err $ InvalidTagType (fromIntegral t)
 
 -- | Parse a 32 bit integer prefixed slice of memory as a storable vector
-takeArray :: forall st e a . S.Storable a => FP.ParserT st e (S.Vector a)
+takeArray :: forall a e st . S.Storable a => FP.ParserT st e (S.Vector a)
 {-# INLINE takeArray #-}
-takeArray = do
-  len <- fromIntegral <$> FP.anyInt32be
-  let sz = S.sizeOf (undefined :: a)
-  BS.BS fp _ <- FP.take $ len * sz
+takeArray = FP.withAnyWord32 $ \w -> do
+  -- TODO Define this somewhere with cpp so that we can
+  -- skip this on big endian systems
+  let !len@(I# len#) = fromIntegral $ byteSwap32 w 
+      !(I# sz#) = S.sizeOf (undefined :: a)
+  -- TODO Do we need the sz * len < 0 check that FP.take
+  -- adds? Technically no if we parse FP.anyWord32be
+  -- instead and convert that, but is that correct?
+  -- It will allow larger arrays, but that shouldn't
+  -- be a problem. We still check if we even have enough bytes
+  BS.BS fp _ <- FP.takeUnsafe# (len# *# sz#)
   pure $ S.unsafeFromForeignPtr0 (coerce fp) len
 
 -- TODO PR to flatparse

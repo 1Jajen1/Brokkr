@@ -1,4 +1,4 @@
-cabal-version:       2.4
+cabal-version:       3.0
 name:                brokkr-nbt
 version:             0.0.0.0
 synopsis:            NBT parser
@@ -53,6 +53,7 @@ library
                        Brokkr.NBT.NBTString
                        Brokkr.NBT.NBTString.Internal
                        Brokkr.NBT.Slice
+                       Brokkr.NBT.NBTError
 test-suite brokkr-nbt-test
   import:              common-options
   type:                exitcode-stdio-1.0

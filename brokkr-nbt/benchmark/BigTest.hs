@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds, TemplateHaskellQuotes, DeriveAnyClass, OverloadedStrings #-}
+{-# LANGUAGE DataKinds, TemplateHaskellQuotes, DerivingStrategies, DeriveAnyClass, OverloadedStrings #-}
 module BigTest where
 
 import Brokkr.NBT.Codec
@@ -23,14 +23,18 @@ data BigTest = BigTest {
 , floatTest  :: {-# UNPACK #-} !Float
 , doubleTest :: {-# UNPACK #-} !Double
 , byteArrayTest :: {-# UNPACK #-} !(S.Vector Int8)
-, listTestLong  :: {-# UNPACK #-} !(SmallArray Int64)
+, listTestLong     :: {-# UNPACK #-} !(SmallArray Int64)
 , listTestCompound :: {-# UNPACK #-} !(SmallArray ListComp)
-} deriving (Generic, NFData)
+}
+  deriving stock Generic
+  deriving anyclass NFData
 
 data Nested1 = Nested1 {
   egg :: {-# UNPACK #-} !Nested2
 , ham :: {-# UNPACK #-} !Nested2
-} deriving (Generic, NFData)
+}
+  deriving stock Generic
+  deriving anyclass NFData
 
 instance HasCodec Nested1 where
   codec = compound "nested compound" $ [|| Nested1 ||]
@@ -40,7 +44,9 @@ instance HasCodec Nested1 where
 data Nested2 = Nested2 {
   name  :: {-# UNPACK #-} !NBTString
 , value :: {-# UNPACK #-} !Float
-} deriving (Generic, NFData)
+}
+  deriving stock Generic
+  deriving anyclass NFData
 
 instance HasCodec Nested2 where
   codec = compound "nested 2" $ [|| Nested2 ||]
@@ -50,7 +56,9 @@ instance HasCodec Nested2 where
 data ListComp = ListComp {
   createdOn :: {-# UNPACK #-} !Int64
 , nameL     :: {-# UNPACK #-} !NBTString
-} deriving (Generic, NFData)
+}
+  deriving stock Generic
+  deriving anyclass NFData
 
 instance HasCodec ListComp where
   codec = compound "created-on" $ [|| ListComp ||]
