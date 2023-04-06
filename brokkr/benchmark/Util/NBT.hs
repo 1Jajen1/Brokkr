@@ -27,6 +27,10 @@ data Env = Env {
   deriving stock Generic
   deriving anyclass NFData
 
+instance NFData NBT where
+  rnf (NBT _ _) = ()
+  {-# INLINE rnf #-}
+
 setupEnv :: IO Env
 setupEnv = do
   bigtestBs <- LBS.toStrict . GZip.decompress . LBS.fromStrict <$> BS.readFile "benchmark/Util/NBT/bigtest.nbt"
@@ -48,6 +52,7 @@ main = defaultMain [
   ]
 
 parseBsNBT :: BS.ByteString -> NBT
+{-# INLINE parseBsNBT #-}
 parseBsNBT !bs = case FP.runParser (get @NBT) bs of
   FP.OK res "" -> res
   _ -> error "Failed to parse NBT"

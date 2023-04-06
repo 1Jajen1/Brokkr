@@ -4,8 +4,10 @@ module Network.Monad (
   Network
 , runNetwork
 , getSocket -- Internals?
+, getConfig
 , getUniverse
 , readPacket
+, readPacket'
 , sendBytes
 , sendPackets
 , closeConnection
@@ -24,7 +26,7 @@ import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
-import Control.Monad.Trans.State as StateT
+import Control.Monad.Trans.State.Strict as StateT
 import Control.Monad.Base
 import Control.Monad.Trans.Control
 
@@ -43,9 +45,8 @@ import Network.Protocol
 import Network.Util.Builder
 import Network.Util.VarNum
 
-import Server hiding (getUniverse)
-import qualified Server
-import Hecs
+import Server.Monad (ServerM, Universe, Config)
+import Server.Monad qualified as Server
 
 import Util.Binary (FromBinary, ToBinary)
 import qualified Util.Binary as Binary
@@ -53,31 +54,41 @@ import qualified Util.Binary as Binary
 newtype Network a = Network { unNetwork :: ServerM (ReaderT Socket (StateT ByteString IO)) a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadBase IO, MonadBaseControl IO)
 
-deriving newtype instance MonadHecs Universe Network
+deriving newtype instance Server.MonadHecs Universe Network
 
-runNetwork :: Universe -> Socket -> Network a -> IO a
+runNetwork :: Config -> Universe -> Socket -> Network a -> IO a
 -- We defer f because that means another thread (the main thread) will sync all changes, this ensures thread safety
 -- This does not affect reads, and packets are not written as components, but put into a queue
 -- This would technically sync after f finishes, but the network threads are designed to diverge. This means no thread running Network should
 -- finish without an exception
-runNetwork universe sock (Network f) = catch
-  (evalStateT (runReaderT (runServerM universe (defer f)) sock) mempty)
-  (\(e :: SomeException) -> print e >> throwIO e)
+runNetwork conf universe sock (Network f) = catch
+  (evalStateT (runReaderT (Server.runServerM conf universe (Server.defer f)) sock) mempty)
+  (\(e :: SomeException) -> do
+    -- print e
+    throwIO e
+    )
 {-# INLINE runNetwork #-}
 
+getConfig :: Network Config
+getConfig = Network Server.getConfig
+
 getUniverse :: Network Universe
-getUniverse = Network $ Server.getUniverse
+getUniverse = Network Server.getUniverse
 {-# INLINE getUniverse #-}
 
 getSocket :: Network Socket
 getSocket = Network $ lift ask
 {-# INLINE getSocket #-}
 
+-- Test code would like just the network part not wrapped in 'ServerM', so rewrap it here
+readPacket :: forall a . (Show a, FromBinary a) => Protocol -> Network a
+readPacket = Network . lift . readPacket'
+
 -- TODO Move Protocol to Type level
 -- We can introduce it from some config and specialize for all protocol and packet types. That should remove all abstraction cost and only
--- leave my bad code to blame for perf.
-readPacket :: forall a . (Show a, FromBinary a) => Protocol -> Network a
-readPacket prot = do
+-- leave my bad code to blame for performance problems.
+readPacket' :: forall a . (Show a, FromBinary a) => Protocol -> ReaderT Socket (StateT ByteString IO) a
+readPacket' prot = do
   -- TODO Binary.get @VarInt >>= will always allocate. Use CPS to avoid allocating.
   -- ^- This seems to be true for most loops in the parser...
   -- The ByteString will also be allocated, not good!
@@ -104,14 +115,14 @@ data StreamParse =
   | NeedMore
   | forall e . Exception e => Failed e
 
-receiveBytes :: (ByteString -> StreamParse) -> Network ByteString
-receiveBytes test = Network $ do
-  sock <- lift ask
-  bs <- lift $ lift StateT.get
+receiveBytes :: (ByteString -> StreamParse) -> ReaderT Socket (StateT ByteString IO) ByteString
+receiveBytes test = do
+  sock <- ask
+  bs <- lift StateT.get
   go sock bs
   where
     go sock bs = case test bs of
-      Done res rem' -> lift . lift $ put rem' >> pure res
+      Done res rem' -> lift $ put rem' >> pure res
       NeedMore -> Network.recv sock 1024 >>= \case
         Just new -> go sock (bs <> new)
         Nothing -> liftIO $ throwIO ConnectionClosed

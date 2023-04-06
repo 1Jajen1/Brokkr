@@ -4,7 +4,7 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskellQuotes #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 module Util.Vector.Packed (
   DynamicNat(..)
@@ -41,6 +41,8 @@ import qualified Foreign.Marshal.Utils as S
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Primitive as Prim
 import qualified Data.Primitive as Prim
+
+import qualified FlatParse.Basic as FP
 
 import GHC.ForeignPtr ( unsafeWithForeignPtr )
 import GHC.TypeLits ( KnownNat, Nat, natVal )
@@ -186,13 +188,22 @@ instance (KnownNat sz, KnownNat bSz) => ToBinary (PackedVector ('Static sz) ('St
       vBSz = runST $ bitSz <$> unsafeThaw pv
       nrBytes = 8 * (nrWords vBSz vLen)
 
+instance (KnownNat sz, KnownNat bSz) => FromBinary (PackedVector ('Static sz) ('Static bSz)) where
+  get = do
+    B.BS fptr _ <- FP.take nrBytes
+    pure . PV_Stat $ coerce fptr
+    where
+      vLen = fromIntegral $ natVal @sz undefined
+      vBSz = fromIntegral $ natVal @bSz undefined
+      nrBytes = 8 * nrWords vBSz vLen
+
 instance KnownNat sz => ToBinary (PackedVector ('Static sz) 'Dynamic) where
   put pv@(PV_Dyn bSz fptr) = Mason.withPtr nrBytes $ \ptr -> unsafeWithForeignPtr fptr $ \src -> do
     B.memcpy ptr (coerce src) nrBytes
     pure $ ptr `plusPtr` nrBytes
     where
       vLen = runST $ length <$> unsafeThaw pv
-      nrBytes = 8 * (nrWords bSz vLen)
+      nrBytes = 8 * nrWords bSz vLen
 
 -- Methods
 

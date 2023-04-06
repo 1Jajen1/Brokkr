@@ -1,10 +1,7 @@
-{-# LANGUAGE MagicHash  #-}
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE MagicHash, UnboxedTuples #-}
 module Util.NBT.Internal (
   NBT(..)
 , Tag(..)
-, tagId
-, tagFromId
 , NBTString(..)
 , NBTParser(..)
 , FromNBT(..)
@@ -14,176 +11,25 @@ module Util.NBT.Internal (
 , compound, (.=)
 ) where
 
+import Brokkr.NBT hiding (parseNBT, compound, (.=))
+import Brokkr.NBT.Internal hiding (parseNBT)
+import Brokkr.NBT.NBTString.Internal
+import Brokkr.NBT.Slice (Slice)
+import qualified Brokkr.NBT.Slice as Slice
+
 import Data.Int
 import Data.Text hiding (empty)
 import qualified Data.Vector.Storable as S
-import Data.ByteString hiding (empty)
 import qualified Data.Vector as V
-import GHC.Exts ( Int(I#), dataToTag#, coerce )
-import Util.Binary
-import FlatParse.Basic as FP hiding ((<|>), empty, runParser)
-import qualified FlatParse.Basic hiding ((<|>))
-import Data.Void
-import qualified Mason.Builder as B
-import Data.Word
 import qualified Data.Text.Encoding as T
-import qualified Data.ByteString as BS
 import Control.Monad
 import Prelude hiding (succ)
 import Control.Applicative
+import Data.Primitive (sizeofSmallArray, smallArrayFromListN)
+import Data.Foldable
 import Data.Maybe
-import GHC.Generics
-import Control.DeepSeq
-import Data.String (IsString)
-import Data.Hashable
-import qualified Data.HashMap.Strict as HM
+import GHC.Exts hiding (toList)
 
--- | Content of a NBT
--- TODO Benchmark against using an unboxed Sum and in general use unboxed values?
--- Also use Int# for all numerical types?
--- TODO First bench Tag as an unlifted datatype?
-data Tag =
-    TagEnd
-  | TagByte !Int8
-  | TagShort !Int16
-  | TagInt !Int32
-  | TagLong !Int64
-  | TagFloat !Float
-  | TagDouble !Double
-  | TagByteArray !(S.Vector Int8) 
-  | TagString !NBTString
-  | TagList !(V.Vector Tag)
-  | TagCompound !(HM.HashMap NBTString Tag)
-  | TagIntArray !(S.Vector Int32)
-  | TagLongArray !(S.Vector Int64)
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass NFData
-
-{- Note [Tag types]:
-
-Every NBT is prefixed by a single byte describing what Constructor the Tag following is.
-
-This is obtained via 'tagId' which internally uses 'dataToTag#' and thus has a few restrictions:
-- The argument has to be strict. 'tagId' thus needs the bang pattern.
-- The constructor order defines the tag type id. Thus changes to the Tag datatype need to
-  respect the NBT-specifications order. 
-
--}
-
--- | Get the tag type
-tagId :: Tag -> Int
-tagId !tag = (I# (dataToTag# tag))
-{-# INLINE tagId #-}
-
--- | Parses a tag given a specific tag type
-tagFromId :: Int8 -> Parser Void Tag
-tagFromId = \case
-  0 -> pure TagEnd
-  1 -> TagByte <$> get
-  2 -> TagShort <$> get
-  3 -> TagInt <$> get
-  4 -> TagLong <$> get
-  5 -> TagFloat <$> get
-  6 -> TagDouble <$> get
-  7 -> TagByteArray . coerce <$> get @(SizePrefixed Int32 (S.Vector Int8))
-  8 -> TagString . coerce <$> get @NBTString
-  9 -> TagList <$> do
-    tid <- get @Int8
-    len <- get @Int32
-    V.replicateM (fromIntegral len) (tagFromId tid)
-  10 -> TagCompound <$> goCompound mempty
-  11 -> TagIntArray . coerce <$> get @(SizePrefixed Int32 (S.Vector Int32))
-  12 -> TagLongArray . coerce <$> get @(SizePrefixed Int32 (S.Vector Int64))
-  _ -> FlatParse.Basic.empty
-  where
-    -- TODO use a different HashMap better geared towards small inserts, very small sizes and fast lookups to lower this cost some more
-    -- TODO Also bench against a mutable hashmap since this is only mutable in goCompound (linear types?)
-    goCompound acc = do
-      tid <- get @Int8
-      if tid == 0
-        then pure acc
-        else do
-          !key <- get @NBTString
-          !comp <- tagFromId tid
-          goCompound $ HM.insert key comp acc
-{-# INLINE tagFromId #-}
-{-# SCC tagFromId #-}
-
-instance ToBinary Tag where
-  put tag = case tag of
-    TagEnd -> mempty
-    TagByte b -> B.int8 b
-    TagShort s -> B.int16BE s
-    TagInt i -> B.int32BE i
-    TagLong l -> B.int64BE l
-    TagFloat f -> B.floatBE f
-    TagDouble d -> B.doubleBE d
-    TagByteArray arr -> put (SizePrefixed @Int32 arr)
-    TagString str -> put str
-    TagList xs ->
-      let len = V.length xs
-          tid = fromIntegral $ if len == 0
-            then tagId TagEnd
-            else tagId $ xs V.! 0
-      in B.word8 tid <> put (fromIntegral @_ @Int32 len) <> V.foldMap (\x -> put x) xs
-    TagCompound c -> HM.foldMapWithKey (\n t -> put $ NBT n t) c <> B.int8 0
-    TagIntArray arr -> put (SizePrefixed @Int32 arr)
-    TagLongArray arr -> put (SizePrefixed @Int32 arr)
-  {-# INLINE put #-}
-
--- These are not quite utf-8 bytestrings, technically minecraft uses cesu-8 instead
--- Either way we don't care here, we simply get the string as a view into the underlying data,
--- so no allocation is done. When this is needed as a Text rather than just bytes to compare
--- against we parse the string and do more with it.
-newtype NBTString = NBTString ByteString
-  deriving newtype (Eq, Ord, Show, IsString, Hashable, NFData)
-
-instance FromBinary NBTString where
-  get = do
-    len <- get @Word16
-    bs <- FP.take $ fromIntegral len
-    pure $ NBTString bs
-  {-# INLINE get #-}
-
-instance ToBinary NBTString where
-  put (NBTString bs) =
-    let len = BS.length bs
-    in put @Word16 (fromIntegral len) <> B.byteString bs
-  {-# INLINE put #-}
-
--- | Named-Binary-Tag's (NBT)
---
--- Minecrafts dataformat, primarily used for file storage and dynamic attributes in commands.
---
--- The original NBT specification can be found here: https://web.archive.org/web/20110723210920/http://www.minecraft.net/docs/NBT.txt
--- An updated version with documentation can be seen here: https://wiki.vg/NBT
--- 
--- TODO Note: Using ByteString here because that's cheaper to decode, most (all?) of minecrafts NBT keys are
--- valid utf8 and equally valid cesu8 so this should not be an issue?
-data NBT = NBT !NBTString !Tag
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass NFData
-
-instance FromBinary NBT where
-  get = do
-    -- Don't consume the tag id on failure so that the compound parser has an easier time determining if it finished correctly
-    -- It uses many (get @NBT) thus when this fails we either have a faulty NBT (in that case the next thing is not TagEnd) or we are
-    -- done (in which case we have TagEnd next). This may be problematic if the faulty nbt branch backtracks to right before a 0...
-    -- TODO It no longer does, but tbh this is only run once so no real cost anyway...
-    tid <- lookahead $ get @Int8
-    when (tid == 0) FlatParse.Basic.empty
-    _ <- anyWord8
-
-    name <- get
-    tag <- tagFromId tid
-    pure $ NBT name tag
-  {-# INLINE get #-}
-
-instance ToBinary NBT where
-  put (NBT n t) =
-    let tid = tagId t
-    in B.int8 (fromIntegral tid) <> put n <> put t
-  {-# INLINE put #-}
 
 -- | Custom Parser for NBT values
 --
@@ -260,6 +106,12 @@ instance FromNBT Int32 where
     _ -> empty
   {-# INLINE parseNBT #-}
 
+instance FromNBT Int64 where
+  parseNBT = \case
+    TagLong i -> pure i
+    _ -> empty
+  {-# INLINE parseNBT #-}
+
 instance FromNBT Float where
   parseNBT = \case
     TagFloat f -> pure f
@@ -286,17 +138,17 @@ instance FromNBT Text where
 
 instance FromNBT a => FromNBT (V.Vector a) where
   parseNBT = \case
-    TagList xs -> traverse parseNBT xs
+    TagList xs -> traverse parseNBT $ V.fromListN (sizeofSmallArray xs) $ toList xs
     _ -> empty
   {-# INLINE parseNBT #-}
 
-instance FromNBT (S.Vector Int32) where
+instance FromNBT (S.Vector Int32BE) where
   parseNBT = \case
     TagIntArray arr -> pure arr
     _ -> empty
   {-# INLINE parseNBT #-}
 
-instance FromNBT (S.Vector Int64) where
+instance FromNBT (S.Vector Int64BE) where
   parseNBT = \case
     TagLongArray arr -> pure arr
     _ -> empty
@@ -355,14 +207,14 @@ instance ToNBT Text where
   {-# INLINE toNBT #-}
 
 instance ToNBT a => ToNBT (V.Vector a) where
-  toNBT xs = TagList $ fmap toNBT xs
+  toNBT xs = TagList $ fmap toNBT $ smallArrayFromListN (V.length xs) $ toList xs
   {-# INLINE toNBT #-} 
 
-instance ToNBT (S.Vector Int32) where
+instance ToNBT (S.Vector Int32BE) where
   toNBT = TagIntArray
   {-# INLINE toNBT #-}
 
-instance ToNBT (S.Vector Int64) where
+instance ToNBT (S.Vector Int64BE) where
   toNBT = TagLongArray
   {-# INLINE toNBT #-}
 
@@ -372,7 +224,7 @@ instance ToNBT (S.Vector Int64) where
 --
 -- The resulting 'NBTParser' will only succeed if the given 'Tag' is a compound and the
 -- 'NBTParser' returned by the function succeeds.
-withCompound :: (HM.HashMap NBTString Tag -> NBTParser a) -> Tag -> NBTParser a
+withCompound :: (Slice NBT -> NBTParser a) -> Tag -> NBTParser a
 withCompound f = \case
   TagCompound m -> f m
   _ -> empty
@@ -384,21 +236,24 @@ withCompound f = \case
 -- the key succeeds.
 --
 -- If you need the key to be optional use '(.:?)' instead.
-(.:) :: FromNBT a => HM.HashMap NBTString Tag -> NBTString -> NBTParser a
-!m .: !k = case HM.lookup k m of
-  Just !tag -> parseNBT tag
-  Nothing -> empty
+(.:) :: FromNBT a => Slice NBT -> NBTString -> NBTParser a
+!m .: !k = case findWithIndexNBT k m of
+  (# _, (# NBT _ t | #) #) -> parseNBT t
+  (# _, (# | _ #) #) -> empty
 {-# INLINE (.:) #-}
+
+findWithIndexNBT :: NBTString -> Slice NBT -> (# Int#, (# NBT | (# #) #) #)
+findWithIndexNBT = Slice.findWithIndex(\(NBT k _) -> k) 
 
 -- | Create a parser which tries to read a 'Tag' from a compound.
 --
 -- Succeeds with Nothing if the key is not present, otherwise behaves like '(.:)'
 --
 -- If you want to provide a default value use '(.!=)'
-(.:?) :: FromNBT a => HM.HashMap NBTString Tag -> NBTString -> NBTParser (Maybe a)
-m .:? k = case HM.lookup k m of
-  Just !tag -> Just <$> parseNBT tag
-  Nothing -> pure Nothing
+(.:?) :: FromNBT a => Slice NBT -> NBTString -> NBTParser (Maybe a)
+m .:? k = case findWithIndexNBT k m of
+  (# _, (# NBT _ t | #) #) -> Just <$> parseNBT t
+  (# _, (# | _ #) #) -> pure Nothing
 {-# INLINE (.:?) #-}
 
 -- | Provide a default value to a 'NBTParser' returning a 'Maybe'.
@@ -413,7 +268,7 @@ m .:? k = case HM.lookup k m of
 --
 -- Use '(.=)' to simplify building such a list.
 compound :: [(NBTString, Tag)] -> Tag
-compound = TagCompound . HM.fromList
+compound = TagCompound . Slice.fromList . fmap (uncurry NBT)
 {-# INLINE compound #-}
 
 -- | Create a key value pair with any value that can be converted to 'NBT'

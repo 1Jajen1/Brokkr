@@ -15,7 +15,7 @@ extra-doc-files:     README.md
 tested-with:         GHC == 9.4.3
 
 common common-options
-  build-depends:       base ^>= 4.17.0.0
+  build-depends:       base >= 4.17 && < 5
                      , text
                      , aeson
                      , deriving-aeson

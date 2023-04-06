@@ -25,6 +25,7 @@ data PalettedVector (sz :: Nat) (globalBitSz :: Nat) =
   | SingleValue {-# UNPACK #-} !Int
   -- TODO Use Unboxed vectors instead. They should be better for such small vectors
   | Indirect    {-# UNPACK #-} !(Prim.Vector Int) {-# UNPACK #-} !(PackedVector ('Static sz) 'Dynamic)
+  deriving stock Eq
 
 instance (KnownNat sz, KnownNat mBSz) => Show (PalettedVector sz mBSz) where
   show (Global v)      = "Global " <> show v

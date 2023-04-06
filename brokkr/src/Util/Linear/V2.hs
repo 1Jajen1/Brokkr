@@ -16,7 +16,7 @@ import Hecs
 -- Use a data family so that GHC unpacks the fields
 data family V2 a
 data instance V2 Int = V2_Int !Int !Int
-  deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass Hashable
   deriving (Component, Storable) via (GenericFlat (V2 Int))
 

@@ -22,6 +22,7 @@ import Util.PrimVar
 -- TODO Make a unlifted, stuff in these rings should usually not be lazy since we never drop any
 -- TODO MVar vs TVar MVar is great if only a single thread is blocked or writes/reads always write/read one element at a time
 --  TVar is much better if when n threads are blocked >= n writes/reads come in
+-- This is used for one to one communication. As such we don't need any additional locks
 data Ring a = Ring !(PrimVar RealWorld Word) !(PrimVar RealWorld Word) !(MVar ()) !(MV.MVector RealWorld a)
 
 newRingBuffer :: Int -> IO (Ring a)
@@ -53,7 +54,7 @@ pushN ring@(Ring r w l arr) els = do
   w' <- readPrimVar w
   let n = V.length els
       len = VG.length arr
-  if n >= len -  (fromIntegral $ w' - r')
+  if n >= len - fromIntegral (w' - r')
     then takeMVar l >> pushN ring els
     else do
       let writeI = fromIntegral $ mask ring w'
@@ -70,10 +71,9 @@ pushN ring@(Ring r w l arr) els = do
           V.unsafeCopy mSlice1 eSlice1
           V.unsafeCopy mSlice2 eSlice2
         -- Just one copy needed as elements fit into one slice
-        else do
-          V.unsafeCopy (VG.unsafeSlice writeI n arr) els
+        else V.unsafeCopy (VG.unsafeSlice writeI n arr) els
       writePrimVar w $ w' + fromIntegral n
-      tryPutMVar l () >> pure ()
+      void $ tryPutMVar l ()
 
 -- Blocks if the ring is empty
 peek :: Ring a -> IO a
@@ -122,7 +122,7 @@ empty (Ring r w _ _) = do
 full :: Ring a -> IO Bool
 full ring@(Ring _ _ _ arr) = do
   sz <- size ring
-  pure $ sz == (fromIntegral $ VG.length arr)
+  pure $ sz == fromIntegral (VG.length arr)
 
 size :: Ring a -> IO Word
 size (Ring r w _ _) = do

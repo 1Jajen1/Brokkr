@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Network.Packet.Client.Login (
   LoginPacket(..)
 ) where
@@ -8,6 +9,10 @@ import Util.Binary
 import Network.Util.Packet
 import Network.Util.MCString
 import Network.Util.VarNum
+
+-- TODO
+import Data.Coerce
+import FlatParse.Basic qualified as FP
 
 data LoginPacket =
     Disconnect
@@ -23,6 +28,17 @@ instance ToBinary LoginPacket where
     _ -> error "Unsupported"
   {-# INLINE put #-}
 
+instance FromBinary LoginPacket where
+  get = $$(mkPacketParser [
+      [|| pure Disconnect ||]
+    , [|| pure EncryptionRequest ||]
+    , [|| do
+        res <- LoginSuccess <$> get <*> (coerce <$> get @MCString)
+        FP.skip 1 -- TODO properties
+        pure res
+        ||]
+    , [|| SetCompression . fromIntegral <$> get @VarInt ||]
+    ])
 
 {- Note: Max byte sizes
   Disconnect is bounded by MCString which has a max size of (327676 * 4) + 3, so for all intents and purposes it is unbounded.

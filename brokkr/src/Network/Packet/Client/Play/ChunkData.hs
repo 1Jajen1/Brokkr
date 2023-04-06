@@ -4,7 +4,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 module Network.Packet.Client.Play.ChunkData (
-  ChunkData
+  ChunkData(..)
 , mkChunkData
 ) where
 
@@ -32,22 +32,24 @@ import Util.PalettedVector
 import Util.Vector.Packed (PackedVector, DynamicNat(..))
 import qualified Util.Vector.Packed as PV
 
+import qualified FlatParse.Basic as FP
+
 type NibbleVector = PackedVector ('Static 4096) ('Static 4)
 
 data ChunkData = ChunkData !Int !ChunkPosition !Heightmaps !(Vector IO.ChunkSection) !BitSet !BitSet !(Vector NibbleVector) !(Vector NibbleVector)
-  deriving stock Show
+  deriving stock (Eq, Show)
 
 mkChunkData :: IO.Chunk -> (Int, ChunkData)
 mkChunkData IO.Chunk{..} = (minPacketSz, ChunkData sectionsByteSize position heightmaps sections skyLightBitSet blockLightBitSet skyLightArr blockLightArr)
   where
-    !(!skyLightBitSet, !skyLightArr) = makeLightBitSetAndArray IO.skyLight 
-    !(!blockLightBitSet, !blockLightArr) = makeLightBitSetAndArray IO.blockLight
+    !(!skyLightBitSet, !skyLightArr) = makeLightBitSetAndArray $ coerce IO.skyLight
+    !(!blockLightBitSet, !blockLightArr) = makeLightBitSetAndArray $ coerce IO.blockLight
 
     -- TODO This is needlessly slow (immutable bitset is modified over and over again instead of a mutable one) and it assumes a few constants that may not be valid
     -- -4 is the lowest chunk section y value (is it? o.O)
     -- 24 is the number of chunk sections for 320 up and -64 down worlds + 2 for light below and above the world
     makeLightBitSetAndArray sel = V.foldl'
-      (\acc@(bSet, vec) sect -> maybe acc (\x -> (BitSet.set bSet $ (IO.y sect) + 5, V.snoc vec x)) (sel sect))
+      (\acc@(bSet, vec) sect -> maybe acc (\x -> (BitSet.set bSet $ IO.y sect + 5, V.snoc vec x)) (sel sect))
       (BitSet.emptyBitSet $ IO.numSections + 2, mempty)
       sections
 
@@ -57,7 +59,7 @@ mkChunkData IO.Chunk{..} = (minPacketSz, ChunkData sectionsByteSize position hei
       + 1 + 2 -- NBT Compound header empty name
       + 1 + 2 + 15 + 4 + 37 * 8 -- NBT Long array with a single heightmap with 256 9 bit values, so floor (64 / 9) = 7 and ceil (256 / 7) = 37
       + 1 -- End tag
-      + (varIntSize sectionsByteSize) -- Size prefix for the sections data
+      + varIntSize sectionsByteSize -- Size prefix for the sections data
       + sectionsByteSize -- sections data
       + 1 -- No block entities for now -- TODO
       + 1 -- Trust edges bool -- TODO
@@ -66,20 +68,20 @@ mkChunkData IO.Chunk{..} = (minPacketSz, ChunkData sectionsByteSize position hei
       + BitSet.byteSize blockLightBitSet -- Blocklight bitset
       + BitSet.byteSize (BitSet.complement skyLightBitSet) -- Complement Skylight bitset
       + BitSet.byteSize (BitSet.complement blockLightBitSet) -- Complement Blocklight bitset
-      + 1 + (varIntSize 2048) + 2048 * V.length skyLightArr -- Skylight, varInt prefixed
-      + 1 + (varIntSize 2048) + 2048 * V.length blockLightArr -- BlockLight, varInt prefixed
+      + 1 + varIntSize 2048 + 2048 * V.length skyLightArr -- Skylight, varInt prefixed
+      + 1 + varIntSize 2048 + 2048 * V.length blockLightArr -- BlockLight, varInt prefixed
     -- This needs to be exact, minPacketSz could use an approximation
     !sectionsByteSize = V.foldl' (\acc s -> acc + sectionByteSize s) 0 sections
     sectionByteSize IO.ChunkSection{..} = 2 + paletteContainerSz (coerce blocks) + paletteContainerSz (coerce biomes)
-    paletteContainerSz (Global v) = 1 + (varIntSize numLongs) + 8 * numLongs
+    paletteContainerSz (Global v) = 1 + varIntSize numLongs + 8 * numLongs
       where
         !bSz = runST $ PV.bitSz <$> PV.unsafeThaw v
         !len = runST $ PV.length <$> PV.unsafeThaw v
         !numLongs = PV.nrWords bSz len
     paletteContainerSz (SingleValue v) = 1 + varIntSize v + 1
-    paletteContainerSz (Indirect p v) = 1 + (varIntSize $ Prim.length p) + paletteByteSz + (varIntSize numLongs) + 8 * numLongs
+    paletteContainerSz (Indirect p v) = 1 + varIntSize (Prim.length p) + paletteByteSz + varIntSize numLongs + 8 * numLongs
       where
-        !paletteByteSz = getSum $ Prim.foldMap (\el -> Sum $ varIntSize $ el) p
+        !paletteByteSz = getSum $ Prim.foldMap (Sum . varIntSize) p
         !bSz = runST $  PV.bitSz <$> PV.unsafeThaw v
         !len = runST $  PV.length <$> PV.unsafeThaw v
         !numLongs = PV.nrWords bSz len
@@ -87,7 +89,7 @@ mkChunkData IO.Chunk{..} = (minPacketSz, ChunkData sectionsByteSize position hei
 instance ToBinary ChunkData where
   put (ChunkData sectionsByteSize (ChunkPos x z) heightmaps sections  skyLightMask blockLightMask skyLight blockLight) =
        put (fromIntegral @_ @Int32 x) <> put (fromIntegral @_ @Int32 z)
-    <> put (BinaryNBT heightmaps)
+    <> put (BinaryNBT heightmaps) -- TODO
     <> put (VarInt . fromIntegral $ sectionsByteSize)
     <> sectionsBytes
     <> put @VarInt 0 -- TODO Block entities
@@ -103,7 +105,39 @@ instance ToBinary ChunkData where
     where
       !sectionsBytes = V.foldMap putSection sections
       putSection IO.ChunkSection{blockCount,blocks,biomes} =
-           put (fromIntegral @_ @Int16 blockCount)
+           put (fromIntegral @_ @Int16 blockCount) -- TODO blockCount
         <> put blocks
         <> put biomes
   {-# INLINE put #-}
+
+instance FromBinary ChunkData where
+  get = do
+    x <- fromIntegral @Int32 <$> get
+    z <- fromIntegral @Int32 <$> get
+    BinaryNBT heightmaps <- get
+    VarInt sectionSz <- get
+    _ <- FP.take $ fromIntegral sectionSz
+    _ <- get @Int8
+    _ <- get @Bool
+    skyLightMask <- get
+    blockLightMask <- get
+    _ <- get @BitSet
+    _ <- get @BitSet
+    VarInt skyLightSz <- get
+    skyLights <- V.replicateM (fromIntegral skyLightSz) $ do
+      VarInt _ <- get
+      get
+    VarInt blockLightSz <- get
+    blockLights <- V.replicateM (fromIntegral blockLightSz) $ do
+      VarInt _ <- get
+      get
+    pure $ ChunkData
+      (fromIntegral sectionSz)
+      (ChunkPos x z)
+      heightmaps
+      V.empty -- TODO
+      skyLightMask
+      blockLightMask
+      skyLights
+      blockLights
+

@@ -5,20 +5,19 @@ module System.JoinPlayers (
 import Client
 import Network.Connection
 
-import Server as Hecs
-import Hecs
+import Server.Monad as Server
 
 -- iterate all connections with Not Joined
 -- TODO Change to query, although this is probably never going to matter perf wise
 joinPlayers :: Server ()
-joinPlayers = Hecs.system
-  (Hecs.filterDSL @'[Connection, Hecs.Not (Hecs.Tag Joined)])
+joinPlayers = Server.system
+  (Server.filterDSL @'[Connection, Server.Not (Server.Tag Joined)])
   $ \aty -> do
-    connections <- Hecs.getColumn @Connection aty
-    Hecs.iterateArchetype aty $ \n eid -> do
-      _conn <- Hecs.readColumn connections n
+    connections <- Server.getColumn @Connection aty
+    Server.iterateArchetype aty $ \n eid -> do
+      _conn <- Server.readColumn connections n
 
       -- The player is technically on the server by now, but other players don't know yet
 
       -- TODO Actually join instead of just setting the tag...
-      Hecs.addTag @Joined eid
+      Server.addTag @Joined eid

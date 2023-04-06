@@ -5,7 +5,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# OPTIONS_GHC -Wno-incomplete-patterns -Wno-missing-export-lists -Wno-unused-local-binds #-}
---{-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
+-- {-# OPTIONS_GHC -ddump-splices #-}
+-- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
 module Brokkr.BlockState.Internal.BlockState where
 
 import Brokkr.BlockState.Internal.TH

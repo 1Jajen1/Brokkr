@@ -16,7 +16,7 @@ tested-with:         GHC == 9.4.3
 
 common common-options
 -- TODO Go through deps soon-ish
-  build-depends:       base ^>= 4.17.0.0
+  build-depends:       base >= 4.17 && < 5
                      , brokkr-block
                      , brokkr-registry
                      , brokkr-nbt
@@ -49,6 +49,7 @@ common common-options
                      , bitfield
                      , hecs
                      , hecs-core
+                     , safe-exceptions
   
   ghc-options:         -Wall
                        -Wcompat
@@ -91,10 +92,13 @@ library
                       , Entity.Util.Hand
                       -- , IO.ChunkCache
                       , IO.Chunk
+                      , IO.ChunkParser
                       , IO.Chunkloading
                       , IO.RegionFile
                       -- , Network
                       , Server
+                      , Server.Config
+                      , Server.Monad
                       , System.JoinPlayers
                       , System.NetworkCommands
                       , System.PlayerMovement
@@ -129,6 +133,7 @@ library
                       , Util.Binary
                       , Util.BitSet
                       , Util.ByteOrder
+                      , Util.Dismount
                       , Util.Hecs
                       , Util.NBT
                       , Util.NBT.Internal
@@ -143,6 +148,7 @@ library
                       , Util.Queue
                       , Util.Ring
                       , Util.Rotation
+                      , Util.TeleportId
                       , Util.UUID
                       , Util.Velocity
                       , Util.Word24
@@ -159,17 +165,23 @@ test-suite Brokkr-test
   import:              common-options
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
-  main-is:             Spec.hs
+  main-is:             Main.hs
+  other-modules:       LoginSpec
+                       JoinGameSpec
+                       Spec
+                       Utils.Setup
+                       Utils.Client
+                       Utils.Fault
+                       Utils.Handshake
+                       Utils.Login
+                       Utils.Play
   build-tool-depends:  sydtest-discover:sydtest-discover
   build-depends:       brokkr
                      , sydtest
-                     , validity
-                     , genvalidity
-                     , genvalidity-sydtest
-                     , genvalidity-text
-                     , genvalidity-vector
-                     , genvalidity-containers
-                     , QuickCheck
+                     , sydtest-hedgehog
+                     , hedgehog
+                     , resourcet
+                     , mmorph
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N
@@ -179,7 +191,15 @@ benchmark Chunkloading
   hs-source-dirs:      benchmark
   main-is:             Chunkloading.hs
   build-depends:       tasty-bench
-                     , Brokkr
+                     , brokkr
+  ghc-options:         -O2
+benchmark NBT
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      benchmark
+  main-is:             Util/NBT.hs
+  build-depends:       tasty-bench
+                     , brokkr
   ghc-options:         -O2
 benchmark VarInt
   import:              common-options
@@ -187,7 +207,7 @@ benchmark VarInt
   hs-source-dirs:      benchmark
   main-is:             VarInt.hs
   build-depends:       tasty-bench
-                     , Brokkr
+                     , brokkr
                      , random
                      , mwc-random
   ghc-options:         -O2

@@ -27,9 +27,9 @@ toStrictSizePrefixedByteString prot szEstimate bb = unsafePerformIO $ do
   let prefixSz = case prot of
         Protocol NoCompression _ -> 5
         Protocol (Threshold n) _ -> 1 + varIntSize n -- fast path writes 2 varints
-      
+
       finalSzEst = szEstimate + prefixSz
-      initSz = (finalSzEst + 64 - 1) .&. (complement $ 64 - 1) -- get some multiple of 64 larger than finalSzEst
+      initSz = (finalSzEst + 64 - 1) .&. complement (64 - 1) -- get some multiple of 64 larger than finalSzEst
   fptr0 <- mallocPlainForeignPtrBytes initSz
   bufRef <- newIORef fptr0
   let ptr0 = unsafeForeignPtrToPtr fptr0
@@ -37,7 +37,7 @@ toStrictSizePrefixedByteString prot szEstimate bb = unsafePerformIO $ do
 
   fptr <- readIORef bufRef
   let ptr = unsafeForeignPtrToPtr fptr
-  let sz = (minusPtr pos ptr) - prefixSz
+  let sz = minusPtr pos ptr - prefixSz
 
   -- All our data is now written to the buffer, now figure out what packet format with respect to compression we use
 
@@ -71,7 +71,7 @@ toStrictSizePrefixedByteString prot szEstimate bb = unsafePerformIO $ do
        let compressed =
             ZLib.compressWith (ZLib.defaultCompressParams { ZLib.compressLevel = ZLib.bestSpeed })
               $ LBS.fromStrict (BS.BS (plusForeignPtr fptr prefixSz) sz)
-           cLen = varIntSize sz + (fromIntegral $ LBS.length compressed)
+           cLen = varIntSize sz + fromIntegral (LBS.length compressed)
            pSize = varIntSize cLen + varIntSize sz
 
        prefix <- mallocPlainForeignPtrBytes pSize

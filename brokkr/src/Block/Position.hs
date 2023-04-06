@@ -22,7 +22,7 @@ instance FromBinary BlockPosition where
     w <- get @Word64
     let x' = unsafeShiftR w 38
         y' = w .&. 0xFFF
-        z' = (unsafeShiftR w 12) .&. 0x3FFFFFF
+        z' = unsafeShiftR w 12 .&. 0x3FFFFFF
         x = if x' >= 2 ^ (25 :: Int)
           then x' - 2 ^ (26 :: Int)
           else x'

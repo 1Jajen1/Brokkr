@@ -12,7 +12,7 @@ import Data.Hashable
 
 newtype ChunkPosition = ChunkPosition (V2 Int)
   deriving stock Show
-  deriving newtype (Eq, NFData, Hashable, VectorSpace Int)
+  deriving newtype (Eq, Ord, NFData, Hashable, VectorSpace Int)
 
 pattern ChunkPos :: Int -> Int -> ChunkPosition
 pattern ChunkPos x z <- ChunkPosition !(V2_Int x z) where

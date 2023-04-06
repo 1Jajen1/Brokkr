@@ -31,6 +31,8 @@ import GHC.Exts
 -- All the fast div stuff heavily relies on inlining and constant folding on GHC's side, so make sure
 -- that changes don't break this, otherwise performance suffers
 
+-- TODO The code relying on inlining fastDiv/fastMod is obsolete if #9786 is merged into ghc
+
 nrOfWords :: Int -> Int -> Int
 nrOfWords len d = fastDiv d (len + 63)
 {-# INLINE nrOfWords #-}
@@ -47,6 +49,7 @@ fastDiv i d =
   let (m,a,shft) = divConstants d
   in (mulHi i m + a * i) `unsafeShiftR` shft
 {-# INLINE[1] fastDiv #-}
+-- These rules aren't technically valid, but I only pass positive numbers so it's fine
 {-# RULES
 "div by 1" forall i . fastDiv i 1 = i
 "div by 2" forall i . fastDiv i 2 = i `unsafeShiftR` 1
@@ -62,6 +65,7 @@ fastDiv i d =
 fastMod :: Int -> Int -> Int -> Int
 fastMod q i d = i - d * q
 {-# INLINE[1] fastMod #-}
+-- These rules aren't technically valid, but I only pass positive numbers so it's fine
 {-# RULES
 "mod by 1" forall q i . fastMod q i 1 = 0
 "mod by 2" forall q i . fastMod q i 2 = i .&. 1
@@ -106,12 +110,13 @@ divConstants d = $(
            | i < 0 && m > 0 -> [| (m,-1,shft) |]
            | otherwise -> [| (m, 0, shft) |]
   )
-{-# INLINE divConstants #-} -- TODO Avoid inlining if it is not used by fastDiv?
+{-# INLINE divConstants #-}
 
 mask :: Int -> Word64
-mask bSz = (2 `unsafeShiftL` bSz) - 1
+mask bSz = (1 `unsafeShiftL` bSz) - 1
 {-# INLINE mask #-}
- 
+
+-- TODO Misleading name
 foldMap :: forall m b . PrimBase m => Int -> Int -> ForeignPtr Word64 -> b -> (Int -> Int -> Int -> Word64 -> b -> m b) -> m b
 foldMap !elemsPerWord !len !fptr !b1 !f = unsafePrimToPrim . unsafeWithForeignPtr fptr $ \ptr -> unsafePrimToIO $ loop 0 0 ptr b1
   where

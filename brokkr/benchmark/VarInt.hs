@@ -124,7 +124,7 @@ oneShotPdep value@(W64# value#) ptr =
   let sz = varIntSize $ fromIntegral value
       !mask = writeMask sz
       !(W# mask#) = complement mask
-      !spread = W# (pdep# value# mask#)
+      !spread = W# (pdep# (word64ToWord# value#) mask#)
   in do
     writeOffPtr (coerce ptr) 0 (spread .|. mask)
     pure (advancePtr ptr sz)
@@ -132,7 +132,7 @@ oneShotPdep value@(W64# value#) ptr =
 
 -- TODO Bench against repeated shift and mask if statements
 writeMask :: Int -> Word
-writeMask (I# n) = W# (indexWord64OffAddr# arr# n)
+writeMask (I# n) = W# (word64ToWord# (indexWord64OffAddr# arr# n))
   where
     arr# = $(
       let (bs, _, _) = S.unsafeToForeignPtr (S.fromList [0x80, 0x8080, 0x808080, 0x80808080, 0x8080808080]) in litE $ bytesPrimL $ mkBytes (coerce @(ForeignPtr Word64) bs) 0 40

@@ -5,7 +5,7 @@ module Network.Handler (
 import Data.IORef
 import Chunk.Position
 import IO.Chunkloading
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (threadDelay, myThreadId)
 import Control.Concurrent.MVar
 import Control.Exception
 import qualified Chronos
@@ -43,9 +43,10 @@ import Client.GameMode
 import Block.Position
 import qualified Data.Bitfield as Bitfield
 
-import qualified Server as Hecs
-import qualified Hecs
+import Server.Config
+import qualified Server.Monad as Server
 import Hecs.Entity.Internal (Entity(..))
+import GHC.Conc (labelThread)
 
 --
 
@@ -80,17 +81,23 @@ handleLogin = do
 data LoginResult = LoginRes UUID Text Protocol
 
 handlePlay :: UUID -> Text -> Protocol -> Network a
-handlePlay _playerUUID _playerName finalProtocol = do
+handlePlay _playerUUID playerName finalProtocol = do
   !conn <- liftIO Conn.new
 
-  let send = go
+  liftIO $ myThreadId >>= flip labelThread ("Network thread for: " <> T.unpack playerName)
+
+  let send = do
+        liftIO $ myThreadId >>= flip labelThread ("Network send for: " <> T.unpack playerName)
+        go
         where
           go = do
             _ <- liftBaseWith $ \runInBase -> Conn.flushPackets conn $ \ps -> do
               runInBase . sendBytes . LBS.fromChunks
                 $! fmap (\(Conn.SendPacket szHint packet) -> let !bs = toStrictSizePrefixedByteString finalProtocol szHint $ put packet in bs) $ V.toList ps
             go
-      keepAlive = go
+      keepAlive = do
+        liftIO $ myThreadId >>= flip labelThread ("Network keep-alive for: " <> T.unpack playerName)
+        go
         where
           -- TODO make a config option so testing is a little easier 
           delay = fromIntegral $ ((Chronos.getTimespan Chronos.second) * 20) `div` 1000
@@ -104,7 +111,7 @@ handlePlay _playerUUID _playerName finalProtocol = do
     -- TODO Label these threads
     Async.withAsync (runInBase send) $ \sendAs ->
       Async.withAsync keepAlive $ \keepAliveAs -> do
-        -- If any of the linked threads crash, we must also crash since the connection will no longer work
+        -- If any of the send threads crash, we must also crash since the connection will no longer work
         Async.link sendAs
         Async.link keepAliveAs
 
@@ -112,10 +119,10 @@ handlePlay _playerUUID _playerName finalProtocol = do
         bracket
           (do
             bracketOnError
-              (runInBase $ Hecs.newEntity)
-              (\eidSt -> runInBase $ restoreM eidSt >>= Hecs.freeEntity) -- TODO Log
+              (runInBase Server.newEntity)
+              (\eidSt -> runInBase $ restoreM eidSt >>= Server.freeEntity) -- TODO Log
               (\eidSt -> runInBase $ restoreM eidSt >>= \eid -> joinPlayer conn eid >> pure eid)
-          ) (\_ -> putStrLn "Closed") -- TODO 
+          ) (\_ -> pure ()) -- TODO The client joined, but crashed, so we must remove it
             $ \clientSt -> runInBase $ restoreM clientSt >>= \_client -> do
               -- packet loop
               let handlePlayPackets = do
@@ -127,20 +134,23 @@ handlePlay _playerUUID _playerName finalProtocol = do
   -- The packet loop in the bracket already diverges, but if for whatever reason we end up here, just kill the connection
   closeConnection
 
-joinPlayer :: Connection -> Hecs.EntityId -> Network ()
+joinPlayer :: Connection -> Server.EntityId -> Network ()
 joinPlayer conn eid = do
   -- Create/Load player data -- SYNC Because we need to know where to join the player
   -- TODO Move
   let initialPosition = Position 0 150 0
       initialRotation = Rotation 0 0
       initialVelocity = Position 0 0 0
-  
-  initialWorld <- Hecs.get @Dimension (coerce $ Hecs.getComponentId @Dimension.Overworld)
+
+  initialWorld <- Server.get @Dimension (coerce $ Server.getComponentId @Dimension.Overworld)
     pure
     (error "World singleton missing")
-  let viewDistance = 32 -- Sync with PlayerMovement until I store it as a component
+
+  -- TODO ugly
+  viewDistance <- configServerRenderDistance <$> getConfig
+
   let loginData = C.LoginData
-        (fromIntegral . Bitfield.get @"eid" $ Hecs.unEntityId eid)
+        (fromIntegral . Bitfield.get @"eid" $ Server.unEntityId eid)
         (C.IsHardcore False)
         Creative
         C.Undefined
@@ -176,15 +186,15 @@ joinPlayer conn eid = do
 
   -- Preload chunks for this player -- SYNC Because we don't want to wait for this on the main thread and this will join the
                                     --  player with chunks loaded and not in some void
-  chunkloading <- Hecs.getSingleton @Chunkloading
-  let chunksToLoad = [ChunkPos x z | x <- [-viewDistance..viewDistance], z <- [-viewDistance..viewDistance] ]
+  chunkloading <- Server.getSingleton @Chunkloading
+  let chunksToLoad = [ChunkPos x z | x <- [-viewDistance..viewDistance], z <- [-viewDistance..viewDistance]]
       numChunksToLoad = (viewDistance * 2 + 1) * (viewDistance * 2 + 1)
-  rPath <- Hecs.get @Dimension.RegionFilePath (Dimension.entityId initialWorld) pure (error "TODO")
+  rPath <- Server.get @Dimension.RegionFilePath (Dimension.entityId initialWorld) pure (error "TODO")
 
-  doneRef <- liftIO $ newEmptyMVar
+  doneRef <- liftIO newEmptyMVar
   numDoneRef <- liftIO $ newIORef numChunksToLoad
 
-  liftIO $ putStrLn $ "Loading " <> show numChunksToLoad <> " chunks"
+  -- liftIO $ putStrLn $ "Loading " <> show numChunksToLoad <> " chunks"
   --liftIO $ print chunksToLoad
 
   liftIO $ loadChunks (coerce rPath) chunksToLoad chunkloading $ \mvar -> void . Async.async $ takeMVar mvar >>= \c -> do
@@ -194,18 +204,18 @@ joinPlayer conn eid = do
     when (done == 0) $ putMVar doneRef ()
   
   liftIO $ takeMVar doneRef
-  liftIO $ putStrLn "Done sending chunks"
+  -- liftIO $ putStrLn "Done sending chunks"
   
   liftIO . Conn.sendPacket conn $ Conn.SendPacket 10 (C.SetCenterChunk 0 0)
   liftIO . Conn.sendPacket conn $ Conn.SendPacket 64 (C.SynchronizePlayerPosition (Position 0 130 0) (Rotation 180 0) (C.TeleportId 0) C.NoDismount)
 
-  Hecs.set eid initialPosition
-  Hecs.set eid initialRotation
-  Hecs.set eid initialVelocity
-  Hecs.set eid initialWorld
+  Server.set eid initialPosition
+  Server.set eid initialRotation
+  Server.set eid initialVelocity
+  Server.set eid initialWorld
   
   -- This is the write that exposes us to the global state proper because that is what the JoinPlayer system queries on
-  Hecs.set eid conn
+  Server.set eid conn
 
 -- Handle play packets
 handlePacket :: Connection -> Server.Play.Packet -> Network ()

@@ -1,95 +1,122 @@
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# OPTIONS_GHC -Wno-orphans #-} -- Orphan specilization
 module Server (
-  ServerM
-, Server
-, newWorld
-, runServerM
-, getUniverse
-, Universe
-, getSingleton
-, getComponentId
-, getColumn
-, filterDSL
-, component
-, system
+  setupServer
+, Server.newWorld
+, Server.runServerM
 ) where
 
-import Hecs
-import Hecs.Monad (getWorld)
-
-import Control.Monad.IO.Class
-import Control.Monad.Trans
-import Control.Monad.Base
-import Control.Monad.Trans.Control
+import Chronos qualified
+import Control.Exception
+import Control.Exception.Safe qualified as SE
 
 import Data.Coerce
 
--- Components
--- Network
-import Client (Joined)
-import {-# SOURCE #-} Network.Connection (Connection)
--- Common
-import Util.Position (Position, Falling)
-import Util.Rotation (Rotation)
--- import Util.UUID (UUID)
-import Util.Velocity (Velocity)
-import Util.Hecs (Previous)
--- Dimension
-import {-# SOURCE #-} Dimension (Dimension, DimensionType(..), DimensionName, RegionFilePath)
--- misc
-import IO.Chunkloading (Chunkloading)
--- Systems
-import {-# SOURCE #-} System.PlayerMovement (Translate, Rotate, Land, Fly)
+import Dimension qualified
 
-makeWorld "Universe"
-  [ -- Network related components
-    ''Joined -- Tag which is added once a player fully joined the server. Every (globally known) connection without this is either not a player or has not joined
-  , ''Connection -- Self contained connection, has everything the network thread needs to work. Can also disconnect the client
-    -- Common components
-  , ''Position -- Position and velocity both have a V3 Double underneath. This could be modeled with (Position, V3 Double) and (Velocity, V3 Double) instead
-  , ''Velocity --  but this encoding makes it easier to have type safe functions where this distinction is necessary
-  , ''Rotation -- Same as above, this is technically V2 Float, but it makes sense to use the newtype
-  , ''Falling
-  -- Common utils
-  , ''Previous
-  -- Dimension stuff
-  , ''Dimension
-  , 'Overworld, 'Nether, 'TheEnd
-  , ''DimensionName
-  , ''RegionFilePath
-  -- misc
-  , ''Chunkloading
-  -- Systems
-  , ''Translate, ''Rotate, ''Land, ''Fly
-  ]
+import Control.Monad
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async qualified as Async
 
-type Server a = ServerM IO a
+import IO.Chunkloading qualified as Chunkloading
 
-newtype ServerM m a = ServerM (HecsM Universe m a)
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadTrans, MonadBase b, MonadBaseControl b)
+import Network.Simple.TCP qualified as Network
 
-deriving newtype instance (MonadBase IO m, MonadBaseControl IO m) => MonadHecs Universe (ServerM m)
+import Network.Handler
+import Network.Monad hiding (getUniverse)
 
-runServerM :: Universe -> ServerM m a -> m a
-runServerM universe (ServerM h) = runHecsM universe h
+import Control.Monad.Base
+import Control.Monad.Trans.Control
 
-getUniverse :: MonadIO m => ServerM m Universe
-getUniverse = ServerM getWorld
+import Server.Monad (Server)
+import Server.Monad qualified as Server
+import Server.Config
 
-getSingleton :: forall c m . (BranchRel c, Component c, Has Universe c, MonadHecs Universe m) => m c
-getSingleton =
-  get @c (coerce $ getComponentId @c)
-    pure
-    (error "Singleton missing")
-{-# INLINE getSingleton #-}
+import System.JoinPlayers
+import System.NetworkCommands
+import System.PlayerMovement
+import Data.String
+import qualified System.IO as IO
 
-system :: Filter ty HasMainId -> (TypedArchetype ty -> Server ()) -> Server ()
-system fi act = defer $ do
-  Hecs.filter fi
-    (\aty _ -> act aty)
-    (pure ())
-{-# INLINE system #-}
+setupServer :: IO () -> Server a
+setupServer readyCallback = do
+  cfg <- Server.getConfig
+
+  -- set up chunkloading
+  comp <- liftBase $ Chunkloading.new (configChunkloadingThreads cfg)
+  Server.set (coerce $ Server.getComponentId @Chunkloading.Chunkloading) comp
+
+  -- setup dimensions
+  overworldEid <- Server.newEntity
+  overworld <- Dimension.new @Dimension.Overworld (fromString $ configRootPath cfg <> "/world/region") overworldEid
+  -- set this world as the overworld default
+  Server.set (coerce $ Server.getComponentId @Dimension.Overworld) overworld
+
+  --nether <- Server.newEntity
+  --Dimension.new @Dimension.Overworld "./server/world/region" nether
+
+  --theEnd <- Server.newEntity
+  --Dimension.new @Dimension.TheEnd "./server/world/region" theEnd
+
+  u <- Server.getUniverse
+
+  liftBaseWith $ \runInBase -> Async.withAsync (do
+    Network.listen (configHostPreference cfg) (configServiceName cfg) $ \(lsock, _) -> do
+      readyCallback
+      -- Copied from Network.Simple. I just needed a callback for when the server can accept connections
+      let x :: String
+          x = "Network.Simple.TCP.serve: Synchronous exception accepting connection: "
+      forever $ SE.handle
+        (\se -> IO.hPutStrLn IO.stderr (x ++ show (se :: SomeException)))
+        . void . Network.acceptFork lsock $ \(sock, _sockAddr) -> do
+          -- We want to catch any exception, even async ones.
+          runNetwork cfg u sock handleConnection `catch` \(e :: SomeException) -> do
+            -- TODO Ignore any crashes for now, log them later 
+            -- putStrLn "Server exception"
+            -- print e
+            pure ()
+    -- Network.serve (configHostPreference cfg) (configServiceName cfg) $ \(sock, _sockddr) -> do
+    --   runNetwork cfg u sock handleConnection `catch` \(e :: SomeException) -> do
+    --     -- TODO Ignore any crashes for now, log them later 
+    --     -- putStrLn "Server exception"
+    --     -- print e
+    --     pure ()
+    ) $ \as -> Async.link as >> runInBase gameLoop
+
+gameLoop :: Server a
+gameLoop = go
+  where
+    go = do
+      start <- liftBase $ fromIntegral . Chronos.getTime <$> Chronos.now
+
+      -- Sync all async changes to the world state
+      Server.sync
+
+      -- Join new clients
+      joinPlayers
+      
+      -- process all the stuff the clients sent
+      networkCommands
+
+      -- player block placing/breaking
+      -- weather
+      -- create entities
+      -- world time
+      -- tile events
+      -- light updates
+      -- create block entities
+      -- weather events
+      -- random events
+
+      -- player movement -- collision?
+      playerMovement
+
+      -- update villages
+      -- block events
+      -- update entities
+      -- update block entities
+
+      end <- liftBase $ fromIntegral . Chronos.getTime <$> Chronos.now
+      let diff = (min 0 $ end - start) `div` 1000
+          tickDelay = 1000000 `div` 20 -- 20 ticks a second in microseconds
+      liftBase . when (diff > tickDelay `div` 5) $ putStrLn $ "Exceeded tick delay " <> show diff
+      liftBase . threadDelay $ tickDelay - diff
+      go

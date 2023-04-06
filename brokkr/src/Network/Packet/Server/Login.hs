@@ -9,6 +9,7 @@ import Data.Coerce
 import Util.Binary
 import Network.Util.Packet
 import Network.Util.MCString
+import Data.Maybe (isJust)
 
 data LoginPacket =
     LoginStart Text (Maybe UUID)
@@ -25,3 +26,7 @@ instance FromBinary LoginPacket where
           True -> Just <$> get
           False -> pure Nothing
         pure $ LoginStart uName uuid
+
+instance ToBinary LoginPacket where
+  put p = packetId p <> case p of
+    LoginStart uName mUid -> put (MCString uName) <> put (isJust mUid) <> maybe mempty (\uid -> put uid) mUid 

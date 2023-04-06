@@ -1,8 +1,11 @@
+{-# LANGUAGE MagicHash #-}
 module Util.Binary (
   FromBinary(..)
 , ToBinary(..)
 , SizePrefixed(..)
 ) where
+
+import Brokkr.NBT
 
 import qualified Data.ByteString.Internal as BS
 
@@ -144,6 +147,24 @@ instance FromBinary UUID where
 instance ToBinary UUID where
   put uid = case toWords64 uid of
     (w1, w2) -> put w1 <> put w2
+  {-# INLINE put #-}
+
+-- TODO When I have errors on binary instances
+instance FromBinary NBT where
+  get = voidError parseNBT
+  {-# INLINE get #-}
+
+-- TODO Add error handling to fromBinary
+voidError :: FP.ParserT st e a -> FP.ParserT st Void a
+voidError (FP.ParserT g) = FP.ParserT $ \fp eob s st ->
+  case g fp eob s st of
+    FP.OK# st' a s' -> FP.OK# st' a s'
+    FP.Fail# st' -> FP.Fail# st'
+    FP.Err# st' _ -> FP.Fail# st'
+{-# INLINE voidError #-} 
+
+instance ToBinary NBT where
+  put = putNBT
   {-# INLINE put #-}
 
 newtype SizePrefixed (pre :: Type) (a :: Type) = SizePrefixed a

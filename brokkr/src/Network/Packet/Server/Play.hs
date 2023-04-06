@@ -141,3 +141,8 @@ instance FromBinary Packet where
     where
       confirmTeleport = ConfirmTeleportation . fromIntegral <$> get @VarInt
   {-# INLINE get #-}
+
+instance ToBinary Packet where
+  put p = packetId p <> case p of
+    SetPlayerPosition pos onG -> put pos <> put onG
+    _ -> error "TODO"

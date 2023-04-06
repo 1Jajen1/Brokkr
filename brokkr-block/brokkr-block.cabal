@@ -15,7 +15,7 @@ extra-doc-files:     README.md
 tested-with:         GHC == 9.4.4
 
 common common-options
-  build-depends:       base ^>= 4.17.0.0
+  build-depends:       base >= 4.17 && < 5
                      , text
                      , aeson
                      , deriving-aeson
@@ -36,6 +36,7 @@ common common-options
                        -Wmissing-export-lists
                        -Wpartial-fields
                        -Wmissing-deriving-strategies
+                       -fexpose-all-unfoldings
                        -O2
   default-extensions:  DerivingVia
                        LambdaCase

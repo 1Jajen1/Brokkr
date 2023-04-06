@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Network.Packet.Client.Play (
   Packet(..)
 , TeleportId(..)
@@ -9,13 +10,16 @@ import Network.Packet.Client.Play.Login
 import Network.Packet.Client.Play.ChunkData
 import Block.Position (BlockPosition)
 import Util.Position
-import Network.Util.FromIntegral
 import Network.Util.VarNum
 import Util.Rotation
 import Data.Word
 import Data.Int
 import Data.Text
 import Network.Util.MCString
+import Data.Coerce
+import Util.TeleportId
+import Util.Dismount
+-- TODO ^^
 
 data Packet =
     SpawnEntity
@@ -125,7 +129,7 @@ data Packet =
   | EntityEffect
   | UpdateRecipes
   | UpdateTags
-  deriving stock Show
+  deriving stock (Eq,Show)
 
 instance ToBinary Packet where
   put a = packetId a <> case a of
@@ -140,14 +144,113 @@ instance ToBinary Packet where
     _ -> error "Unsupported"
   {-# INLINE put #-}
 
-newtype TeleportId = TeleportId Int
-  deriving stock Show
-  deriving ToBinary via FromIntegral Int VarInt
-
-data Dismount = Dismount | NoDismount
-  deriving stock Show
-
-instance ToBinary Dismount where
-  put Dismount = put True
-  put NoDismount = put False
-
+instance FromBinary Packet where
+  get = $$(mkPacketParser [
+      [|| pure SpawnEntity ||]
+    , [|| pure SpawnExperienceOrb ||]
+    , [|| pure SpawnPlayer ||]
+    , [|| pure EntityAnimation ||]
+    , [|| pure AwardStatistics ||]
+    , [|| pure AckBlockChange ||]
+    , [|| pure SetBlockDestroyChange ||]
+    , [|| pure BlockEntityData ||]
+    , [|| pure BlockAction ||]
+    , [|| pure BlockUpdate ||]
+    , [|| pure BossBar ||]
+    , [|| pure ChangeDifficulty ||]
+    , [|| pure ClearTitles ||]
+    , [|| pure CommandSuggestionsResponse ||]
+    , [|| pure Commands ||]
+    , [|| pure CloseContainer ||]
+    , [|| pure SetContainerContent ||]
+    , [|| pure SetContainerProperty ||]
+    , [|| pure SetContainerSlot ||]
+    , [|| pure SetCooldown ||]
+    , [|| pure ChatSuggestions ||]
+    , [|| pure PluginMessage ||]
+    , [|| pure DeleteMessage ||]
+    , [|| Disconnect <$> (coerce <$> get @MCString) ||]
+    , [|| pure DisguisedChatMessage ||]
+    , [|| pure EntityEvent ||]
+    , [|| pure Explosion ||]
+    , [|| UnloadChunk <$> (fromIntegral <$> get @VarInt) <*> (fromIntegral <$> get @VarInt) ||]
+    , [|| pure GameEvent ||]
+    , [|| pure OpenHorseScreen ||]
+    , [|| pure InitializeWorldBorder ||]
+    , [|| KeepAlive <$> get ||]
+    , [|| ChunkDataAndUpdateLight <$> get ||]
+    , [|| pure WorldEvent ||]
+    , [|| pure Particle ||]
+    , [|| pure UpdateLight ||]
+    , [|| Login <$> get ||]
+    , [|| pure MapData ||]
+    , [|| pure MerchantOffers ||]
+    , [|| pure UpdateEntityPosition ||]
+    , [|| pure UpdateEntityPositionAndRotation ||]
+    , [|| pure UpdateEntityRotation ||]
+    , [|| pure MoveVehicle ||]
+    , [|| pure OpenBook ||]
+    , [|| pure OpenScreen ||]
+    , [|| pure OpenSignEditor ||]
+    , [|| pure Ping ||]
+    , [|| pure PlaceGhostRecipe ||]
+    , [|| pure PlayerAbilities ||]
+    , [|| pure PlayerChatMessage ||]
+    , [|| pure EndCombat ||]
+    , [|| pure EnterCombat ||]
+    , [|| pure CombatDeath ||]
+    , [|| pure PlayerInfoRemove ||]
+    , [|| pure PlayerInfoUpdate ||]
+    , [|| pure LookAt ||]
+    , [|| SynchronizePlayerPosition <$> get <*> get <*> (get @Int8 >> get) <*> get ||]
+    , [|| pure UpdateRecipeBook ||]
+    , [|| pure RemoveEntities ||]
+    , [|| pure RemoveEntityEffect ||]
+    , [|| pure ResourcePack ||]
+    , [|| pure Respawn ||]
+    , [|| pure SetHeadRotation ||]
+    , [|| pure UpdateSectionBlocks ||]
+    , [|| pure SelectAdvancementsTab ||]
+    , [|| pure ServerData ||]
+    , [|| pure SetActionBarText ||]
+    , [|| pure SetBorderCenter ||]
+    , [|| pure SetBorderLerpSize ||]
+    , [|| pure SetBorderSize ||]
+    , [|| pure SetBorderWarningDelay ||]
+    , [|| pure SetBorderWarningReach ||]
+    , [|| pure SetCamera ||]
+    , [|| pure SetHeldItem ||]
+    , [|| SetCenterChunk <$> (fromIntegral <$> get @VarInt) <*> (fromIntegral <$> get @VarInt) ||]
+    , [|| pure SetRenderDistance ||]
+    , [|| SetDefaultSpawnPosition <$> get <*> get ||]
+    , [|| pure DisplayObjective ||]
+    , [|| pure SetEntityMetadata ||]
+    , [|| pure LinkEntities ||]
+    , [|| pure SetEntityVelocity ||]
+    , [|| pure SetEquipment ||]
+    , [|| pure SetExperience ||]
+    , [|| pure SetHealth ||]
+    , [|| pure UpdateObjectives ||]
+    , [|| pure SetPassengers ||]
+    , [|| pure UpdateTeams ||]
+    , [|| pure UpdateScore ||]
+    , [|| pure SetSimulationDistance ||]
+    , [|| pure SetSubtitleText ||]
+    , [|| pure UpdateTime ||]
+    , [|| pure SetTitleText ||]
+    , [|| pure SetTitleAnimationTimes ||]
+    , [|| pure EntitySoundEffect ||]
+    , [|| pure SoundEffect ||]
+    , [|| pure StopSound ||]
+    , [|| pure SystemChatMessage ||]
+    , [|| pure SetTabListHeaderAndFooter ||]
+    , [|| pure TagQueryResponse ||]
+    , [|| pure PickupItem ||]
+    , [|| pure TeleportEntity ||]
+    , [|| pure UpdateAdvancements ||]
+    , [|| pure UpdateAttributes ||]
+    , [|| pure FeatureFlags ||]
+    , [|| pure EntityEffect ||]
+    , [|| pure UpdateRecipes ||]
+    , [|| pure UpdateTags ||]
+    ])

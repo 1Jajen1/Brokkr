@@ -1,7 +1,7 @@
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveAnyClass #-}
-{-# OPTIONS_GHC -O2 -dsuppress-all -ddump-simpl -ddump-asm #-}
+-- {-# OPTIONS_GHC -O2 -dsuppress-all -ddump-simpl -ddump-asm #-}
 module Main (search, searchNoPref, searchBST, main) where
 
 import Test.Tasty.Bench

@@ -16,6 +16,7 @@ import qualified Data.Vector.Unboxed as V
 import Data.Bits hiding (complement)
 import qualified Data.Bits
 import Util.Binary hiding (get)
+import Util.Binary qualified as Binary
 import Network.Util.VarNum
 import Control.DeepSeq
 
@@ -34,6 +35,11 @@ instance ToBinary BitSet where
     | otherwise = 
        put (VarInt . fromIntegral $ V.length v)
     <> V.foldMap (\x -> put x) v -- TODO Copy directly from memory rather than iterating like this
+
+instance FromBinary BitSet where
+  get = Binary.get >>= \case
+    VarInt 0 -> pure (BitSet V.empty)
+    VarInt sz -> BitSet <$> V.replicateM (fromIntegral sz) Binary.get
 
 emptyBitSet :: Int -> BitSet
 emptyBitSet len | len < 0 = error "BitSet:emptyBitSet invalid length"

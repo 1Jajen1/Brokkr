@@ -46,7 +46,7 @@ TODO: Strip minecraft: prefix?
 -}
 genPaletteMapping :: Q [Dec]
 genPaletteMapping = do
-  entries <- runIO $ readBlocks
+  entries <- runIO readBlocks
   
   let namesAndPropsToId = sortOn fst $ do
         (nameSpacedName, BE.BlockEntry{..}) <- sortOn (\(_, BE.BlockEntry{blockStates}) -> BE.stateId $ head blockStates) $ M.toList entries
@@ -118,9 +118,45 @@ pattern XXXX x1 ... xN <- isStateXXXX -> Just (x1, ..., xN) where
 
 isStateXXXX (BlockState i) = if inRange i lowestId highestId then Just (getArg i 1, ..., getArg i n) else Nothing
 getArg i nr = (i `mod` cardinalities) `div` prevCardinalities
-toBlockState x1 ... xN = foldl' (\acc x -> acc + toId x * cardinalities) 0 properties
+toBlockState x1 ... xN = foldl' (\acc x -> acc + toId x * cardinalities) lowestId properties
 
 -- cardinalities and prevCardinalities is precomputed at compile time and is the product of the cardinalities of each property that follows this one
+
+TODO Extract getArg and toArg and make a rule for ghc to fuse. Such that
+
+case x of RedstoneWire east north _ south west -> RedstoneWire east north (Power 1) south west
+
+doesn't actually calcuate anything and only replaces the power value
+
+How would this actually work?
+
+\n -> let n' = n - lowestId in (toArg1 n', toArg2 n', toArg3 n')
+
+Say I want to replace arg 2 I do
+
+\(a1, _, a3) -> (lowestId + fromArg1 a1 + fromArg2 new + fromArg3 a3)
+
+So in combination we have:
+\n -> let n' = n - lowestId in (\(a1, _, a3) -> (lowestId + fromArg1 a1 + fromArg2 new + fromArg3 a3)) (toArg1 n, toArg2 n, toArg3 n)
+=> Case of known constr
+\n -> let n' = n - lowestId in (lowestId + fromArg1 (toArg1 n') + fromArg2 new + fromArg3 (toArg3 n'))
+=> inline the let
+\n -> (lowestId + fromArg1 (toArg1 $ n - lowestId) + fromArg2 new + fromArg3 (toArg3 $ n - lowestId))
+=>
+
+
+toArgX n = (n mod cX) div pcX
+fromArgX n = n * cX
+
+fromArgX (toArgX n)
+=>
+fromArgX . floor ((n mod cX) div pcX)
+=>
+floor((n mod cX) div pcX) * cX
+=>
+floor((n - xX * floor(n div cX)) div pcX) * cX
+=>
+
 
 -}
 generateBlockStatePatterns :: Q [Dec]
@@ -135,29 +171,31 @@ generateBlockStatePatterns = do
     let props = sortOn fst $ maybe [] M.toList blockProperties
         propsDown = reverse props
         lowId :: Int = coerce $ foldMap (\BE.BlockState{..} -> Min stateId) blockStates
-        highId :: Int = 1 + (coerce $ foldMap (\BE.BlockState{..} -> Max stateId) blockStates)
+        highId :: Int = 1 + coerce (foldMap (\BE.BlockState{..} -> Max stateId) blockStates)
         patType = foldl' (\ty x -> AppT (AppT ArrowT $ conFromProps name x) ty) (ConT $ mkName "BlockState") props
-        args = zipWith (\x _ -> mkName $ "x" <> show x) [1..] props
+        args = zipWith (\(x :: Int) _ -> mkName $ "x" <> show x) [1..] props
         lN = mkName "l"
-        toArgs = [| \n -> if inRange (coerce n) lowId highId then let ($(varP lN) :: Int) = coerce n - lowId in Just $(mkTup) else Nothing |]
-        fromArgs = foldl' (\x (nr, arg) -> [| $(x) + (toId $(varE arg)) * $(getCard $ drop nr propsDown) |]) [| 0 |] $ zip [1..] args
-        viewPat = if | length props == 1 -> varP $ mkName "x1"
-                     | otherwise -> tupP $ fmap varP args
+        toArgs = [| \n -> if inRange (coerce n) lowId highId then let ($(varP lN) :: Int) = coerce n - lowId in Just $(mkTup $ varE lN) else Nothing |]
+        fromArgs = foldl' (\x (nr, arg) -> [| $(x) + toId $(varE arg) * $(getCard $ drop nr propsDown) |]) [| lowId |] $ zip [1..] args
+        viewPat = if length props == 1
+          then varP $ mkName "x1"
+          else tupP $ fmap varP args
         constrPat = varP <$> args
-        getCard ps = foldl' (\x y -> [| $(x) * $(getCard1 y) |]) [| 1 |] ps
+        getCard = foldl' (\x y -> [| $(x) * $(getCard1 y) |]) [| 1 |]
         getCard1 prop = appTypeE [| cardinality |] . pure $ conFromProps name prop
-        mkTup = if | length props == 1 -> [| fromId $(varE lN) |]
-                   | null props        -> [| () |]
-                   | otherwise         -> tupE $ do
-                      (nr, _) <- zip [1..] args
-                      pure [| fromId $ ($(varE lN) `mod` $(getCard $ drop (nr - 1) propsDown)) `div` $(getCard $ drop nr propsDown) |]  
+        mkTup scrut = if | length props == 1 -> [| fromId $(scrut) |]
+                         | null props        -> [| () |]
+                         | otherwise         -> tupE $ do     
+                            (nr, _) <- zip [1..] args
+                            pure [| fromId $ ($(scrut) `mod` $(getCard $ drop (nr - 1) propsDown)) `div` $(getCard $ drop nr propsDown) |]  
 
     [   patSynSigD pName (pure patType)
       , patSynD pName
           (prefixPatSyn args)
           (explBidir [ clause constrPat (normalB [| BlockState $ $(fromArgs) |]) [] ])
           (parensP $ viewP toArgs $ conP (mkName "Just") [viewPat])
-      -- TODO Add pragmas to inline these patterns?
+      -- https://gitlab.haskell.org/ghc/ghc/-/issues/23203
+      -- , pure $ PragmaD $ InlineP pName Inline FunLike AllPhases
       ]
 
 conFromProps :: Text -> (Text, [Text]) -> TH.Type
@@ -312,79 +350,79 @@ attachable ty =
   ty == "Vine" || ty == "IronBars" || ty == "Tripwire" || ty == "SculkVein"
 
 isSlab :: Text -> Bool
-isSlab ty = T.isSuffixOf "Slab" ty
+isSlab = T.isSuffixOf "Slab"
 
 isBanner :: Text -> Bool
-isBanner ty = T.isSuffixOf "Banner" ty
+isBanner = T.isSuffixOf "Banner"
 
 isButton :: Text -> Bool
-isButton ty = T.isSuffixOf "Button" ty
+isButton = T.isSuffixOf "Button"
 
 isWall :: Text -> Bool
-isWall ty = T.isSuffixOf "Wall" ty
+isWall = T.isSuffixOf "Wall"
 
 isWallSkull :: Text -> Bool
 isWallSkull ty = T.isSuffixOf "WallSkull" ty || T.isSuffixOf "WallHead" ty
 
 isStair :: Text -> Bool
-isStair ty = T.isSuffixOf "Stairs" ty
+isStair = T.isSuffixOf "Stairs"
 
 isBed :: Text -> Bool
-isBed ty = T.isSuffixOf "Bed" ty
+isBed = T.isSuffixOf "Bed"
 
 isShulkerBox :: Text -> Bool
-isShulkerBox ty = T.isSuffixOf "ShulkerBox" ty
+isShulkerBox = T.isSuffixOf "ShulkerBox"
 
 isChest :: Text -> Bool
-isChest ty = T.isSuffixOf "Chest" ty
+isChest = T.isSuffixOf "Chest"
 
 isTrapdoor :: Text -> Bool
-isTrapdoor ty = T.isSuffixOf "Trapdoor" ty
+isTrapdoor = T.isSuffixOf "Trapdoor"
 
 isCommandBlock :: Text -> Bool
-isCommandBlock ty = T.isSuffixOf "CommandBlock" ty
+isCommandBlock = T.isSuffixOf "CommandBlock"
 
 isMushroomBlock :: Text -> Bool
 isMushroomBlock ty = T.isSuffixOf "MushroomBlock" ty || T.isSuffixOf "MushroomStem" ty
 
 isGlazedTerracotta :: Text -> Bool
-isGlazedTerracotta ty = T.isSuffixOf "GlazedTerracotta" ty
+isGlazedTerracotta = T.isSuffixOf "GlazedTerracotta"
 
 isVines :: Text -> Bool
-isVines ty = T.isSuffixOf "Vines" ty
+isVines = T.isSuffixOf "Vines"
 
 isDoor :: Text -> Bool
-isDoor ty = T.isSuffixOf "Door" ty
+isDoor = T.isSuffixOf "Door"
 
 isWallSign :: Text -> Bool
-isWallSign ty = T.isSuffixOf "WallSign" ty
+isWallSign = T.isSuffixOf "WallSign"
 
 isWallFan :: Text -> Bool
-isWallFan ty = T.isSuffixOf "WallFan" ty
+isWallFan = T.isSuffixOf "WallFan"
 
 isFenceGate :: Text -> Bool
-isFenceGate ty = T.isSuffixOf "FenceGate" ty
+isFenceGate = T.isSuffixOf "FenceGate"
 
 isAmethystBud :: Text -> Bool
-isAmethystBud ty = T.isSuffixOf "AmethystBud" ty
+isAmethystBud = T.isSuffixOf "AmethystBud"
 
 isPiston :: Text -> Bool
 isPiston ty = T.isSuffixOf "Piston" ty || ty == "PistonHead"
 
 isAnvil :: Text -> Bool
-isAnvil ty = T.isSuffixOf "Anvil" ty
+isAnvil = T.isSuffixOf "Anvil"
 
 isWallTorch :: Text -> Bool
-isWallTorch ty = T.isSuffixOf "WallTorch" ty
+isWallTorch = T.isSuffixOf "WallTorch"
 
 isDripleaf :: Text -> Bool
-isDripleaf ty = T.isSuffixOf "Dripleaf" ty
+isDripleaf = T.isSuffixOf "Dripleaf"
 
 isCampfire :: Text -> Bool
-isCampfire ty = T.isSuffixOf "Campfire" ty
+isCampfire = T.isSuffixOf "Campfire"
 
 isHangingSign :: Text -> Bool
-isHangingSign ty = T.isSuffixOf "HangingSign" ty
+isHangingSign = T.isSuffixOf "HangingSign"
 
 -- Reading blocks
 type BlockEntries = M.Map Text BE.BlockEntry

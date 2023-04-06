@@ -49,13 +49,14 @@ test-suite packed-vector-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   other-modules:       Generators
+                       ReadWriteSpec
   build-tool-depends:  sydtest-discover:sydtest-discover
   build-depends:       brokkr-packed-vector
-                     , sydtest >= 0.12 && < 0.14
-                     , validity >= 0.12 && < 0.13
-                     , genvalidity >= 1.0 && < 1.2
-                     , genvalidity-sydtest >= 1.0 && < 1.1
-                     , QuickCheck >= 2.13 && < 2.15
+                     , sydtest
+                     , validity
+                     , genvalidity
+                     , genvalidity-sydtest
+                     , QuickCheck
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N
