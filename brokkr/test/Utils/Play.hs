@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE PatternSynonyms #-}
 module Utils.Play (
   teleportToFreeRegion
 , joinGame
@@ -16,28 +17,44 @@ import qualified Network.Packet.Client.Play as Client
 import Util.Position
 import Utils.Login
 import Utils.Setup
-import Control.Monad.Fix
+import Data.List (sort)
+import Chunk.Position (pattern ChunkPos)
 
 -- Utilities
-joinGame :: Int -> TestClient -> IO ()
-joinGame maxTime client = do
+joinGame :: Int -> Int -> TestClient -> IO ()
+joinGame maxTime maxTime_large client = do
   login maxTime client
   -- first is the Login packet
-  readPacket_ "Login (Play)" maxTime client $ \case
+  readPacket_ "Login (Play)" maxTime_large client $ \case
     Client.Login _ -> pure ()
     p -> throwIO $ UnexpectedSetupPacket p
-  -- next consume all the setup packets that were sent
-  fix $ \go -> do
-    -- todo catch the timeout and abort the loop
-    readPacketOrTimeout_ "Setup" maxTime client $ \case
-      Nothing -> pure ()
-      Just p ->
-        if isSetupPacket p then go
-        else throwIO $ UnexpectedSetupPacket p
-    go
+  let go :: Int -> Int -> Int -> Int -> IO ()
+      go 0 0 0 0 = pure ()
+      go needMoreChunks needCenterChunk needDefaultSpawn needInitialPosition = do
+        -- If we already have all chunks there is no need to wait for a long time as
+        -- all other packets are really small and should come fast
+        let maxTime' = if needMoreChunks > 0 then maxTime_large else maxTime
+        readPacket_ "Login (play)" maxTime' client $ \case
+          Client.SynchronizePlayerPosition{} ->
+            go needMoreChunks needCenterChunk needDefaultSpawn (needInitialPosition - 1)
+          Client.SetDefaultSpawnPosition{} ->
+            go needMoreChunks needCenterChunk (needDefaultSpawn - 1) needInitialPosition
+          Client.SetCenterChunk{} ->
+            go needMoreChunks (needCenterChunk - 1) needDefaultSpawn needInitialPosition
+          Client.ChunkDataAndUpdateLight{} ->
+            go (needMoreChunks - 1) needCenterChunk needDefaultSpawn needInitialPosition
+          p -> throwIO $ UnexpectedSetupPacket p -- TODO Ignore packets we don't care about
+
+  let -- TODO ViewDistance and spawn from config
+      viewDistance = 2
+      expectedChunks = sort $ [ChunkPos x z | x <- [-viewDistance..viewDistance], z <- [-viewDistance..viewDistance]] 
+
+  go (length expectedChunks) 1 1 1
   -- now we are ready for tests
 
-newtype FailedJoinGame = UnexpectedSetupPacket Client.Packet
+data FailedJoinGame =
+    UnexpectedSetupPacket Client.Packet
+  | MissingSetup
   deriving stock Show
   deriving anyclass Exception
 

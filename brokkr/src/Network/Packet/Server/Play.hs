@@ -144,5 +144,8 @@ instance FromBinary Packet where
 
 instance ToBinary Packet where
   put p = packetId p <> case p of
+    SetPlayerOnGround onG -> put onG
     SetPlayerPosition pos onG -> put pos <> put onG
+    SetPlayerRotation rot onG -> put rot <> put onG
+    SetPlayerPositionAndRotation pos rot onG -> put pos <> put rot <> put onG
     _ -> error "TODO"

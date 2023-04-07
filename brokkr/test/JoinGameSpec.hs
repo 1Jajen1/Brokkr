@@ -17,7 +17,8 @@ import Util.Rotation
 
 spec :: BrokkrSpec
 spec = do
-  withTestClient "JoinGame1" $ do
+  -- TODO sequential doesn't seem to work?
+  sequential $ withTestClient "JoinGame1" $ do
     it "should receive all the required setup packets" $ \client -> do
       -- These values are guesswork and make the test flaky...
       -- The chunk values work for cold loads and should get much much
@@ -25,13 +26,16 @@ spec = do
       let maxTime = 1_000
           -- max time for some of the larger packets
           maxTime_large = 10_000
-      
+
       login maxTime client
-      
+
       readPacket_ "Login (play)" maxTime_large client $ \case
           Client.Login _ -> pure ()
           p -> unexpectedPacket "Login (Play)" p
 
+      -- read packets until the server stops sending
+      -- Accepts all packets that are categorized as setup
+      -- This *only* works with sequential for the test
       let go needMoreChunks buf = do
             -- If we already have all chunks there is no need to wait for a long time as
             -- all other packets are really small and should come fast
@@ -44,8 +48,9 @@ spec = do
       let -- TODO ViewDistance and spawn from config
           viewDistance = 2
           expectedChunks = sort $ [ChunkPos x z | x <- [-viewDistance..viewDistance], z <- [-viewDistance..viewDistance]] 
+
       res <- go (length expectedChunks) []
-      
+
       -- check that all chunks arrived
       let receivedChunks = sort $ mapMaybe (\case
             Client.ChunkDataAndUpdateLight (Client.ChunkData _ pos _ _ _ _ _ _) -> Just pos
@@ -53,6 +58,7 @@ spec = do
             ) res
       receivedChunks `shouldBe` expectedChunks
 
+      -- check that the default spawn has been set
       let receivedDefaultSpawn = filter (\case
             Client.SetDefaultSpawnPosition{} -> True
             _ -> False
@@ -61,6 +67,7 @@ spec = do
           expectedDefaultSpawn = [Client.SetDefaultSpawnPosition (BlockPos 0 130 0) 0]
       receivedDefaultSpawn `shouldBe` expectedDefaultSpawn
 
+      -- check that the center check has been set
       let receivedCenterChunk = filter (\case
             Client.SetCenterChunk{} -> True
             _ -> False
@@ -69,6 +76,7 @@ spec = do
           expectedCenterChunk = [Client.SetCenterChunk 0 0]
       receivedCenterChunk `shouldBe` expectedCenterChunk
 
+      -- check that we have received an initial position
       let receivedInitialPosition = filter (\case
             Client.SynchronizePlayerPosition{} -> True
             _ -> False

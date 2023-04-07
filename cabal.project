@@ -43,5 +43,6 @@ allow-newer: hecs:base
 allow-newer: hecs-core:base
 
 tests: true
+test-show-details:   direct
 benchmarks: true
 -- profiling: True

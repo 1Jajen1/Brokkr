@@ -3,6 +3,7 @@ module Util.Queue (
 , new
 , push, pushN
 , flush
+, isEmpty
 ) where
 import Control.Concurrent
 import Data.Vector.Mutable (MVector)
@@ -47,6 +48,11 @@ flush (Queue lock indexRef arrRef) = withMVar lock $ \_ -> do
   MV.clear arr
   writePrimVar indexRef 0
   pure ret
+
+isEmpty :: Queue a -> IO Bool
+isEmpty (Queue lock indexRef _) = withMVar lock $ \_ -> do
+  i <- readPrimVar indexRef
+  pure $ i == 0
 
 growIfNeeded :: Int -> IORef (MVector RealWorld a) -> IO (MVector RealWorld a)
 growIfNeeded i ref = do

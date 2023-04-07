@@ -22,7 +22,9 @@ import Server
 import Server.Config
 
 -- TODO Sort
-import Control.Exception.Safe
+import Control.Exception (Exception, SomeException(..), throwIO)
+import Control.Exception.Base qualified as BE 
+import Control.Exception.Safe qualified as SE
 import Control.Monad.Fix
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.State.Strict
@@ -111,11 +113,12 @@ data TestClient = TestClient {
 , clientProtocolVersion :: !Int
 , clientAddress :: !Text
 , clientPort :: !Word16
+-- clientEntityId :: EntityId -- TODO Get from join game packet in joinGame, allows us to query the server
 }
 
 newTestClient :: Text -> TestServer -> IO TestClient
 newTestClient clientName clientTestServer@TestServer{serverHost, serverPort} = do
-  let maxClientReadyTime = 10_000
+  let maxClientReadyTime = 20_000
   clientReadyRef <- newEmptyMVar
 
   let clientProtocolVersion = 1
@@ -132,17 +135,20 @@ newTestClient clientName clientTestServer@TestServer{serverHost, serverPort} = d
         stateRef <- newIORef $ ClientNetworkState mempty (Protocol NoCompression NoEncryption)
         -- The client is in a loop taking requests for either reading or writing
         void . fix $ \go -> do
-          takeMVar clientReqRef >>= \case
-            ReadReq onErr f -> handle onErr $ do
-              ClientNetworkState bs prot <- readIORef stateRef
-              (a, bs') <- flip runStateT bs . flip runReaderT sock $ readPacket' prot
-              prot' <- f prot a
-              writeIORef stateRef $ ClientNetworkState bs' prot'
-            WriteReq szEstimate a onErr onWrite -> handle onErr $ do
-              ClientNetworkState _ prot <- readIORef stateRef
-              let bs = toStrictSizePrefixedByteString prot szEstimate $ Binary.put a
-              Network.send sock bs
-              onWrite
+          -- Catch timeouts so that we can cancel io but still continue working with the client
+          -- Specifically only catch timeouts, cancellations from async or other errors should still crash us
+          SE.handleAsync (\(e :: TimeoutException) -> print ()) $ do
+            takeMVar clientReqRef >>= \case
+              ReadReq onErr f -> SE.handle onErr $ do
+                ClientNetworkState bs prot <- readIORef stateRef
+                (a, bs') <- flip runStateT bs . flip runReaderT sock $ readPacket' prot
+                prot' <- f prot a
+                writeIORef stateRef $ ClientNetworkState bs' prot'
+              WriteReq szEstimate a onErr onWrite -> SE.handle onErr $ do
+                ClientNetworkState _ prot <- readIORef stateRef
+                let bs = toStrictSizePrefixedByteString prot szEstimate $ Binary.put a
+                Network.send sock bs
+                onWrite
           go
   timeout maxClientReadyTime (takeMVar clientReadyRef) >>= \case
     Nothing -> throwIO ClientNotReadyInTime
@@ -164,14 +170,18 @@ data ClientReq where
   WriteReq :: ToBinary a => Int -> a -> (SomeException -> IO ()) -> IO () -> ClientReq
 
 readPacket :: (Show a, FromBinary a) => Int -> TestClient -> (Protocol -> a -> Protocol) -> IO (Either SomeException a)
-readPacket maxTime TestClient{clientReqRef} changeProtocol = do
+readPacket maxTime TestClient{clientReqRef, clientThread} changeProtocol = do
   resVar <- newEmptyMVar
   putMVar clientReqRef $ ReadReq (putMVar resVar . Left) $ \prot a -> do
     let newProt = changeProtocol prot a
     putMVar resVar $ Right a
     pure newProt
   timeout maxTime (takeMVar resVar) >>= \case
-    Nothing -> pure $ Left (SomeException TimeoutException)
+    Nothing -> do
+      -- We want to cancel the io op, but not the whole req-loop, so throw a timeout exception
+      -- which we will catch and ignore
+      BE.throwTo (asyncThreadId clientThread) TimeoutException
+      pure $ Left (SomeException TimeoutException)
     Just x  -> pure x
 
 data TimeoutException = TimeoutException
@@ -179,9 +189,13 @@ data TimeoutException = TimeoutException
   deriving anyclass Exception
 
 sendPacket :: ToBinary a => Int -> TestClient -> Int -> a -> IO (Maybe SomeException)
-sendPacket maxTime TestClient{clientReqRef} sz a = do
+sendPacket maxTime TestClient{clientReqRef,clientThread} sz a = do
   resVar <- newEmptyMVar
   putMVar clientReqRef $ WriteReq sz a (putMVar resVar . Just) (putMVar resVar Nothing)
   timeout maxTime (takeMVar resVar) >>= \case
-    Nothing -> pure $ Just (SomeException TimeoutException)
+    Nothing -> do
+      -- We want to cancel the io op, but not the whole req-loop, so throw a timeout exception
+      -- which we will catch and ignore
+      BE.throwTo (asyncThreadId clientThread) TimeoutException
+      pure $ Just (SomeException TimeoutException)
     Just x -> pure x

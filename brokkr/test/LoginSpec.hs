@@ -18,28 +18,27 @@ import Network.Packet.Client.Play  qualified as Client
 
 spec :: BrokkrSpec
 spec = do
-  describe "valid login sequence" $ do
-    withTestClient "Login1" $ do
-      it "should reach the play packet" $ \(client :: TestClient) -> do
-        -- Login (Play) and the chunks that follow are a lot of data
-        -- and frequently take > 1ms to arrive
-        -- I may need to tweak this is the pressure on the server grows
-        let maxTime = 10_000
-        handshake maxTime Server.Login client
-  
-        sendPacket_ "LoginStart" maxTime client 10 $ Server.LoginStart (clientName client) Nothing
+  withTestClient "Login1" $ do
+    it "should reach the play packet" $ \(client :: TestClient) -> do
+      -- Login (Play) and the chunks that follow are a lot of data
+      -- and frequently take > 1ms to arrive
+      -- I may need to tweak this is the pressure on the server grows
+      let maxTime = 10_000
+      handshake maxTime Server.Login client
 
-        expectSetCompression maxTime client
-  
-        readPacket_ "LoginSuccess" maxTime client $ \case
-          Client.LoginSuccess _uid uName -> do
-            uName `shouldBe` clientName client
-          p -> unexpectedPacket "LoginSuccess" p
+      sendPacket_ "LoginStart" maxTime client 10 $ Server.LoginStart (clientName client) Nothing
 
-        readPacket_ "Login (Play)" maxTime client $ \case
-          Client.Login _ -> do
-            pure ()
-          p -> unexpectedPacket "Login (Play)" p
+      expectSetCompression maxTime client
+
+      readPacket_ "LoginSuccess" maxTime client $ \case
+        Client.LoginSuccess _uid uName -> do
+          uName `shouldBe` clientName client
+        p -> unexpectedPacket "LoginSuccess" p
+
+      readPacket_ "Login (Play)" maxTime client $ \case
+        Client.Login _ -> do
+          pure ()
+        p -> unexpectedPacket "Login (Play)" p
   
   -- The test server is linked to the thread that created it, so
   -- a server crash will bring down the testsuite (as it should)

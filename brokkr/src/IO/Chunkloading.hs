@@ -8,12 +8,10 @@ module IO.Chunkloading (
 import Chunk.Position
 
 import Control.DeepSeq
-import Control.Exception (Exception, SomeException, throwIO, catch, bracket, evaluate, finally)
+import Control.Exception
 
 import qualified Control.Concurrent.Async as Async
 import Control.Concurrent.MVar
-
-import Control.Monad
 
 import Data.Bits
 import Data.Int
@@ -26,7 +24,7 @@ import qualified Codec.Compression.GZip as GZip
 
 import qualified FlatParse.Basic as FP
 
-import GHC.Conc (myThreadId, labelThread, unsafeIOToSTM)
+import GHC.Conc (myThreadId, labelThread)
 
 import qualified IO.RegionFile as RegionFile
 
@@ -39,50 +37,56 @@ import IO.ChunkParser ()
 
 import Hecs
 import Control.Concurrent.STM
-import Control.Concurrent.Async (async)
+import Control.Monad.Fix
+import Control.Concurrent.Chan (Chan)
+import Control.Concurrent.Chan qualified as Chan
 
 data Chunkloading = Chunkloading
   ![Async.Async ()] -- Worker threads
-  !(MVar ()) -- Workers sleep on this variable
-  !(MVar (IntMap (String, Queue Chunkload))) -- TODO Use normal growable array if I have the whole thing enclosed in an MVar anyway
+  !(Chan WorkRequest)
+  !(MVar (IntMap WorkRequest)) -- TODO Use normal growable array if I have the whole thing enclosed in an MVar anyway
   deriving Component via (ViaBox Chunkloading)
 
+data WorkRequest = WorkRequest !Int !String !(Queue Chunkload)
+
 instance NFData Chunkloading where
-  rnf (Chunkloading _ _ _) = ()
+  rnf Chunkloading{} = ()
 
 data Chunkload = Chunkload !ChunkPosition !(MVar Chunk)
 
 loadChunk :: String -> ChunkPosition -> Chunkloading -> IO (MVar Chunk)
-loadChunk rPath pos@(ChunkPos x z) (Chunkloading _ sleep ref) = modifyMVar ref $ \im -> do
+loadChunk rPath pos@(ChunkPos x z) (Chunkloading _ workQ ref) = modifyMVar ref $ \im -> do
   ret <- newEmptyMVar
-  newM <- case IM.lookup rId im of
-    Just (_, q) -> Queue.push q (Chunkload pos ret) >> pure im
+  !newM <- case IM.lookup rId im of
+    Just (WorkRequest _ _ q) -> Queue.push q (Chunkload pos ret) >> pure im
     Nothing -> do
       q <- Queue.new 32
       Queue.push q (Chunkload pos ret)
-      pure $ IM.insert rId (rPath, q) im
-
-  void $ tryPutMVar sleep () -- wake up any sleeping worker
+      let req = WorkRequest rId rPath q
+      Chan.writeChan workQ req
+      pure $ IM.insert rId req im
   pure (newM, ret)
   where
     (rX, rZ) = (x `unsafeShiftR` 5, z `unsafeShiftR` 5)
     rId = ((rX .&. 0xFFFFFFFF) `unsafeShiftL` 32) .|. (rZ .&. 0xFFFFFFFF)
 
+-- TODO Better impl
 loadChunks :: String -> [ChunkPosition] -> Chunkloading -> (MVar Chunk -> IO ()) -> IO ()
 loadChunks _ [] _ _ = pure ()
-loadChunks rPath cs (Chunkloading _ sleep ref) f = do
+loadChunks rPath cs (Chunkloading _ workQ ref) f = do
   modifyMVar_ ref $ \im -> foldr singleChunk (pure im) cs
-  void $ tryPutMVar sleep () -- wake up any sleeping worker
   where
     singleChunk pos@(ChunkPos x z) imM = imM >>= \im -> do
       ret <- newEmptyMVar
       f ret
       case IM.lookup rId im of
-        Just (_, q) -> Queue.push q (Chunkload pos ret) >> pure im
+        Just (WorkRequest _ _ q) -> Queue.push q (Chunkload pos ret) >> pure im
         Nothing -> do
           q <- Queue.new 32
           Queue.push q (Chunkload pos ret)
-          pure $ IM.insert rId (rPath, q) im
+          let req = WorkRequest rId rPath q
+          Chan.writeChan workQ req
+          pure $ IM.insert rId req im
       where
         (rX, rZ) = (x `unsafeShiftR` 5, z `unsafeShiftR` 5)
         rId = ((rX .&. 0xFFFFFFFF) `unsafeShiftL` 32) .|. (rZ .&. 0xFFFFFFFF)
@@ -90,36 +94,46 @@ loadChunks rPath cs (Chunkloading _ sleep ref) f = do
 
 new :: Int -> IO Chunkloading
 new workers = do
-  sleep <- newEmptyMVar
   ref <- newMVar mempty
-  liveRef <- newTVarIO mempty
-  as <- spawnWorkers sleep ref liveRef workers []
-  pure $ Chunkloading as sleep ref
+  workQ <- Chan.newChan
+  as <- spawnWorkers workQ ref workers []
+  pure $ Chunkloading as workQ ref
   where
-    spawnWorkers _ _ _ 0 xs = pure xs
-    spawnWorkers sleep ref liveRef n xs = do
-      a <- Async.async $ chunkWorker sleep ref liveRef n
+    spawnWorkers _ _ 0 xs = pure xs
+    spawnWorkers workQ ref n xs = do
+      a <- Async.async $ chunkWorker workQ ref n
       -- Just crash the server, broken chunkloading
       -- does more harm than good if left running
       Async.link a
-      spawnWorkers sleep ref liveRef (n - 1) (a:xs)
-    chunkWorker sleep ref liveRef n = do
+      spawnWorkers workQ ref (n - 1) (a:xs)
+    chunkWorker ref liveRef n = do
       myThreadId >>= flip labelThread ("Chunk worker " <> show n)
-
-      let go = do
-            -- TODO Do I need to bracket takeMVar ref?
-            -- All paths to putMVar should be pure and exception
-            -- free right?
-            im <- takeMVar ref
-            case IM.lookupMin im of
-              Nothing -> putMVar ref im >> takeMVar sleep >> go
-              Just (rId,(rPath, q)) -> do
-                -- get all load requests and put the map back so other workers can continue
-                ls <- Queue.flush q
-                putMVar ref $ IM.delete rId im
-                withRegionFile liveRef rPath rId $ \rf -> catch (do
-                    -- load chunks
-                    V.forM_ ls $ \(Chunkload pos ret) -> RegionFile.readChunkData pos rf
+      fix $ \goWorker -> Chan.readChan ref >>= \(WorkRequest rId rPath q) -> do
+        let (rX, rZ) = (fromIntegral . fromIntegral @_ @Int32 $ (rId `unsafeShiftR` 32) .&. 0xFFFFFFFF, fromIntegral . fromIntegral @_ @Int32 $ rId .&. 0xFFFFFFFF)
+        -- We only need to close on error, the normal path out of the loop already handles closing (and it has to)
+        -- Should something throw after closing, we close twice, but that should be safe
+        bracketOnError (RegionFile.openRegionFile rPath rX rZ) RegionFile.closeRegionFile $ \rf ->
+          handle
+              (\(e :: SomeException) -> throwIO e)
+            . fix $ \goQueue -> Queue.flush q >>= \ls -> do
+              if V.null ls
+                then mask $ \restore ->
+                  takeMVar liveRef >>= \case
+                    -- We hold the lock, now check one last time that the queue is indeed empty
+                    -- TODO What does it mean if Queue.isEmpty throws? It probably can't?
+                    lr -> (restore (Queue.isEmpty q) `onException` putMVar liveRef lr) >>= \case
+                      -- Someone put something into our queue right after we thought we were done
+                      False -> putMVar liveRef lr >> restore goQueue
+                      -- We are indeed done, put the intmap back without this region file and queue and
+                      -- close the regionfile 
+                      True -> do
+                        -- First close the regionfile, then put back the intmap, so that nobody else will try to open
+                        -- the file before it was closed
+                        -- We technically don't care if closeRegionFile throws because that will crash the server, but
+                        -- should that ever change, we always need to put the intmap back!
+                        RegionFile.closeRegionFile rf `finally` (putMVar liveRef $! IM.delete rId lr)
+                else do
+                  V.forM_ ls $ \(Chunkload pos ret) -> flip (RegionFile.readChunkData pos rf) (throwIO (MissingChunk pos))
                       {- Note: Why do we run decompression and parsing in a separate thread?
                         Decompression is slow. It takes longer than actually parsing the chunk and both together
                           take much much longer than reading from the filesystem.
@@ -129,7 +143,7 @@ new workers = do
                             the file read is done. This is exactly what we have here, except we only take the lock once for the requests
                           - Ideally we'd submit requests to the file and don't block until we get the response
                       -}
-                      (\compType compressedBs -> do
+                      $ \compType compressedBs -> do
                         as <- Async.async $ do
                           -- TODO I don't actually like this too much. Maybe this should be done in the region file part
                           bs <- case compType of
@@ -147,65 +161,13 @@ new workers = do
                             FP.OK !c _ -> putMVar ret c
                             !_ -> throwIO (ChunkParseFail pos Nothing)
                         Async.link as
-                      )
-                      (throwIO (MissingChunk pos))
-                    )  (\(e :: SomeException) -> do
-                      -- print e
-                      throwIO e)
-                go
-      go
+                  -- Try to read more requests from the queue
+                  goQueue
+        goWorker
 
 -- TODO Close regionfiles again when no longer needed
 newtype LiveRegionFiles = LiveRegionFiles (IntMap (MVar RegionFile.RegionFile, TVar Int))
   deriving newtype (Semigroup, Monoid)
-
-withRegionFile :: TVar LiveRegionFiles -> String -> Int -> (RegionFile.RegionFile -> IO a) -> IO a
-withRegionFile refs rPath rId f = do
-  -- STM makes this otherwise complicated cache trivial:
-  -- We keep a 'RegionFile' alive as long as there is demand for it. A counter keeps
-  -- track of everyone waiting on the 'MVar' and once that hits 0
-  -- 'JoinGameSpec' is most likely to catch races here, as it did catch all of them
-  -- before I rewrote with 'STM' because it validates that all required chunks were delivered.
-  atomically (do
-    LiveRegionFiles live <- readTVar refs
-    case IM.lookup rId live of
-      Just (regionRef,refC) -> do
-        -- Increment the demand counter and return the mvar and counter for use
-        modifyTVar' refC (+ 1)
-        pure $ Left (regionRef,refC)
-      Nothing -> do
-        -- Create a new MVar and demand coutner pair and add them to the map
-        -- This is a safe use of 'unsafeIOToSTM' as it has no observable side-effects
-        -- outside of allocation. We could avoid this with 'TMVar', but I want fairness
-        -- here. 'STM' wakes up all waiting transactions at once, 'MVar' in order. So
-        -- if we were to use 'TMVar', threads may be starved out by scheduling.
-        mv <- unsafeIOToSTM $ newEmptyMVar
-        refC <- newTVar 1
-        writeTVar refs $! LiveRegionFiles $ IM.insert rId (mv,refC) live
-        pure $ Right (mv,refC)
-        ) >>= \case
-    -- Wait on the MVar and don't forget to decrement the counter later
-    Left (mv,refC) -> flip finally (atomically $ modifyTVar' refC (\i -> i - 1)) $ withMVar mv f
-    -- Need to create a new regionfile
-    Right (mv,refC) -> do
-      -- Spawn a kill thread. When there is no more demand on the file we close it
-      -- Has no races because we also remove the entry from the map in the same transaction
-      void . async $ do
-        atomically $ readTVar refC >>= \case
-          -- Remove the entry for the regionfile
-          0 -> modifyTVar' refs $ \(LiveRegionFiles live) -> LiveRegionFiles $ IM.delete rId live
-          _ -> retry
-        -- Nobody but us has a reference to the MVar so we can safely take and close it
-        takeMVar mv >>= RegionFile.closeRegionFile
-
-      let (rX, rZ) = (fromIntegral . fromIntegral @_ @Int32 $ (rId `unsafeShiftR` 32) .&. 0xFFFFFFFF, fromIntegral . fromIntegral @_ @Int32 $ rId .&. 0xFFFFFFFF)
-      bracket
-        (RegionFile.openRegionFile rPath rX rZ)
-        (\rf -> do
-          putMVar mv rf
-          atomically $ modifyTVar' refC (\i -> i - 1)
-          )
-        f
 
 data ChunkParseFail = ChunkParseFail ChunkPosition (Maybe SomeException)
   deriving stock Show
