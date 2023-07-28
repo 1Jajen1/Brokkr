@@ -3,13 +3,11 @@ module Brokkr.NBT (
 , Tag
 , parseNBT
 , putNBT
-, module Brokkr.NBT.Codec
 , module Brokkr.NBT.ByteOrder
 , module Brokkr.NBT.NBTString
 , module Brokkr.NBT.NBTError
 ) where
 
-import Brokkr.NBT.Codec
 import Brokkr.NBT.Internal
 import Brokkr.NBT.ByteOrder
 import Brokkr.NBT.NBTString

@@ -66,6 +66,7 @@ instance TH.Lift NBTString where
 
 instance Show NBTString where
   -- TODO Change this to decode to String and use that instead
+  --  This is for now mainly for debugging
   show (NBTString bs) = '0' : 'x' : concatMap toHex (BS.unpack bs)
     where
       toHex x = [toHexNibble hi, toHexNibble lo]

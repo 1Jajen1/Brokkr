@@ -37,8 +37,9 @@ instance NFData NBT where
   rnf (NBT _key _tag) = ()
 
 data Env = Env {
-    envBs  :: !BS.ByteString
-  , envNBT :: !NBT
+    envBs      :: !BS.ByteString
+  , envNBT     :: !NBT
+  , envBigTest :: !BigTest
   }
   deriving stock Generic
   deriving anyclass NFData
@@ -46,10 +47,16 @@ data Env = Env {
 setupEnv :: String -> IO Env
 setupEnv name = do
   initBs <- BS.readFile ("test/NBT/" ++ name)
-  envBs <- handle (\(_ :: SomeException) -> pure initBs) . evaluate . LBS.toStrict . GZip.decompress $ LBS.fromStrict initBs 
+  envBs <- handle (\(_ :: SomeException) -> pure initBs) . evaluate . LBS.toStrict . GZip.decompress $ LBS.fromStrict initBs
   let envNBT = case FP.runParser parseNBT envBs of
         FP.OK res "" -> res
         _ -> error "Failed to parse NBT"
+  
+  bigTestBs0 <- BS.readFile "test/NBT/bigtest.nbt"
+  bigTestBs <- handle (\(_ :: SomeException) -> pure initBs) . evaluate . LBS.toStrict . GZip.decompress $ LBS.fromStrict bigTestBs0
+
+  let envBigTest = parseBigTest bigTestBs
+
   return $ Env{..}
 
 benchFile :: String -> Benchmark
@@ -60,6 +67,7 @@ benchFile name =
     , bench "encode"  $ nf encodeNBT envNBT 
     ] <> if name == "bigtest.nbt" then
         [ bench "decode (schema)" $ nf parseBigTest envBs
+        , bench "encode (schema)" $ nf encodeBigTest envBigTest
         ]
       else []
 
@@ -145,3 +153,6 @@ parseBigTest bs = case FP.runParser
   FP.OK res "" -> res
   FP.Err e -> error $ show e
   _ -> error "Failed to parse NBT"
+
+encodeBigTest :: BigTest -> BS.ByteString
+encodeBigTest bt = B.toStrictByteString ($(genBuilder bigTestCodec) bt)

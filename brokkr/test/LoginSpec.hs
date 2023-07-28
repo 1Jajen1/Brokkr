@@ -4,17 +4,20 @@ module LoginSpec (spec) where
 import Test.Syd
 import Test.Syd.Hedgehog ()
 
+import Data.Coerce
+
 import Utils.Setup
 import Utils.Client
 import Utils.Handshake
 
-import Network.Protocol
+import Brokkr.Packet.Encode qualified as Encode
+import Brokkr.Packet.Common.Internal (Username(..))
 
-import Network.Packet.Server.Handshake qualified as Server
-import Network.Packet.Server.Login     qualified as Server
+import Brokkr.Packet.ClientToServer.Handshake qualified as Server
+import Brokkr.Packet.ClientToServer.Login     qualified as Server
 
-import Network.Packet.Client.Login qualified as Client
-import Network.Packet.Client.Play  qualified as Client
+import Brokkr.Packet.ServerToClient.Login qualified as Client
+import Brokkr.Packet.ServerToClient.Play  qualified as Client
 
 spec :: BrokkrSpec
 spec = do
@@ -26,17 +29,18 @@ spec = do
       let maxTime = 10_000
       handshake maxTime Server.Login client
 
-      sendPacket_ "LoginStart" maxTime client 10 $ Server.LoginStart (clientName client) Nothing
+      sendPacket_ "LoginStart" maxTime client . Encode.Packet (Encode.EstimateMin 10)
+        $ Server.LoginStart (coerce $ clientName client) Nothing
 
       expectSetCompression maxTime client
 
       readPacket_ "LoginSuccess" maxTime client $ \case
-        Client.LoginSuccess _uid uName -> do
-          uName `shouldBe` clientName client
+        Client.LoginSuccess _uid uName _props -> do
+          coerce uName `shouldBe` clientName client
         p -> unexpectedPacket "LoginSuccess" p
 
-      readPacket_ "Login (Play)" maxTime client $ \case
-        Client.Login _ -> do
+      readPacket_ @(Client.PlayPacket TestDimSize) "Login (Play)" maxTime client $ \case
+        Client.Login{} -> do
           pure ()
         p -> unexpectedPacket "Login (Play)" p
   
@@ -61,13 +65,13 @@ spec = do
       it "should not crash the server after login start" $ \client -> do
         let maxTime = 1_000
         handshake maxTime Server.Login client
-        sendPacket_ "LoginStart" maxTime client 10 $ Server.LoginStart (clientName client) Nothing
+        sendPacket_ "LoginStart" maxTime client . Encode.Packet (Encode.EstimateMin 10) $ Server.LoginStart (coerce $ clientName client) Nothing
 
 -- This expects the test server to have compression setup, which is fine for now I guess...
 expectSetCompression :: Int -> TestClient -> IO ()
-expectSetCompression maxTime client = readPacketWithProtocol_ "SetCompression" maxTime client (\p@(Protocol _ encr) -> \case
-  Client.SetCompression threshold -> Protocol (Threshold threshold) encr
-  _ -> p
+expectSetCompression maxTime client = readPacketWithProtocol_ "SetCompression" maxTime client (\cs es -> \case
+  Client.SetCompression (Client.CompressionThreshold threshold) -> (Encode.UseCompression $ fromIntegral threshold, es)
+  _ -> (cs ,es)
   ) $ \case
   Client.SetCompression _ -> pure ()
   p -> unexpectedPacket "SetCompression" p

@@ -12,14 +12,15 @@ module Utils.Setup (
 , unexpectedPacket
 ) where
 
+import Brokkr.Packet.Binary
+import Brokkr.Packet.Encode qualified as Encode
+
 import Test.Syd
 import Control.Exception
 
 import Utils.Client
-import Util.Binary
 
 -- TODO
-import Network.Protocol
 import Data.Text
 import Control.Monad.Trans.Resource
 import Data.Typeable
@@ -57,8 +58,8 @@ withTestClient name = aroundWith' (\f server _ -> bracket (newTestClient name se
 withTestClient_ :: MonadResource m => Text -> TestServer -> m TestClient
 withTestClient_ name server = snd <$> allocate (newTestClient name server) stopTestClient
 
-sendPacket_ :: ToBinary a => String -> Int -> TestClient -> Int -> a -> IO ()
-sendPacket_ name maxTime client szEstimate toSend = sendPacket maxTime client szEstimate toSend >>= \case
+sendPacket_ :: ToBinary a => String -> Int -> TestClient -> Encode.Packet a -> IO ()
+sendPacket_ name maxTime client toSend = sendPacket maxTime client toSend >>= \case
   Nothing -> pure ()
   Just e -> throwIO $ ExceptionOnSend name e
 
@@ -66,18 +67,21 @@ data ExceptionOnSend = ExceptionOnSend String SomeException
   deriving stock Show
   deriving anyclass Exception
 
-readPacketWithProtocol_ :: (Show a, FromBinary a) => String -> Int -> TestClient -> (Protocol -> a -> Protocol) -> (a -> IO r) -> IO r
+readPacketWithProtocol_ :: (Show a, FromBinary a)
+  => String -> Int -> TestClient
+  -> (Encode.CompressionSettings -> Encode.EncryptionSettings -> a -> (Encode.CompressionSettings, Encode.EncryptionSettings))
+  -> (a -> IO r) -> IO r
 readPacketWithProtocol_ name maxTime client changeProt f = readPacket maxTime client changeProt >>= \case
   Left e -> throwIO $ ExceptionOnRead name e
   Right a -> f a
 
 readPacket_ :: (Show a, FromBinary a) => String -> Int -> TestClient -> (a -> IO r) -> IO r
-readPacket_ name maxTime client f = readPacket maxTime client const >>= \case
+readPacket_ name maxTime client f = readPacket maxTime client (\cs es _ -> (cs, es)) >>= \case
   Left e -> throwIO $ ExceptionOnRead name e
   Right a -> f a
 
 readPacketOrTimeout_ :: (Show a, FromBinary a) => String -> Int -> TestClient -> (Maybe a -> IO r) -> IO r
-readPacketOrTimeout_ name maxTime client f = readPacket maxTime client const >>= \case
+readPacketOrTimeout_ name maxTime client f = readPacket maxTime client (\cs es _ -> (cs, es)) >>= \case
   Left (SomeException e) | typeOf e == typeRep @_ @TimeoutException undefined -> f Nothing
   Left e -> throwIO $ ExceptionOnRead name e
   Right a -> f $ Just a

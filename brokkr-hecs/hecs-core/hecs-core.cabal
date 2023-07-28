@@ -1,0 +1,66 @@
+cabal-version:       3.0
+name:                hecs-core
+version:             0.0.0.0
+synopsis:            See README for more info
+description:         See README for more info
+license:             BSD-3-Clause
+license-file:        LICENSE
+author:              Jannis
+maintainer:          Jannis <overesch.jannis@gmail.com>
+copyright:           2022 Jannis
+category:            Game
+build-type:          Simple
+extra-doc-files:     CHANGELOG.md
+tested-with:         GHC == 9.4.4
+
+common common-options
+-- TODO Go through deps soon-ish
+  build-depends:       base ^>= 4.17.0.0
+                     , primitive
+                     , deepseq
+                     , template-haskell
+                     , containers
+                     , transformers-base
+                     , monad-control
+                     , bitfield
+                     , text
+  
+  ghc-options:         -Wall
+                       -Wcompat
+                       -Widentities
+                       -Wincomplete-uni-patterns
+                       -Wincomplete-record-updates
+                       -Wredundant-constraints
+                       --Wunused-packages
+                       -fhide-source-paths
+                       -Wmissing-export-lists
+                       -Wpartial-fields
+                       -Wmissing-deriving-strategies
+                       -O2
+  default-extensions:  DerivingVia
+                       LambdaCase
+                       StrictData
+                       OverloadedStrings
+                       DataKinds
+  default-language:    GHC2021
+library
+  import:              common-options
+  hs-source-dirs:      src
+  exposed-modules:      Hecs.Array
+                      , Hecs.Archetype
+                      , Hecs.Archetype.Internal
+                      , Hecs.Entity.Internal
+                      , Hecs.World
+                      , Hecs.World.Has
+                      , Hecs.World.Internal
+                      , Hecs.World.TH
+                      , Hecs.HashTable.Boxed
+                      , Hecs.HashTable.HashKey
+                      , Hecs.HashTable.Storable
+                      , Hecs.Component
+                      , Hecs.Component.Generic
+                      , Hecs.Component.Internal
+                      , Hecs.Component.Relation
+                      , Hecs.Component.Properties
+                      , Hecs.Filter
+                      , Hecs.Filter.Internal

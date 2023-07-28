@@ -10,6 +10,8 @@ module Brokkr.BlockState.Internal.TH (
 
 import Data.Text ( Text )
 import Data.ByteString ( ByteString )
+import Data.ByteString qualified as BS
+import Data.ByteString.Internal qualified as BS
 import Data.Aeson
 import Data.Maybe
 import qualified Brokkr.BlockState.Internal.BlockEntry as BE
@@ -29,11 +31,17 @@ import Data.Word
 import GHC.Exts
 import Foreign.ForeignPtr
 import qualified Data.Vector.Storable as S
+import qualified Data.Vector.Storable.Mutable as MS
 import Control.Monad
+import Data.Int
+import GHC.ForeignPtr
+import Control.Monad.ST.Strict (runST)
 
 {-
 
 Generates two datatypes:
+
+TODO: NBTString == ByteString only if it is utf8, so use NBTString here instead?
 
 Id to nbt
 Vector (ByteString, [(ByteString, ByteString)])
@@ -47,12 +55,17 @@ TODO: Strip minecraft: prefix?
 genPaletteMapping :: Q [Dec]
 genPaletteMapping = do
   entries <- runIO readBlocks
+
+  let sortedEntries = sortOn (\(_, BE.BlockEntry{blockStates}) -> BE.stateId $ head blockStates) $ M.toList entries
   
   let namesAndPropsToId = sortOn fst $ do
-        (nameSpacedName, BE.BlockEntry{..}) <- sortOn (\(_, BE.BlockEntry{blockStates}) -> BE.stateId $ head blockStates) $ M.toList entries
+        (nameSpacedName, BE.BlockEntry{..}) <- sortedEntries
         BE.BlockState{..} <- blockStates
 
-        pure (fromIntegral $ hash (T.encodeUtf8 nameSpacedName, maybe [] (sortOn fst . fmap (\(k,v) -> (T.encodeUtf8 k, T.encodeUtf8 v)) . M.toList) stateProperties), fromIntegral stateId) 
+        pure
+          ( fromIntegral $ hash (T.encodeUtf8 nameSpacedName, maybe [] (sortOn fst . fmap (\(k,v) -> (T.encodeUtf8 k, T.encodeUtf8 v)) . M.toList) stateProperties)
+          , fromIntegral stateId
+          )
 
       highestId = maximum $ do
         (_, BE.BlockEntry{blockStates}) <- M.toList entries
@@ -61,52 +74,140 @@ genPaletteMapping = do
       
       !setOfHashes@(I# setOfHashes#) = IS.size . IS.fromList $ fmap (fromIntegral . fst) namesAndPropsToId
 
+      !(allNamesList, _, namesToOff) = foldl' (\acc0 (nameSpacedName, BE.BlockEntry{..}) ->
+        let ins n acc@(xs, o, m)
+              | Just _ <- M.lookup n m = acc
+              | otherwise = let bs = T.encodeUtf8 n; sz = BS.length bs in (bs : xs, o + sz, M.insert n (o, sz) m)
+            acc1 = ins nameSpacedName acc0
+        in case blockProperties of
+          Nothing -> acc1
+          Just props -> foldl' (\acc (k,vs) -> foldl' (flip ins) (ins k acc) vs) acc1 $ M.toList props
+        ) ([], 0, M.empty) sortedEntries
+
+      BS.BS namesFptr namesSz = foldMap id $ reverse allNamesList
+
+      statesToOffsetBytes = sortOn fst $ do
+        (nameSpacedName, BE.BlockEntry{..}) <- sortedEntries
+        case M.lookup nameSpacedName namesToOff of
+          Nothing -> error "Missing state?!"
+          Just (off, sz) -> do
+            BE.BlockState{..} <- blockStates
+            case stateProperties of
+              Nothing -> pure (stateId, S.fromList @Int32 [fromIntegral off, fromIntegral sz, 0])
+              Just props ->
+                let pLen = length props
+                in pure (stateId, S.fromList @Int32 $
+                       [fromIntegral off, fromIntegral sz, fromIntegral pLen]
+                    <> concatMap (\(k,v) ->
+                      let (ko,ks) = case M.lookup k namesToOff of Nothing -> error "Missing state?!"; Just x -> x
+                          (vo,vs) = case M.lookup v namesToOff of Nothing -> error "Missing state?!"; Just x -> x
+                      in [fromIntegral ko, fromIntegral ks, fromIntegral vo, fromIntegral vs]
+                      ) (M.toList props))
+
+      statesToOffsets = scanl (\o (_,v) -> o + (fromIntegral @Int @Int32 $ S.length v)) 0 statesToOffsetBytes
+
       hLiFptrSz = setOfHashes * 8
       vLiFptrSz = setOfHashes * 4
 
-      hLitArr = S.fromListN setOfHashes $ fmap fst namesAndPropsToId
-      valLitArr = S.fromListN setOfHashes $ fmap snd namesAndPropsToId
+      eytzinger arr =
+        let n = S.length arr
+        in runST $ do
+          mar <- MS.unsafeNew (n + 1)
+          let go i0 k = if k <= n
+                then do
+                  i1 <- go i0 (2 * k)
+                  MS.unsafeWrite mar k $ S.unsafeIndex arr i1
+                  go (i1 + 1) (2 * k + 1)
+                else pure i0 
+          _ <- go 0 1
+          S.unsafeFreeze mar
+
+      hLitArr = eytzinger $ S.fromListN setOfHashes $ fmap fst namesAndPropsToId
+      valLitArr = eytzinger $ S.fromListN setOfHashes $ fmap snd namesAndPropsToId
+      statesToOffsetBytesArr = foldMap snd statesToOffsetBytes
+      statesToOffsetsArr = S.fromList statesToOffsets
 
       (hLitFptr, _, _) = S.unsafeToForeignPtr hLitArr
       (vLitFptr, _, _) = S.unsafeToForeignPtr valLitArr
+      (sLitFptr, _, sLitSz) = S.unsafeToForeignPtr statesToOffsetBytesArr
+      (sToOLitFptr, _, sToOLitSz) = S.unsafeToForeignPtr statesToOffsetsArr
 
   let hashLit = litE . BytesPrimL . mkBytes (coerce @(ForeignPtr Word64) hLitFptr) 0 $ fromIntegral hLiFptrSz
       valsLit = litE . BytesPrimL . mkBytes (coerce @(ForeignPtr Word32) vLitFptr) 0 $ fromIntegral vLiFptrSz
+      namesLit = litE . BytesPrimL . mkBytes namesFptr 0 $ fromIntegral namesSz
+      sOffToNameOffLit = litE . BytesPrimL . mkBytes (coerce sLitFptr) 0 $ 4 * fromIntegral sLitSz
+      stateToStateOffLit = litE . BytesPrimL . mkBytes (coerce sToOLitFptr) 0 $ 4 * (fromIntegral sToOLitSz - 1) -- Ignore last result from scanl
 
   -- error $ show $ S.elemIndex 13909007002878426453 hLitArr
   -- error $ show setOfHashes
+
+  -- error $ show (S.take 16 statesToOffsetsArr, S.take 16 statesToOffsetBytesArr, namesToOff)
 
   -- Quick check if we have no hash collisions
   -- We will probably run into one at some point, but that's for future me to worry about
   when (setOfHashes /= length namesAndPropsToId) . error $ "Expected " <> show (length namesAndPropsToId) <> " but actual is " <> show setOfHashes
 
   [d|
-    hashProps :: ByteString -> [(ByteString, ByteString)] -> Int
-    hashProps !ns !arr = hash (ns, arr)
+    hashProps :: ByteString -> [(ByteString, ByteString)] -> Word
+    hashProps !ns !arr = fromIntegral $ hash (ns, arr)
     {-# INLINE hashProps #-}
 
-    propsToId :: ByteString -> [(ByteString, ByteString)] -> Int
-    propsToId !n !props = I# (int32ToInt# (loop 0# setOfHashes#))
+    -- branch free eytzinger search for the hash
+    -- then use the index of the hash to index into an array of states
+    -- This is faster than a binary search
+    -- TODO Bench against linear probing hashmap with simd search
+    propsToId :: ByteString -> [(ByteString, ByteString)] -> Word -> Int
+    propsToId !n !props (W# hs) = I# (int32ToInt# (runRW# $ \s -> loop 1# s))
       where
-        !hs = fromIntegral $ hashProps n props
-        hsLit  = $(hashLit)
-        valLit = $(valsLit)
-        loop !l !u
-          | isTrue# (l >=# u) = error $ "Unknown hash " <> show hs <> " for name " <> show n <> " and props " <> show props 
-          | otherwise =
-            let a = W# (word64ToWord# (indexWord64OffAddr# hsLit mid#))
-            in case compare a hs of
-              LT -> loop (mid# +# 1#) u
-              EQ -> indexInt32OffAddr# valLit mid#
-              GT -> loop l mid#
-          where
-            mid# = (l +# u) `quotInt#` 2#
+        hsLit  = $hashLit
+        valLit = $valsLit
+        ffs :: Int# -> Int#
+        ffs x = word2Int# (popCnt# (int2Word# (x `xorI#` notI# (negateInt# x))))
+        blockSize = 8#
+        loop :: Int# -> State# RealWorld -> Int32#
+        loop k s
+          | isTrue# (k ># setOfHashes# +# 1#) = case k `uncheckedIShiftRL#` ffs (notI# k) of
+            0# -> error $ "Unknown hash " <> show (W# hs) <> " for name " <> show n <> " and props " <> show props 
+            k' -> indexInt32OffAddr# valLit k'
+          | otherwise = loop (2# *# k +# (word64ToWord# (indexWord64OffAddr# hsLit k) `ltWord#` hs)) (prefetchAddr0# hsLit (k *# blockSize) s)
+
+    -- first index into an array of offsets
+    -- then index into a array that contains:
+    --  {- Offset into names -} Int {- Length -} Int
+    --  {- Number of properties -} Int
+    -- n times:
+    --  {- Offset into names -} Int {- Length -} Int {- Offset into names -} Int {- Length -} Int
+    -- These indices then point to the literal of names an are used to slice it
+    -- TODO This is actually quite nice. Three constant time array lookups.
+    -- Except this has one problem: It uses 2MB of memory lol
+    idToProps :: Int -> (ByteString, [(ByteString, ByteString)])
+    idToProps (I# n) = (name, props)
+      where
+        sOff = int32ToInt# (indexInt32OffAddr# sToSOff n)
+        name = BS.fromForeignPtr (ForeignPtr names FinalPtr)
+                (I# (int32ToInt# (indexInt32OffAddr# sOffToNOff sOff)))
+                (I# (int32ToInt# (indexInt32OffAddr# sOffToNOff (sOff +# 1#))))
+
+        props = goProp (int32ToInt# (indexInt32OffAddr# sOffToNOff (sOff +# 2#))) (sOff +# 3#)
+        
+        goProp :: Int# -> Int# -> [(ByteString, ByteString)]
+        goProp 0# _ = []
+        goProp m  o = (
+            BS.fromForeignPtr (ForeignPtr names FinalPtr)
+                (I# (int32ToInt# (indexInt32OffAddr# sOffToNOff o)))
+                (I# (int32ToInt# (indexInt32OffAddr# sOffToNOff (o +# 1#))))
+          , BS.fromForeignPtr (ForeignPtr names FinalPtr)
+                (I# (int32ToInt# (indexInt32OffAddr# sOffToNOff (o +# 2#))))
+                (I# (int32ToInt# (indexInt32OffAddr# sOffToNOff (o +# 3#))))
+          ) : goProp (m -# 1#) (o +# 4#)
+
+        sToSOff = $stateToStateOffLit
+        sOffToNOff = $sOffToNameOffLit
+        names = $namesLit
 
     type HighestBlockStateId = $(pure . LitT . NumTyLit $ fromIntegral highestId)
 
     |]
-
-    
 
 {-
 

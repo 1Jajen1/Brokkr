@@ -2,7 +2,7 @@ module Brokkr.PackedVector.Mutable (
   DynamicNat(..)
 , MutablePackedVector
 -- Creation
-, new, sameShape
+, new, unsafeFromForeignPtr, sameShape
 -- length information
 , null, length, bitSize
 -- access to individual elements

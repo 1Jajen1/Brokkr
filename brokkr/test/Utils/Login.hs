@@ -6,13 +6,15 @@ module Utils.Login (
 
 import Utils.Client
 import Utils.Handshake
-import Network.Protocol
 import Control.Exception
 
-import Network.Packet.Server.Handshake (pattern Login)
+import Brokkr.Packet.Encode qualified as Encode
 
-import Network.Packet.Client.Login qualified as Client
-import Network.Packet.Server.Login qualified as Server
+import Brokkr.Packet.ClientToServer.Handshake (pattern Login)
+
+import Brokkr.Packet.ServerToClient.Login qualified as Client
+import Brokkr.Packet.ClientToServer.Login qualified as Server
+import Brokkr.Packet.Common.Internal (Username(..))
 import Control.Monad.Fix
 
 -- Login a client. Throws on failure
@@ -29,7 +31,10 @@ login maxTime client = do
 login_ :: Int -> TestClient -> IO ()
 login_ maxTime client = do
   -- Send the login start
-  sendPacket maxTime client 10 (Server.LoginStart (clientName client) Nothing) >>= \case
+  sendPacket maxTime client
+    (Encode.Packet
+      (Encode.EstimateMin 100)
+      (Server.LoginStart (UnsafeUsername $ clientName client) Nothing)) >>= \case
     Just e -> throwIO $ FailedLogin e
     Nothing -> pure ()
   
@@ -40,9 +45,9 @@ login_ maxTime client = do
   --  fail to parse.
   fix $ \go ->
     -- handle packet
-    readPacket maxTime client (\p@(Protocol _ encr) -> \case
-      Client.SetCompression threshold -> Protocol (Threshold threshold) encr
-      _ -> p) >>= \case
+    readPacket maxTime client (\cs es -> \case
+      Client.SetCompression (Client.CompressionThreshold threshold) -> (Encode.UseCompression $ fromIntegral threshold, es)
+      _ -> (cs, es)) >>= \case
       Left e -> throwIO $ FailedLogin e
       Right Client.SetCompression{} -> go
       Right Client.LoginSuccess{} -> pure ()

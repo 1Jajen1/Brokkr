@@ -2,24 +2,30 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveAnyClass #-}
 module Brokkr.NBT.NBTError (
   NBTError(..)
 , missingKey
 , invalidType
 ) where
 
+import Control.Exception (Exception)
+
 import Data.ByteString (ByteString)
 import Data.Text (Text)
+import Data.Text qualified as T
 
 data NBTError =
     InvalidTagType !Int
   | InvalidStringEncoding !ByteString
   | InvalidType !Text
   | MissingKey !Text
+  | InvalidStringEnum !Text [Text]
   deriving stock Show
+  deriving anyclass Exception
 
-missingKey :: [Text] -> Text -> NBTError
-missingKey path key = MissingKey $ "Missing key " <> key <> "." <> showPath path
+missingKey :: [Text] -> [Text] -> NBTError
+missingKey path keys = MissingKey $ "Missing keys [" <> T.dropEnd 1 (foldr (\y acc -> y <> "," <> acc) "" keys) <> "]" <> showPath path
 
 invalidType :: [Text] -> Text -> Maybe Text -> NBTError
 invalidType path ty Nothing = InvalidType $ "Invalid type. Expected " <> ty <> "." <> showPath path

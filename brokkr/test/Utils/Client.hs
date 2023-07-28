@@ -11,11 +11,15 @@ module Utils.Client (
 , readPacket
 , sendPacket
 , TimeoutException(..)
+, TestDimSize
 ) where
+
+import Brokkr.Packet.Common (Position(..))
+import Brokkr.Packet.Decode qualified as Decode
+import Brokkr.Packet.Encode qualified as Encode
 
 import Control.Concurrent.Async
 
-import Network.Monad (readPacket')
 import Network.Simple.TCP qualified as Network
 
 import Server
@@ -26,22 +30,20 @@ import Control.Exception (Exception, SomeException(..), throwIO)
 import Control.Exception.Base qualified as BE 
 import Control.Exception.Safe qualified as SE
 import Control.Monad.Fix
-import Control.Monad.Trans.Reader
-import Control.Monad.Trans.State.Strict
-import Network.Protocol
+import Network.Exception
 import Control.Concurrent.MVar
 import Data.ByteString (ByteString)
 import Data.IORef
 import Control.Monad
-import Network.Util.Builder
-import Util.Binary as Binary
 import System.Timeout (timeout)
 import Data.Text
 import GHC.Conc (labelThread, myThreadId)
 import Data.Word
 import Server.Monad (Universe)
-import Util.Position
 import Data.List.NonEmpty (NonEmpty(..))
+import Data.Proxy
+
+type TestDimSize = 384
 
 -- A normal server with a config suitable for testing (low render distance and other perf options)
 data TestServer = TestServer {
@@ -132,7 +134,7 @@ newTestClient clientName clientTestServer@TestServer{serverHost, serverPort} = d
     do
       Network.connect serverHost serverPort $ \(sock,_) -> do
         putMVar clientReadyRef ()
-        stateRef <- newIORef $ ClientNetworkState mempty (Protocol NoCompression NoEncryption)
+        stateRef <- newIORef $ ClientNetworkState mempty Decode.NoCompression Decode.NoEncryption
         -- The client is in a loop taking requests for either reading or writing
         void . fix $ \go -> do
           -- Catch timeouts so that we can cancel io but still continue working with the client
@@ -140,13 +142,16 @@ newTestClient clientName clientTestServer@TestServer{serverHost, serverPort} = d
           SE.handleAsync (\(e :: TimeoutException) -> print ()) $ do
             takeMVar clientReqRef >>= \case
               ReadReq onErr f -> SE.handle onErr $ do
-                ClientNetworkState bs prot <- readIORef stateRef
-                (a, bs') <- flip runStateT bs . flip runReaderT sock $ readPacket' prot
-                prot' <- f prot a
-                writeIORef stateRef $ ClientNetworkState bs' prot'
-              WriteReq szEstimate a onErr onWrite -> SE.handle onErr $ do
-                ClientNetworkState _ prot <- readIORef stateRef
-                let bs = toStrictSizePrefixedByteString prot szEstimate $ Binary.put a
+                ClientNetworkState bs cs es <- readIORef stateRef
+                (a, bs') <- Decode.readPacket
+                  (Proxy @Decode.SomeCompression) cs es
+                  (Network.recv sock 1024 >>= \case Nothing -> throwIO ConnectionClosed; Just x -> pure x)
+                  bs $ \a bs -> pure (a, bs)
+                (cs', es') <- f cs es a
+                writeIORef stateRef $ ClientNetworkState bs' cs' es'
+              WriteReq a onErr onWrite -> SE.handle onErr $ do
+                ClientNetworkState _ cs es <- readIORef stateRef
+                let bs = Encode.toStrictByteString (Proxy @Decode.SomeCompression) cs es a
                 Network.send sock bs
                 onWrite
           go
@@ -163,17 +168,23 @@ data ClientNotReadyInTime = ClientNotReadyInTime
 stopTestClient :: TestClient -> IO ()
 stopTestClient = cancel . clientThread
 
-data ClientNetworkState = ClientNetworkState !ByteString !Protocol
+data ClientNetworkState = ClientNetworkState !ByteString !Decode.CompressionSettings !Decode.EncryptionSettings
 
 data ClientReq where
-  ReadReq  :: (Show a, FromBinary a) => (SomeException -> IO ()) -> (Protocol -> a -> IO Protocol) -> ClientReq
-  WriteReq :: ToBinary a => Int -> a -> (SomeException -> IO ()) -> IO () -> ClientReq
+  ReadReq  :: (Show a, Decode.FromBinary a)
+    => (SomeException -> IO ())
+    -> (Decode.CompressionSettings -> Decode.EncryptionSettings -> a -> IO (Decode.CompressionSettings, Decode.EncryptionSettings))
+    -> ClientReq
+  WriteReq :: Encode.ToBinary a => Encode.Packet a -> (SomeException -> IO ()) -> IO () -> ClientReq
 
-readPacket :: (Show a, FromBinary a) => Int -> TestClient -> (Protocol -> a -> Protocol) -> IO (Either SomeException a)
+readPacket :: (Show a, Decode.FromBinary a)
+  => Int -> TestClient
+  -> (Decode.CompressionSettings -> Decode.EncryptionSettings -> a -> (Decode.CompressionSettings, Decode.EncryptionSettings))
+  -> IO (Either SomeException a)
 readPacket maxTime TestClient{clientReqRef, clientThread} changeProtocol = do
   resVar <- newEmptyMVar
-  putMVar clientReqRef $ ReadReq (putMVar resVar . Left) $ \prot a -> do
-    let newProt = changeProtocol prot a
+  putMVar clientReqRef $ ReadReq (putMVar resVar . Left) $ \cs es a -> do
+    let newProt = changeProtocol cs es a
     putMVar resVar $ Right a
     pure newProt
   timeout maxTime (takeMVar resVar) >>= \case
@@ -188,10 +199,10 @@ data TimeoutException = TimeoutException
   deriving stock Show
   deriving anyclass Exception
 
-sendPacket :: ToBinary a => Int -> TestClient -> Int -> a -> IO (Maybe SomeException)
-sendPacket maxTime TestClient{clientReqRef,clientThread} sz a = do
+sendPacket :: Encode.ToBinary a => Int -> TestClient -> Encode.Packet a -> IO (Maybe SomeException)
+sendPacket maxTime TestClient{clientReqRef,clientThread} a = do
   resVar <- newEmptyMVar
-  putMVar clientReqRef $ WriteReq sz a (putMVar resVar . Just) (putMVar resVar Nothing)
+  putMVar clientReqRef $ WriteReq a (putMVar resVar . Just) (putMVar resVar Nothing)
   timeout maxTime (takeMVar resVar) >>= \case
     Nothing -> do
       -- We want to cancel the io op, but not the whole req-loop, so throw a timeout exception

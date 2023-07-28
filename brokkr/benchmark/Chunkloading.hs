@@ -33,6 +33,8 @@ instance NFData NBT where
   rnf (NBT _ _) = ()
   {-# INLINE rnf #-}
 
+-- TODO Rework this to benchmark Anvil.Chunk -> Chunk and Chunk -> PlayPacket conversion
+
 main :: IO ()
 main = defaultMain [
     -- TODO Bench the chunkloading handle

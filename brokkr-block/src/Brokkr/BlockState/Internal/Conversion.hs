@@ -4,6 +4,8 @@
 -- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
 module Brokkr.BlockState.Internal.Conversion (
   propsToId
+, hashProps
+, idToProps
 , HighestBlockStateId
 ) where
 

@@ -18,6 +18,7 @@ module Brokkr.PackedVector.Internal (
 -- copy
 , thaw
 , freeze
+, force
 -- folds
 , toList
 ) where
@@ -39,7 +40,7 @@ import Control.Monad.ST (runST)
 import Brokkr.PackedVector.Pack
 import Control.Monad (forM_)
 import qualified Brokkr.PackedVector.Util as Util
-import Control.DeepSeq
+import Control.DeepSeq hiding (force)
 
 -- | Packed vector. Stores elements which require less than 64 bits efficiently.
 --
@@ -106,12 +107,13 @@ class (MPVector (Mutable v) a) => PVector (v :: Type -> Type) (a :: Type) where
   --
   -- This method is effectively free since it is usually implemented via 'unsafeCoerce'.
   unsafeFreeze  :: PrimMonad m => (Mutable v) (PrimState m) a -> m (v a)
+  -- | @O(1)@ Access the backing foreign pointer 
+  unsafeBacking :: v a -> ForeignPtr Word64
 
 instance
   ( Pack a
   , KnownNat len
   , KnownNat bitSize
-  , KnownNat (Div 64 bitSize)
   ) => PVector (PackedVector ('Static len) ('Static bitSize)) (a :: Type) where
     length _ = fromIntegral . natVal $ Proxy @len
     {-# INLINE length #-}
@@ -121,8 +123,10 @@ instance
     {-# INLINE unsafeThaw #-}
     unsafeFreeze = pure . coerce
     {-# INLINE unsafeFreeze #-}
+    unsafeBacking = coerce
+    {-# INLINE unsafeBacking #-}
 
-instance (Pack a, KnownNat bitSize, KnownNat (Div 64 bitSize)) => PVector (PackedVector 'Dynamic ('Static bitSize)) a where
+instance (Pack a, KnownNat bitSize) => PVector (PackedVector 'Dynamic ('Static bitSize)) a where
   length (PVec_DS len _) = len
   {-# INLINE length #-}
   bitSize _ = fromIntegral . natVal $ Proxy @bitSize
@@ -131,6 +135,8 @@ instance (Pack a, KnownNat bitSize, KnownNat (Div 64 bitSize)) => PVector (Packe
   {-# INLINE unsafeThaw #-}
   unsafeFreeze !w = pure $ unsafeCoerce w
   {-# INLINE unsafeFreeze #-}
+  unsafeBacking (PVec_DS _ b) = b
+  {-# INLINE unsafeBacking #-}
 
 instance (Pack a, KnownNat len) => PVector (PackedVector ('Static len) 'Dynamic) a where
   length _ = fromIntegral . natVal $ Proxy @len
@@ -141,6 +147,8 @@ instance (Pack a, KnownNat len) => PVector (PackedVector ('Static len) 'Dynamic)
   {-# INLINE unsafeThaw #-}
   unsafeFreeze !w = pure $ unsafeCoerce w
   {-# INLINE unsafeFreeze #-}
+  unsafeBacking (PVec_SD _ _ _ _ _ b) = b
+  {-# INLINE unsafeBacking #-}
 
 instance Pack a => PVector (PackedVector 'Dynamic 'Dynamic) a where
   length (PVec_DD len _ _ _ _ _ _) = len
@@ -151,6 +159,8 @@ instance Pack a => PVector (PackedVector 'Dynamic 'Dynamic) a where
   {-# INLINE unsafeThaw #-}
   unsafeFreeze !w = pure $ unsafeCoerce w
   {-# INLINE unsafeFreeze #-}
+  unsafeBacking (PVec_DD _ _ _ _ _ _ b) = b
+  {-# INLINE unsafeBacking #-}
 
 -- create
 type family CreateFn (sz :: DynamicNat) (bSz :: DynamicNat) (a :: Type) :: Type where
@@ -163,7 +173,7 @@ class CreatePacked (sz :: DynamicNat) (bSz :: DynamicNat) where
   fromList :: Pack a => [a] -> CreateFn sz bSz a
   unsafeFromForeignPtr :: ForeignPtr Word64 -> CreateFn sz bSz a
 
-instance (KnownNat sz, KnownNat bSz, KnownNat (Div 64 bSz)) => CreatePacked ('Static sz) ('Static bSz) where
+instance (KnownNat sz, KnownNat bSz) => CreatePacked ('Static sz) ('Static bSz) where
   fromList xs = runST $ do
     mpv <- M.new @('Static sz) @('Static bSz)
     forM_ (zip [0..] xs) $ \(i, el) -> do
@@ -173,7 +183,7 @@ instance (KnownNat sz, KnownNat bSz, KnownNat (Div 64 bSz)) => CreatePacked ('St
   unsafeFromForeignPtr = coerce
   {-# INLINE unsafeFromForeignPtr #-}
 
-instance (KnownNat bSz, KnownNat (Div 64 bSz)) => CreatePacked 'Dynamic ('Static bSz) where
+instance KnownNat bSz => CreatePacked 'Dynamic ('Static bSz) where
   fromList xs sz = runST $ do
     mpv <- M.new @'Dynamic @('Static bSz) sz
     forM_ (zip [0..] xs) $ \(i, el) -> do
@@ -259,6 +269,9 @@ freeze mV = do
   M.unsafeCopy newV mV
   unsafeFreeze newV
 
+force :: PVector v a => v a -> v a
+force v = runST $ thaw v >>= unsafeFreeze
+
 -- TODO More folds and avoid using the mutable variant, so built them on foldMap/foldl' more
 
 toList :: PVector v a => v a -> [a]
@@ -267,10 +280,10 @@ toList v = runST $ do
   pure $ M.foldl' (\acc el -> acc <> [el]) [] mpv
 
 -- other instances
-instance (KnownNat sz, KnownNat bSz, KnownNat (Div 64 bSz), Show a, Pack a) => Show (PackedVector ('Static sz) ('Static bSz) a) where
+instance (KnownNat sz, KnownNat bSz, Show a, Pack a) => Show (PackedVector ('Static sz) ('Static bSz) a) where
   show v = "PackedVector " <> show (length v) <> ".S " <> show (bitSize v) <> ".S " <> show (toList v)
 
-instance (KnownNat bSz, KnownNat (Div 64 bSz), Show a, Pack a) => Show (PackedVector 'Dynamic ('Static bSz) a) where
+instance (KnownNat bSz, Show a, Pack a) => Show (PackedVector 'Dynamic ('Static bSz) a) where
   show v = "PackedVector " <> show (length v) <> ".D " <> show (bitSize v) <> ".S " <> show (toList v)
 
 instance (KnownNat sz, Show a, Pack a) => Show (PackedVector ('Static sz) 'Dynamic a) where

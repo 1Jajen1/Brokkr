@@ -72,6 +72,7 @@ static inline int countElems_4_avx(uint8_t const bitSz, size_t const dEls, uint8
 
 // --------------------- Generic counting (arbitrary bitsize)
 // 512 bit. This turns out to be slower than the 256 bit version, I should probably investigate at some point why...
+// Update: I was running on a ryzen 7950x, so 512 bit ops are emulated and 256 is the native size.
 __attribute__((target("avx512f,avx512dq")))
 static inline int countElemsGeneric_avx512(uint8_t const bitSz, size_t const dEls, uint8_t * const dArr, size_t const arrSz, uint64_t * const els, size_t const eSz) {
   uint64_t singleMask = (((uint64_t) 1) << bitSz) - 1;
@@ -103,7 +104,7 @@ static inline int countElemsGeneric_avx512(uint8_t const bitSz, size_t const dEl
   }
 
   // tail
-  
+
   int count = _mm512_reduce_add_epi64(count8);
   size_t currPos = vecSz * 4;
   size_t visited = currPos * perWord;
@@ -266,7 +267,7 @@ int countElems(uint8_t const bitSz, size_t const dEls, uint8_t * const dArr, siz
   //   return countElemsGeneric_avx512(bitSz, dEls, dArr, arrSz, els, eSz);
   // }
 
-  if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("avx2")) {
+  if (__builtin_cpu_supports("avx2")) {
     switch (bitSz) {
       case 4:
         return countElems_4_avx(bitSz, dEls, dArr, arrSz, els, eSz);  

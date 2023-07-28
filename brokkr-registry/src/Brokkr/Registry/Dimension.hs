@@ -28,91 +28,91 @@ import Data.Text
 
 overworld :: DimensionSettings
 overworld = DimensionSettings {
-  _ultrawarm = IsUltrawarm False
-, _monster_spawn_light_level = Uniform 7 0
-, _monster_spawn_block_light_limit = 0
-, _natural = IsNatural True
-, _coordinateScale = 1.0
-, _piglinSafe = IsPiglinSafe False
-, _respawnAnchorWorks = RespawnAnchorWorks False
-, _bedWorks = BedWorks True
-, _hasRaids = HasRaids True
-, _hasSkylight = HasSkylight True
-, _hasCeiling = HasCeiling False
-, _fixedTime = Nothing
-, _ambientLight = 0.0
-, _logicalHeight = 384
-, _infiniburn = "#minecraft:infiniburn_overworld"
-, _effects = "minecraft:overworld"
-, _height = 384
-, _minY = -64
+  ultrawarm = IsUltrawarm False
+, monsterSpawnLightLevel = Uniform 7 0
+, monsterSpawnBlockLightLimit = 0
+, natural = IsNatural True
+, coordinateScale = 1.0
+, piglinSafe = IsPiglinSafe False
+, respawnAnchorWorks = RespawnAnchorWorks False
+, bedWorks = BedWorks True
+, hasRaids = HasRaids True
+, hasSkylight = HasSkylight True
+, hasCeiling = HasCeiling False
+, fixedTime = Nothing
+, ambientLight = 0.0
+, logicalHeight = 384
+, infiniburn = "#minecraft:infiniburn_overworld"
+, effects = "minecraft:overworld"
+, height = 384
+, minY = -64
 }
 
 nether :: DimensionSettings
 nether = DimensionSettings {
-  _ultrawarm = IsUltrawarm True
-, _monster_spawn_light_level = LightLevel 11
-, _monster_spawn_block_light_limit = 15
-, _natural = IsNatural False
-, _coordinateScale = 8.0
-, _piglinSafe = IsPiglinSafe True
-, _respawnAnchorWorks = RespawnAnchorWorks True
-, _bedWorks = BedWorks False
-, _hasRaids = HasRaids False
-, _hasSkylight = HasSkylight False
-, _hasCeiling = HasCeiling True
-, _fixedTime = Just 18000
-, _ambientLight = 0.1
-, _logicalHeight = 128
-, _infiniburn = "#minecraft:infiniburn_nether"
-, _effects = "minecraft:the_nether"
-, _height = 256
-, _minY = 0
+  ultrawarm = IsUltrawarm True
+, monsterSpawnLightLevel = LightLevel 11
+, monsterSpawnBlockLightLimit = 15
+, natural = IsNatural False
+, coordinateScale = 8.0
+, piglinSafe = IsPiglinSafe True
+, respawnAnchorWorks = RespawnAnchorWorks True
+, bedWorks = BedWorks False
+, hasRaids = HasRaids False
+, hasSkylight = HasSkylight False
+, hasCeiling = HasCeiling True
+, fixedTime = Just 18000
+, ambientLight = 0.1
+, logicalHeight = 128
+, infiniburn = "#minecraft:infiniburn_nether"
+, effects = "minecraft:the_nether"
+, height = 256
+, minY = 0
 }
 
 end :: DimensionSettings
 end = DimensionSettings {
-  _ultrawarm = IsUltrawarm False
-, _monster_spawn_light_level = Uniform 7 0
-, _monster_spawn_block_light_limit = 0
-, _natural = IsNatural False
-, _coordinateScale = 1.0
-, _piglinSafe = IsPiglinSafe False
-, _respawnAnchorWorks = RespawnAnchorWorks False
-, _bedWorks = BedWorks False
-, _hasRaids = HasRaids True
-, _hasSkylight = HasSkylight False
-, _hasCeiling = HasCeiling False
-, _fixedTime = Just 6000
-, _ambientLight = 0.0
-, _logicalHeight = 256
-, _infiniburn = "#minecraft:infiniburn_end"
-, _effects = "minecraft:the_end"
-, _height = 256
-, _minY = 0
+  ultrawarm = IsUltrawarm False
+, monsterSpawnLightLevel = Uniform 7 0
+, monsterSpawnBlockLightLimit = 0
+, natural = IsNatural False
+, coordinateScale = 1.0
+, piglinSafe = IsPiglinSafe False
+, respawnAnchorWorks = RespawnAnchorWorks False
+, bedWorks = BedWorks False
+, hasRaids = HasRaids True
+, hasSkylight = HasSkylight False
+, hasCeiling = HasCeiling False
+, fixedTime = Just 6000
+, ambientLight = 0.0
+, logicalHeight = 256
+, infiniburn = "#minecraft:infiniburn_end"
+, effects = "minecraft:the_end"
+, height = 256
+, minY = 0
 }
 
 data DimensionSettings = DimensionSettings {
-  _piglinSafe         :: IsPiglinSafe
-, _hasRaids           :: HasRaids
-, _monster_spawn_light_level
-                      :: MonsterSpawnLightLevel
-, _monster_spawn_block_light_limit
-                      :: MonsterSpawnBlockLightLimit
-, _natural            :: IsNatural
-, _ambientLight       :: AmbientLight
-, _fixedTime          :: Maybe MCTime
-, _infiniburn         :: Infiniburn
-, _respawnAnchorWorks :: RespawnAnchorWorks
-, _hasSkylight        :: HasSkylight
-, _bedWorks           :: BedWorks
-, _effects            :: Effects
-, _minY               :: MinY
-, _height             :: Height
-, _logicalHeight      :: LogicalHeight
-, _coordinateScale    :: CoordinateScale
-, _ultrawarm          :: IsUltrawarm
-, _hasCeiling         :: HasCeiling
+  piglinSafe         :: !IsPiglinSafe
+, hasRaids           :: !HasRaids
+, monsterSpawnLightLevel
+                     :: !MonsterSpawnLightLevel
+, monsterSpawnBlockLightLimit
+                     :: !MonsterSpawnBlockLightLimit
+, natural            :: !IsNatural
+, ambientLight       :: !AmbientLight
+, fixedTime          :: !(Maybe MCTime)
+, infiniburn         :: !Infiniburn
+, respawnAnchorWorks :: !RespawnAnchorWorks
+, hasSkylight        :: !HasSkylight
+, bedWorks           :: !BedWorks
+, effects            :: !Effects
+, minY               :: !MinY
+, height             :: !Height
+, logicalHeight      :: !LogicalHeight
+, coordinateScale    :: !CoordinateScale
+, ultrawarm          :: !IsUltrawarm
+, hasCeiling         :: !HasCeiling
 }
   deriving stock (Show, Eq)
 
@@ -124,6 +124,8 @@ newtype MonsterSpawnBlockLightLimit = MonsterSpawnBlockLightLimit Int32
   deriving stock Show
   deriving newtype (Eq, Ord, Enum, Integral, Real, Num)
 
+-- Only valid if min > max
+-- TODO Enforce this with a smart constructor and also name the fields!
 data MonsterSpawnLightLevel = LightLevel Int32 | Uniform Int32 Int32
   deriving stock (Show, Eq)
 

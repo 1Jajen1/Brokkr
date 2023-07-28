@@ -20,36 +20,39 @@ module Brokkr.Registry.BiomeSettings (
 ) where
 
 import Data.Aeson
+import Deriving.Aeson qualified as A
+
 import Data.Int
-import qualified Data.Text as T
-import qualified Deriving.Aeson as A
+
+import Data.Text qualified as T
+
 import GHC.Generics
+
 import Language.Haskell.TH.Syntax (Lift)
 
 data BiomeSettings = BiomeSettings {
-  _precipitation       :: Precipitation
-, _depth               :: Maybe Depth
-, _temperature         :: Temperature
-, _scale               :: Maybe Scale
-, _downfall            :: Downfall
-, _category            :: Maybe BiomeCategory
-, _temperatureModifier :: Maybe TemperatureModifier
-, _effects             :: BiomeEffects
--- TODO Remaining options
+  precipitation       :: !Precipitation
+, depth               :: !(Maybe Depth)
+, temperature         :: !Temperature
+, scale               :: !(Maybe Scale)
+, downfall            :: !Downfall
+, category            :: !(Maybe BiomeCategory)
+, temperatureModifier :: !(Maybe TemperatureModifier)
+, effects             :: !BiomeEffects
 }
   deriving stock (Show, Eq, Generic, Lift)
   deriving FromJSON via A.CustomJSON '[
-    A.FieldLabelModifier (A.CamelToSnake, A.StripPrefix "_")
+    A.FieldLabelModifier A.CamelToSnake
   ] BiomeSettings
 
-data Precipitation = Snow | Rain | None
+data Precipitation = PrecipitationSnow | PrecipitationRain | PrecipitationNone
   deriving stock (Show, Eq, Lift)
 
 instance FromJSON Precipitation where
   parseJSON = withText "precipitation" $ \case
-    "snow" -> pure Snow
-    "rain" -> pure Rain
-    "none" -> pure None
+    "snow" -> pure PrecipitationSnow
+    "rain" -> pure PrecipitationRain
+    "none" -> pure PrecipitationNone
     t -> fail $ "Unknown value " <> T.unpack t
 
 newtype Depth = Depth Float
@@ -69,48 +72,48 @@ newtype Downfall = Downfall Float
   deriving newtype (Eq, FromJSON)
 
 data BiomeCategory =
-    OceanC
-  | PlainsC
-  | DesertC
-  | ForestC
-  | ExtremeHillsC
-  | TaigaC
-  | SwampC
-  | RiverC
-  | NetherC
-  | TheEndC
-  | IcyC
-  | MushroomC
-  | BeachC
-  | JungleC
-  | MesaC
-  | SavannaC
-  | UndergroundC
-  | MountainC
-  | NoneC
+    CategoryOcean
+  | CategoryPlains
+  | CategoryDesert
+  | CategoryForest
+  | CategoryExtremeHills
+  | CategoryTaiga
+  | CategorySwamp
+  | CategoryRiver
+  | CategoryNether
+  | CategoryTheEnd
+  | CategoryIcy
+  | CategoryMushroom
+  | CategoryBeach
+  | CategoryJungle
+  | CategoryMesa
+  | CategorySavanna
+  | CategoryUnderground
+  | CategoryMountain
+  | CategoryNone
   deriving stock (Show, Eq, Lift)
 
 instance FromJSON BiomeCategory where
   parseJSON = withText "category" $ \case
-    "ocean" -> pure OceanC
-    "plains" -> pure PlainsC
-    "desert" -> pure DesertC
-    "forest" -> pure ForestC
-    "extreme_hills" -> pure ExtremeHillsC
-    "taiga" -> pure TaigaC
-    "swamp" -> pure SwampC
-    "river" -> pure RiverC
-    "nether" -> pure NetherC
-    "the_end" -> pure TheEndC
-    "icy" -> pure IcyC
-    "mushroom" -> pure MushroomC
-    "beach" -> pure BeachC
-    "jungle" -> pure JungleC
-    "mesa" -> pure MesaC
-    "savanna" -> pure SavannaC
-    "underground" -> pure UndergroundC
-    "mountain" -> pure MountainC
-    "none" -> pure NoneC
+    "ocean" -> pure CategoryOcean
+    "plains" -> pure CategoryPlains
+    "desert" -> pure CategoryDesert
+    "forest" -> pure CategoryForest
+    "extreme_hills" -> pure CategoryExtremeHills
+    "taiga" -> pure CategoryTaiga
+    "swamp" -> pure CategorySwamp
+    "river" -> pure CategoryRiver
+    "nether" -> pure CategoryNether
+    "the_end" -> pure CategoryTheEnd
+    "icy" -> pure CategoryIcy
+    "mushroom" -> pure CategoryMushroom
+    "beach" -> pure CategoryBeach
+    "jungle" -> pure CategoryJungle
+    "mesa" -> pure CategoryMesa
+    "savanna" -> pure CategorySavanna
+    "underground" -> pure CategoryUnderground
+    "mountain" -> pure CategoryMountain
+    "none" -> pure CategoryNone
     t -> fail $ "Unknown value " <> T.unpack t
 
 data TemperatureModifier = Frozen
@@ -122,15 +125,15 @@ instance FromJSON TemperatureModifier where
     _ -> fail "unknown value for temperature_modifier"
 
 data BiomeEffects = BiomeEffects {
-  _skyColor           :: SkyColor
-, _waterFogColor      :: WaterFogColor
-, _fogColor           :: FogColor
-, _waterColor         :: WaterColor
+  skyColor      :: !SkyColor
+, waterFogColor :: !WaterFogColor
+, fogColor      :: !FogColor
+, waterColor    :: !WaterColor
 -- TODO Remaining options
 }
   deriving stock (Show, Eq, Generic, Lift)
   deriving FromJSON via A.CustomJSON '[
-    A.FieldLabelModifier (A.CamelToSnake, A.StripPrefix "_")
+    A.FieldLabelModifier A.CamelToSnake
   ] BiomeEffects
 
 newtype SkyColor = SkyColor Int32
@@ -157,11 +160,11 @@ newtype GrassColor = GrassColor Int32
   deriving stock (Show, Lift)
   deriving newtype (Eq, FromJSON)
 
-data GrassColorModifier = SwampM | DarkForestM
+data GrassColorModifier = ModifierSwamp | ModifierDarkForest
   deriving stock (Show, Eq, Lift)
 
 instance FromJSON GrassColorModifier where
   parseJSON = withText "grass_color_modifier" $ \case
-    "swamp" -> pure SwampM
-    "dark_forest" -> pure DarkForestM
+    "swamp" -> pure ModifierSwamp
+    "dark_forest" -> pure ModifierDarkForest
     _ -> fail "unknown value for grass_color_modifier"

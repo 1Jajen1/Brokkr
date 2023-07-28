@@ -1,9 +1,13 @@
 {-# LANGUAGE OverloadedStrings#-}
+{-# LANGUAGE TemplateHaskell#-}
 module Main (main) where
 
 import Prelude hiding (readFile)
 
+import BigTest
+
 import Control.Exception
+import Control.Monad (when)
 import Control.Monad.ST.Strict
 
 import Data.ByteString qualified as BS
@@ -26,6 +30,7 @@ import Brokkr.NBT.ByteOrder
 import Brokkr.NBT.Internal
 import Brokkr.NBT.NBTString.Internal
 import Brokkr.NBT.Slice qualified as Slice
+import Brokkr.NBT.Codec
 
 import Data.Bits
 import Data.Char (ord)
@@ -85,7 +90,7 @@ testFiles = testGroup "Files"
   ]
 
 testFile :: String -> TestTree
-testFile name = testCase name $ do
+testFile name = testCaseSteps name $ \out ->do
   fileBS <- readFile name
   
   nbt0 <- case decodeNBT fileBS of
@@ -98,9 +103,22 @@ testFile name = testCase name $ do
   assertEqual "Encoded nbt is equal in size" (BS.length encodedBS) (BS.length fileBS)
 
   -- re-parse and check if we get the same input
-  nbt1 <- case decodeNBT encodedBS of
+  nbt1@(NBT _ t1) <- case decodeNBT encodedBS of
     Just x -> pure x
     Nothing -> assertFailure "Invalid nbt (parse from encoded)"
+  
+  when (name == "bigtest.nbt") $ do
+    bt <- case FP.runParser ($$(genParser bigTestCodec)) fileBS of
+      FP.OK res remBs | BS.null remBs -> evaluate res
+      FP.Err e -> assertFailure $ show e
+      _ -> assertFailure "Failed to parse bigtest with schema"
+
+    let encodeSchema = B.toStrictByteString ($(genBuilder bigTestCodec) bt)
+    -- assertEqual "Encoded nbt is equal in size" (BS.length fileBS) (BS.length encodeSchema + 5) -- Top level name "level" is missing, which is fine
+    NBT _ t2 <- case decodeNBT encodeSchema of
+      Nothing -> assertFailure "Invalid nbt (parse from schema encoded)"
+      Just x -> pure x
+    assertEqual "schema == normal" t1 t2
 
   assertEqual "Roundtrip: NBT -> Bytestring -> NBT" nbt0 nbt1
 

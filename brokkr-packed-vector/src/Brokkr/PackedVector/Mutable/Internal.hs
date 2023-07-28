@@ -9,6 +9,7 @@ module Brokkr.PackedVector.Mutable.Internal (
 , MPVector(..)
 -- Creation
 , new
+, unsafeFromForeignPtr
 -- length information
 , null
 -- access to individual elements
@@ -39,13 +40,14 @@ import GHC.ForeignPtr (unsafeWithForeignPtr, mallocPlainForeignPtrBytes)
 import qualified Foreign.Storable as S
 import Brokkr.PackedVector.Pack
 import Prelude hiding (null, read, length)
-import GHC.Base (divInt)
+import GHC.Base (quotInt)
 import Foreign (copyBytes)
 import Unsafe.Coerce
 import GHC.IO.Unsafe (unsafePerformIO)
 import qualified Foreign.Marshal.Utils as Ptr
 import Control.DeepSeq
 import Data.Bits (unsafeShiftR)
+import Data.Coerce (coerce)
 
 -- | Datakind to either define a statically known compile time natural number or a dynamic runtime number
 -- Used by both 'PackedVector' and 'MutablePackedVector' to provide an optimized structure for each case. 
@@ -142,33 +144,32 @@ instance
   ( Pack a
   , KnownNat len
   , KnownNat bitSize
-  , KnownNat (Div 64 bitSize) -- TODO I should get rid of this constraint
   ) => MPVector (MutablePackedVector ('Static len) ('Static bitSize)) a where
   length _ = fromIntegral . natVal $ Proxy @len
   {-# INLINE length #-}
   bitSize _ = fromIntegral . natVal $ Proxy @bitSize
   {-# INLINE bitSize #-}
-  index _ = Util.index . fromIntegral . natVal $ Proxy @(Div 64 bitSize)
+  index _ = Util.index (64 `quotInt` fromIntegral (natVal $ Proxy @bitSize))
   {-# INLINE index #-}
   unsafeWithPtr (MPVec_SS fptr) = unsafePrimToPrim . unsafeWithForeignPtr fptr
   {-# INLINE unsafeWithPtr #-}
   foldMapI f b1 v@(MPVec_SS fptr) = Util.foldMap elemsPerWord (length v) fptr b1 f
-    where elemsPerWord = fromIntegral . natVal $ Proxy @(Div 64 bitSize)
+    where elemsPerWord = 64 `quotInt` fromIntegral (natVal $ Proxy @bitSize)
   {-# INLINE foldMapI #-}
   sameShape _ = new @('Static len) @('Static bitSize)
   {-# INLINE sameShape #-}
 
-instance (Pack a, KnownNat bitSize, KnownNat (Div 64 bitSize)) => MPVector (MutablePackedVector 'Dynamic ('Static bitSize)) a where
+instance (Pack a, KnownNat bitSize) => MPVector (MutablePackedVector 'Dynamic ('Static bitSize)) a where
   length (MPVec_DS l _) = l
   {-# INLINE length #-}
   bitSize _ = fromIntegral . natVal $ Proxy @bitSize
   {-# INLINE bitSize #-}
-  index _ = Util.index . fromIntegral . natVal $ Proxy @(Div 64 bitSize)
+  index _ = Util.index (64 `quotInt` fromIntegral (natVal $ Proxy @(bitSize)))
   {-# INLINE index #-}
   unsafeWithPtr (MPVec_DS _ fptr) = unsafePrimToPrim . unsafeWithForeignPtr fptr
   {-# INLINE unsafeWithPtr #-}
   foldMapI f b1 (MPVec_DS len fptr) = Util.foldMap elemsPerWord len fptr b1 f
-    where elemsPerWord = fromIntegral . natVal $ Proxy @(Div 64 bitSize)
+    where elemsPerWord = 64 `quotInt` fromIntegral (natVal $ Proxy @bitSize)
   {-# INLINE foldMapI #-}
   sameShape v = new @'Dynamic @('Static bitSize) $ length v
   {-# INLINE sameShape #-}
@@ -217,6 +218,13 @@ type family CreateFn (sz :: DynamicNat) (bSz :: DynamicNat) (m :: Type -> Type) 
   CreateFn 'Dynamic     ('Static bSz) m a = Int ->        m (MutablePackedVector  'Dynamic    ('Static bSz) (PrimState m) a)
   CreateFn 'Dynamic      'Dynamic     m a = Int -> Int -> m (MutablePackedVector  'Dynamic     'Dynamic     (PrimState m) a)
 
+-- | Type family to unify the creation of packed vectors from existing foreign pointers.
+type family FromForeignPtrFn (sz :: DynamicNat) (bSz :: DynamicNat) s (a :: Type) :: Type where
+  FromForeignPtrFn ('Static sz) ('Static bSz) s a =               ForeignPtr Word64 -> MutablePackedVector ('Static sz) ('Static bSz) s a
+  FromForeignPtrFn ('Static sz)  'Dynamic     s a = Int ->        ForeignPtr Word64 -> MutablePackedVector ('Static sz)  'Dynamic     s a
+  FromForeignPtrFn 'Dynamic     ('Static bSz) s a = Int ->        ForeignPtr Word64 -> MutablePackedVector  'Dynamic    ('Static bSz) s a
+  FromForeignPtrFn 'Dynamic      'Dynamic     s a = Int -> Int -> ForeignPtr Word64 -> MutablePackedVector  'Dynamic     'Dynamic     s a
+
 -- | Closed typeclass which handles creating new packed vectors
 -- 'new' is effectively an overloaded method to allow passing runtime information if necessary.
 -- Intended to be used with 'TypeApplications'
@@ -237,6 +245,12 @@ class CreatePacked (sz :: DynamicNat) (bSz :: DynamicNat) where
   -- Again creates a vector with 10 elements at 4 bits each, however the bit size is statically
   -- known and the compiler can optimze the indexing and several other methods because of that.
   new :: PrimMonad m => CreateFn sz bSz m a
+  -- | Create a new mutable packed vector from an existing foreign pointer. As with 'new' it requires
+  -- two type annotations and 0-2 arguments.
+  --
+  -- The foreign pointer must be of correct size. This is not checked.
+  unsafeFromForeignPtr :: FromForeignPtrFn sz bSz s a
+
 
 instance (KnownNat sz, KnownNat bSz) => CreatePacked ('Static sz) ('Static bSz) where
   new = unsafePrimToPrim $ do
@@ -246,9 +260,11 @@ instance (KnownNat sz, KnownNat bSz) => CreatePacked ('Static sz) ('Static bSz) 
     where
       sz = fromIntegral $ natVal (Proxy @sz)
       bSz = fromIntegral $ natVal (Proxy @bSz)
-      perWord = 64 `divInt` bSz
-      nrOfWords = (sz + perWord - 1) `divInt` perWord
+      perWord = 64 `quotInt` bSz
+      nrOfWords = (sz + perWord - 1) `quotInt` perWord
   {-# INLINE new #-}
+  unsafeFromForeignPtr = coerce
+  {-# INLINE unsafeFromForeignPtr #-}
 
 instance KnownNat bSz => CreatePacked 'Dynamic ('Static bSz) where
   new sz = unsafePrimToPrim $ do
@@ -257,9 +273,11 @@ instance KnownNat bSz => CreatePacked 'Dynamic ('Static bSz) where
     pure $ MPVec_DS sz fptr
     where
       bSz = fromIntegral $ natVal (Proxy @bSz)
-      perWord = 64 `divInt` bSz
-      nrOfWords = (sz + perWord - 1) `divInt` perWord
+      perWord = 64 `quotInt` bSz
+      nrOfWords = (sz + perWord - 1) `quotInt` perWord
   {-# INLINE new #-}
+  unsafeFromForeignPtr = MPVec_DS
+  {-# INLINE unsafeFromForeignPtr #-}
 
 instance KnownNat sz => CreatePacked ('Static sz) 'Dynamic where
   new bSz = unsafePrimToPrim $ do
@@ -268,10 +286,15 @@ instance KnownNat sz => CreatePacked ('Static sz) 'Dynamic where
     pure $ MPVec_SD bSz perWord m r z fptr
     where
       sz = fromIntegral $ natVal (Proxy @sz)
-      perWord = 64 `divInt` bSz
+      perWord = 64 `quotInt` bSz
       (m,r,z) = Util.divConstants perWord
-      nrOfWords = (sz + perWord - 1) `divInt` perWord
+      nrOfWords = (sz + perWord - 1) `quotInt` perWord
   {-# INLINE new #-}
+  unsafeFromForeignPtr bsz = MPVec_SD bsz perWord m r z
+    where
+      perWord = 64 `quotInt` bsz
+      (m,r,z) = Util.divConstants perWord
+  {-# INLINE unsafeFromForeignPtr #-}
 
 instance CreatePacked 'Dynamic 'Dynamic where
   new sz bSz = unsafePrimToPrim $ do
@@ -279,10 +302,15 @@ instance CreatePacked 'Dynamic 'Dynamic where
     unsafeWithForeignPtr fptr $ \ptr -> Ptr.fillBytes ptr 0 (nrOfWords * 8)
     pure $ MPVec_DD sz bSz perWord m r z fptr
     where
-      perWord = 64 `divInt` bSz
+      perWord = 64 `quotInt` bSz
       (m,r,z) = Util.divConstants perWord
-      nrOfWords = (sz + perWord - 1) `divInt` perWord
+      nrOfWords = (sz + perWord - 1) `quotInt` perWord
   {-# INLINE new #-}
+  unsafeFromForeignPtr sz bsz = MPVec_DD sz bsz perWord m r z
+    where
+      perWord = 64 `quotInt` bsz
+      (m,r,z) = Util.divConstants perWord
+  {-# INLINE unsafeFromForeignPtr #-}
 
 -- Operations
 
@@ -444,7 +472,7 @@ unsafeCopy dst src
     ioDst = unsafeCoerce @_ @(v RealWorld a) dst
     ioSrc = unsafeCoerce @_ @(w RealWorld a) src
     dstBSz = bitSize dst
-    nrOfWords v = let perWord = 64 `div` bitSize v in (length v + perWord - 1) `divInt` perWord
+    nrOfWords v = let perWord = 64 `div` bitSize v in (length v + perWord - 1) `quotInt` perWord
     {-# INLINE nrOfWords #-}
 {-# INLINE unsafeCopy #-}
 

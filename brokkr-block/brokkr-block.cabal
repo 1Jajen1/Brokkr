@@ -51,3 +51,14 @@ library
                      , Brokkr.BlockState.Internal.Conversion
                      , Brokkr.BlockState
   other-modules:       Brokkr.BlockState.Internal.TH
+
+benchmark PaletteLookup
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      benchmark
+  main-is:             PaletteLookup.hs
+  build-depends:       tasty-bench
+                     , brokkr-block
+                     , deepseq
+                     , random
+  ghc-options:         -O2

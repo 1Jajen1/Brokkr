@@ -8,6 +8,7 @@ module Brokkr.NBT.Internal (
 , putNBT
 , putTag
 , takeArray
+, getTagId
 ) where
 
 import Data.ByteString.Internal qualified as BS
@@ -174,14 +175,9 @@ takeArray :: forall a e st . S.Storable a => FP.ParserT st e (S.Vector a)
 takeArray = FP.withAnyWord32 $ \w -> do
   -- TODO Define this somewhere with cpp so that we can
   -- skip this on big endian systems
-  let !len@(I# len#) = fromIntegral $ byteSwap32 w 
-      !(I# sz#) = S.sizeOf (undefined :: a)
-  -- TODO Do we need the sz * len < 0 check that FP.take
-  -- adds? Technically no if we parse FP.anyWord32be
-  -- instead and convert that, but is that correct?
-  -- It will allow larger arrays, but that shouldn't
-  -- be a problem. We still check if we even have enough bytes
-  BS.BS fp _ <- FP.takeUnsafe# (len# *# sz#)
+  let !len = fromIntegral $ byteSwap32 w 
+      !sz = S.sizeOf (undefined :: a)
+  BS.BS fp _ <- FP.take (len * sz)
   pure $ S.unsafeFromForeignPtr0 (coerce fp) len
 
 -- TODO PR to flatparse

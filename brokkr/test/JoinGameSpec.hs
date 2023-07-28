@@ -2,18 +2,15 @@ module JoinGameSpec (spec) where
 
 import Test.Syd
 
+import Utils.Client
 import Utils.Setup
 import Utils.Login
 import Utils.Play
-import qualified Network.Packet.Client.Play as Client
-import qualified Network.Packet.Client.Play.ChunkData as Client
+import Brokkr.Packet.Common
+import qualified Brokkr.Packet.ServerToClient.Play as Client
 import Control.Exception
 import Data.Maybe (mapMaybe)
 import Data.List (sort)
-import Chunk.Position
-import Block.Position
-import Util.Position
-import Util.Rotation
 
 spec :: BrokkrSpec
 spec = do
@@ -29,8 +26,8 @@ spec = do
 
       login maxTime client
 
-      readPacket_ "Login (play)" maxTime_large client $ \case
-          Client.Login _ -> pure ()
+      readPacket_ @(Client.PlayPacket TestDimSize) "Login (play)" maxTime_large client $ \case
+          Client.Login{} -> pure ()
           p -> unexpectedPacket "Login (Play)" p
 
       -- read packets until the server stops sending
@@ -40,20 +37,20 @@ spec = do
             -- If we already have all chunks there is no need to wait for a long time as
             -- all other packets are really small and should come fast
             let maxTime' = if needMoreChunks > 0 then maxTime_large else maxTime
-            readPacketOrTimeout_ "Login (play)" maxTime' client $ \case
+            readPacketOrTimeout_ "Setup" maxTime' client $ \case
               Nothing -> pure buf
               Just p@Client.ChunkDataAndUpdateLight{} -> go (needMoreChunks - 1) (p:buf)
               Just p -> if isSetupPacket p then go needMoreChunks (p:buf) else throwIO $ UnexpectedSetupPacket p
 
       let -- TODO ViewDistance and spawn from config
           viewDistance = 2
-          expectedChunks = sort $ [ChunkPos x z | x <- [-viewDistance..viewDistance], z <- [-viewDistance..viewDistance]] 
+          expectedChunks = sort $ [(x, z) | x <- [-viewDistance..viewDistance], z <- [-viewDistance..viewDistance]] 
 
       res <- go (length expectedChunks) []
 
       -- check that all chunks arrived
       let receivedChunks = sort $ mapMaybe (\case
-            Client.ChunkDataAndUpdateLight (Client.ChunkData _ pos _ _ _ _ _ _) -> Just pos
+            Client.ChunkDataAndUpdateLight posX posZ _ _ _ _ _  -> Just (posX, posZ)
             _ -> Nothing
             ) res
       receivedChunks `shouldBe` expectedChunks
@@ -64,7 +61,7 @@ spec = do
             _ -> False
             ) res
           -- TODO Get values from config
-          expectedDefaultSpawn = [Client.SetDefaultSpawnPosition (BlockPos 0 130 0) 0]
+          expectedDefaultSpawn = [Client.SetDefaultSpawnPosition (Location 0 130 0) $ Client.SpawnAngle 0]
       receivedDefaultSpawn `shouldBe` expectedDefaultSpawn
 
       -- check that the center check has been set

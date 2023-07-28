@@ -18,8 +18,11 @@ common common-options
 -- TODO Go through deps soon-ish
   build-depends:       base >= 4.17 && < 5
                      , brokkr-block
+                     , brokkr-anvil
                      , brokkr-registry
                      , brokkr-nbt
+                     , brokkr-packet
+                     , brokkr-packed-vector
                      , async
                      , stm
                      , stm-containers
@@ -77,81 +80,48 @@ library
 --else
   --c-sources:         cbits/basic.c
   cc-options:          -O3
-  exposed-modules:      Block.BlockFace
-                      , Block.Position
-                      -- , Chunk
-                      , Chunk.Heightmap
-                      , Chunk.Internal
-                      , Chunk.Position
-                      , Chunk.Section
-                      , Client
-                      , Client.GameMode
-                      , Dimension
-                      , Dimension.Internal
+  exposed-modules:      Brokkr.Chunk
+                      , Brokkr.Chunk.BlockStates
+                      , Brokkr.Chunk.HeightMap
+                      , Brokkr.Chunk.Internal
+                      , Brokkr.Chunk.Position
+                      , Brokkr.Client
+                      , Brokkr.Client.GameMode
+                      , Brokkr.Debug.Monad
+                      , Brokkr.Dimension
+                      , Brokkr.Dimension.Internal
                       -- Entity
-                      , Entity.Util.Hand
+                      , Brokkr.Entity.Util.Hand
+                      -- Inventory
+                      , Brokkr.Inventory.Internal
                       -- , IO.ChunkCache
-                      , IO.Chunk
-                      , IO.ChunkParser
-                      , IO.Chunkloading
-                      , IO.RegionFile
+                      , Brokkr.IO.ChunkCache
+                      , Brokkr.IO.Chunkloading
                       -- , Network
-                      , Server
-                      , Server.Config
-                      , Server.Monad
-                      , System.JoinPlayers
-                      , System.NetworkCommands
-                      , System.PlayerMovement
+                      , Brokkr.Server
+                      , Brokkr.Server.Config
+                      , Brokkr.Server.Monad
+                      , Brokkr.System.JoinPlayers
+                      , Brokkr.System.NetworkCommands
+                      , Brokkr.System.PlayerMovement
                       -- 
-                      , Network.Connection
-                      , Network.Exception
-                      , Network.Handler
-                      , Network.Monad
-                      , Network.Packet.Client.Login
-                      , Network.Packet.Client.Play
-                      , Network.Packet.Client.Play.ChunkData
-                      , Network.Packet.Client.Play.Login
-                      , Network.Packet.Server.Handshake
-                      , Network.Packet.Server.Login
-                      , Network.Packet.Server.Play
-                      , Network.Packet.Server.Play.ClientInformation
-                      , Network.Packet.Server.Play.PlayerAbilities
-                      , Network.Packet.Server.Play.PlayerAction
-                      , Network.Packet.Server.Play.PlayerCommand
-                      , Network.Packet.Server.Play.UseItemOn
-                      , Network.Protocol
-                      , Network.Util
-                      , Network.Util.Builder
-                      , Network.Util.EntityId
-                      , Network.Util.FromIntegral
-                      , Network.Util.MCString
-                      , Network.Util.Packet
-                      , Network.Util.SizePrefixed
-                      , Network.Util.Slot
-                      , Network.Util.VarNum
-                      , Util.Angle
-                      , Util.Binary
-                      , Util.BitSet
-                      , Util.ByteOrder
-                      , Util.Dismount
-                      , Util.Hecs
-                      , Util.NBT
-                      , Util.NBT.Internal
-                      , Util.PalettedVector
-                      , Util.Vector.Packed
-                      , Util.Vector.Internal
-                      , Util.Linear.V2
-                      , Util.Linear.V3
-                      , Util.Linear.Vector
-                      , Util.Position
-                      , Util.PrimVar
-                      , Util.Queue
-                      , Util.Ring
-                      , Util.Rotation
-                      , Util.TeleportId
-                      , Util.UUID
-                      , Util.Velocity
-                      , Util.Word24
+                      , Brokkr.Network.Command
+                      , Brokkr.Network.Connection
+                      , Brokkr.Network.Exception
+                      , Brokkr.Network.Handler
+                      , Brokkr.Network.Monad
+                      , Brokkr.Network.Util.Chunk
+                      , Brokkr.Util.BitSet
+                      , Brokkr.Util.PalettedVector
+                      , Brokkr.Util.Linear.V2
+                      , Brokkr.Util.Linear.V3
+                      , Brokkr.Util.Linear.Vector
+                      , Brokkr.Util.Position
+                      , Brokkr.Util.PrimVar
+                      , Brokkr.Util.Queue
+                      , Brokkr.Util.Ring
+                      , Brokkr.Util.Rotation
+                      , Brokkr.Util.Velocity
 executable Brokkr
   import:              common-options
   hs-source-dirs:      app
@@ -193,24 +163,6 @@ benchmark Chunkloading
   main-is:             Chunkloading.hs
   build-depends:       tasty-bench
                      , brokkr
-  ghc-options:         -O2
-benchmark NBT
-  import:              common-options
-  type:                exitcode-stdio-1.0
-  hs-source-dirs:      benchmark
-  main-is:             Util/NBT.hs
-  build-depends:       tasty-bench
-                     , brokkr
-  ghc-options:         -O2
-benchmark VarInt
-  import:              common-options
-  type:                exitcode-stdio-1.0
-  hs-source-dirs:      benchmark
-  main-is:             VarInt.hs
-  build-depends:       tasty-bench
-                     , brokkr
-                     , random
-                     , mwc-random
   ghc-options:         -O2
 benchmark GlobalBlockId
   import:              common-options
