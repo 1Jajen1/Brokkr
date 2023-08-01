@@ -310,11 +310,12 @@ instance (KnownNat sz, KnownNat maxBitSz) => ToBinary (PalettedVector sz maxBitS
     put @Int8 0 <> put (VarInt val) <> put @VarInt 0 -- TODO Is the second 0 for no data correct?
   put (Indirect p (PVec_SD bitSz elsPerWord _ _ _ fp)) =
     put @Int8 (fromIntegral bitSz) <> put p <> put (VarInt $ fromIntegral nrOfWords) <> put (S.unsafeFromForeignPtr0 @Int64 (coerce fp) nrOfWords)
-    where nrOfWords = fromIntegral (natVal (Proxy @sz)) `quot` elsPerWord
+    where nrOfWords = (fromIntegral (natVal (Proxy @sz)) + elsPerWord - 1) `quot` elsPerWord
   put (Global pv) = put @Int8 (fromIntegral maxBitSz) <> put @VarInt (fromIntegral nrOfWords) <> put pv
     where
       maxBitSz :: Int = fromIntegral $ natVal (Proxy @maxBitSz)
-      nrOfWords :: Int = fromIntegral (natVal (Proxy @sz)) `quot` (64 `quot` maxBitSz)
+      elsPerWord = 64 `quot` maxBitSz
+      nrOfWords :: Int = (fromIntegral (natVal (Proxy @sz)) + elsPerWord - 1) `quot` elsPerWord
   {-# INLINE put #-}
 
 instance (KnownNat sz, KnownNat maxBitSz) => FromBinary (PalettedVector sz maxBitSz) where

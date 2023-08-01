@@ -91,7 +91,7 @@ mkChunkPacket Chunk{..} = (minPacketSz, Play.ChunkDataAndUpdateLight
         !perWord = 64 `quotInt` bSz
         !numLongs = (len + perWord - 1) `quotInt` perWord
     paletteContainerSz (SingleValue v) = 1 + varIntSize v + 1
-    paletteContainerSz (Indirect p v) = 1 + varIntSize (S.length p) + paletteByteSz + varIntSize numLongs + 8 * numLongs
+    paletteContainerSz (Indirect p v)  = 1 + varIntSize (S.length p) + paletteByteSz + varIntSize numLongs + 8 * numLongs
       where
         !paletteByteSz = getSum $ S.foldMap (Sum . varIntSize) p
         !bSz = PV.bitSize v

@@ -184,7 +184,7 @@ fromIOSection :: IO.ChunkSection -> ChunkSection
 fromIOSection IO.ChunkSection{sectionBiomes = ioBiomes, sectionBlocks = ioBlocks, sectionSkyLight = ioSkyLight, sectionBlockLight = ioBlockLight} =
   let biomeEntryToId (IO.BiomeEntry bid) = 0 -- TODO error "TODO biomes"
       biomes = Biomes $ case ioBiomes of
-        Nothing -> Palette.SingleValue (coerce Air) -- TODO Which air do I use? Air|VoidAir|CaveAir
+        Nothing -> Palette.SingleValue (coerce Air) -- TODO Which one is default?
         Just (IO.SingleBiome entry) -> Palette.SingleValue (biomeEntryToId entry)
         Just (IO.FullBiomes (IO.BiomePalette palette) biomes)
           | V.length palette > 1 `unsafeShiftL` biomesMaxIndirectSize
@@ -198,7 +198,7 @@ fromIOSection IO.ChunkSection{sectionBiomes = ioBiomes, sectionBlocks = ioBlocks
             hs = Conv.hashProps (coerce blockName) (coerce props)
         in fromIntegral $ Conv.propsToId (coerce blockName) (coerce props) hs
       blocks0 = case ioBlocks of
-        Nothing -> Palette.SingleValue 0 -- TODO
+        Nothing -> Palette.SingleValue (coerce Air) -- TODO Which air do I use? Air|VoidAir|CaveAir
         Just (IO.SingleBlockState entry) -> Palette.SingleValue (blockEntryToId entry)
         Just (IO.FullBlockStates (IO.BlockPalette palette) blockStates)
           | V.length palette > 1 `unsafeShiftL` blockStatesMaxIndirectSize

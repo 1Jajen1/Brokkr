@@ -119,10 +119,10 @@ toStrictByteString cs compressionSettings0 _encryptionSettings (Packet (Estimate
         unsafeWithForeignPtr withPrefix $ \prefixPtr ->
           unsafeWithForeignPtr fptrCompressed $ \compressedPtr -> do
 
-            _ <- writeVarNumInternal (0xFFFFFFFF .&. fromIntegral compressedSz) prefixPtr
-            _ <- writeVarNumInternal (0xFFFFFFFF .&. fromIntegral sz) (plusPtr prefixPtr pCompressedSize)
+            prefixPtr' <- writeVarNumInternal (0xFFFFFFFF .&. fromIntegral compressedSz) prefixPtr
+            prefixPtr'' <- writeVarNumInternal (0xFFFFFFFF .&. fromIntegral sz) prefixPtr'
 
-            BS.memcpy (plusPtr prefixPtr pSize) compressedPtr compressedSz
+            BS.memcpy prefixPtr'' compressedPtr compressedSz
 
         -- print $ HexBS $ BS.BS withPrefix finSize
 

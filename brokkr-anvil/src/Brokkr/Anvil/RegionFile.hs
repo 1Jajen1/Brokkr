@@ -99,7 +99,7 @@ readChunkData (ChunkPosition x z) RegionFile{..} cont notPresent
     compressedBs <- readAt file (fromIntegral off * sectorSize) (fromIntegral sz * sectorSize)
     BS.unsafeUseAsCStringLen compressedBs $ \case
       (Ptr addr, cSz@(I# cSz#))
-        | cSz < 4 -> throwIO $ FailedReadingCompressedChunk (ChunkPosition x z)
+        | cSz <= 4 -> throwIO $ FailedReadingCompressedChunk (ChunkPosition x z)
         | otherwise ->
 #ifdef WORDS_BIGENDIAN
           let compressedSz = int32ToInt# (indexInt32OffAddr# addr 0#)
@@ -108,9 +108,9 @@ readChunkData (ChunkPosition x z) RegionFile{..} cont notPresent
           let compressedSz = word2Int# (byteSwap32# (word32ToWord# (indexWord32OffAddr# addr 0#)))
               compressionType = indexInt8OffAddr# addr 4#
 #endif
-          in if isTrue# (compressedSz ># (cSz# -# 5#))
-            then throwIO $ FailedReadingCompressedChunk (ChunkPosition x z)
-            else cont (I8# compressionType) (BS.take (I# compressedSz) $ BS.drop 5 compressedBs)
+          in if isTrue# (compressedSz <=# (cSz# -# 4#)) -- The compression type is included in the length ffs
+            then cont (I8# compressionType) (BS.take (I# compressedSz) $ BS.drop 5 compressedBs)
+            else throwIO $ FailedReadingCompressedChunk (ChunkPosition x z)
     where
       rIndex = fromIntegral $ x .&. 31 + 32 * (z .&. 31)
       (ChunkLocation off sz) = locationTable `S.unsafeIndex` rIndex
