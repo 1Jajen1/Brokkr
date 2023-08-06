@@ -82,4 +82,6 @@ benchmark brokkr-nbt-benchmark
                      , deepseq
                      , zlib
                      , hedgehog
+                     , named-binary-tag
+                     , cereal
   other-modules:       BigTest

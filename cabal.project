@@ -11,6 +11,12 @@ source-repository-package
   location: git@github.com:haskell/entropy.git
   tag: f33d65001e96eb947879eb886840546787d556f3
 
+-- nbt comparisons
+source-repository-package
+  type: git
+  location: git@github.com:davidgarland/named-binary-tag.git
+  tag: 2cb7164c82e4d34dabb6301463cc17cfef20a0a6
+
 -- source-repository-package
 --   type: git
 --   location: git@github.com:1Jajen1/bitfield.git
@@ -26,6 +32,7 @@ packages: ./brokkr-anvil/brokkr-anvil.cabal
 packages: ./brokkr-registry/brokkr-registry.cabal
 packages: ./brokkr-packed-vector/brokkr-packed-vector.cabal
 packages: ./brokkr-hecs/*/*.cabal
+packages: ./brokkr-concurrent/brokkr-concurrent.cabal
 
 allow-newer: cryptohash-sha1:base
 allow-newer: cryptohash-md5:base

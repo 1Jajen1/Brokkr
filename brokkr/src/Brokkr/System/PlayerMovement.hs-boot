@@ -2,6 +2,7 @@ module Brokkr.System.PlayerMovement (
   OldPosition
 , OldRotation
 , Land, Fly
+, ChunkYPosition
 ) where
 
 import Hecs
@@ -14,3 +15,6 @@ instance Component OldRotation
 
 data Land
 data Fly
+
+data ChunkYPosition
+instance Component ChunkYPosition

@@ -82,4 +82,20 @@ handleCommand eid (Packet.UseItem hand seqId)
   = do
     pure ()
 
+handleCommand eid (Packet.PlayerCommand _eid Packet.StartSneaking _)
+  = Server.addTag @Sneaking eid
+handleCommand eid (Packet.PlayerCommand _eid Packet.StopSneaking _)
+  = Server.removeTag @Sneaking eid
+
+handleCommand eid (Packet.PlayerCommand _eid Packet.StartSprinting _)
+  = Server.addTag @Sprinting eid
+handleCommand eid (Packet.PlayerCommand _eid Packet.StopSprinting _)
+  = Server.removeTag @Sprinting eid
+
+handleCommand eid (Packet.PlayerAbilities ab)
+  = do
+    if Packet.isFlying ab
+      then Server.addTag    @Flying eid
+      else Server.removeTag @Flying eid
+
 handleCommand eid p = liftIO $ putStrLn $ "Unhandled packet " <> (show p)

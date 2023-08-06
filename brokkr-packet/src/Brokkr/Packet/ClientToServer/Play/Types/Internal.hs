@@ -414,8 +414,8 @@ newtype PlayerAbilities = UnsafePlayerAbilities Int8
 
 pattern Abilities :: Bool -> PlayerAbilities
 pattern Abilities { isFlying } <-
-  ((\(UnsafePlayerAbilities i) -> testBit i 2) -> isFlying)
-  where Abilities isFlying = UnsafePlayerAbilities . fromIntegral $ boolBit isFlying 2
+  ((\(UnsafePlayerAbilities i) -> testBit i 1) -> isFlying)
+  where Abilities isFlying = UnsafePlayerAbilities . fromIntegral $ boolBit isFlying 1
 
 instance Show PlayerAbilities where
   showsPrec prec pa = showParen (prec > 10) $

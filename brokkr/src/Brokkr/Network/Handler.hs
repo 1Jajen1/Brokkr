@@ -34,6 +34,7 @@ import Brokkr.Registry.Dimension
 
 import Brokkr.Server.Config
 import Brokkr.Server.Monad qualified as Server
+import Brokkr.System.PlayerMovement (ChunkYPosition(..))
 
 import Brokkr.Util.Position
 import Brokkr.Util.Rotation
@@ -174,9 +175,11 @@ joinPlayer :: Connection -> Server.EntityId -> Network ()
 joinPlayer conn eid = do
   -- Create/Load player data -- SYNC Because we need to know where to join the player
   -- TODO Move
-  let initialPosition = Position 0 150 0
+  let initialYPosition = 150
+      initialPosition = Position 0 initialYPosition 0
       initialRotation = Rotation 0 0
       initialVelocity = Position 0 0 0
+      initialChunkYPosition = ChunkYPosition $ floor initialYPosition `div` 16
 
   initialWorld <- Server.get @Dimension (coerce $ Server.getComponentId @Dimension.Overworld)
     pure
@@ -230,16 +233,15 @@ joinPlayer conn eid = do
 
   -- liftIO $ putStrLn $ "Loading " <> show numChunksToLoad <> " chunks"
   -- liftIO $ print chunksToLoad
-  debug @Debug $ "Requesting " <> show numChunksToLoad <> " chunks"
+  -- debug @Verbose $ "Requesting " <> show numChunksToLoad <> " chunks"
 
   Dimension.withChunkLoading initialWorld $ \(Proxy :: Proxy dimHeight) loadChunk -> liftIO $ forM_ chunksToLoad $ \cpos -> do
     as <- Async.async $ loadChunk playerTicket cpos >>= \ref -> do
       -- Force all delayed chunk updates
-      c <- atomically $ do
-        c <- readTVar ref
-        let !c' = force c
-        writeTVar ref c'
-        pure c'
+      !c <- atomically $ do
+        !c <- force <$> readTVar ref
+        writeTVar ref c
+        pure c
       let (sz, cData) = mkChunkPacket c -- traceShowId $ mkChunkPacket c
       Conn.sendPacket @dimHeight conn . Conn.Packet (Conn.EstimateMin sz) $! cData
       done <- atomicModifyIORef' numDoneRef $ \(i :: Int) -> (i - 1, i - 1)
@@ -247,12 +249,13 @@ joinPlayer conn eid = do
     Async.link as
 
   liftIO $ takeMVar doneRef
-  debug @Debug $ "Sent " <> show numChunksToLoad <> " chunks"
+  -- debug @Verbose $ "Sent " <> show numChunksToLoad <> " chunks"
   
   liftIO . Conn.sendPacket @Conn.UnsafeDefDimHeight conn $ Conn.Packet (Conn.EstimateMin 10) (SC.Play.SetCenterChunk 0 0)
   liftIO . Conn.sendPacket @Conn.UnsafeDefDimHeight conn $ Conn.Packet (Conn.EstimateMin 38)
     (SC.Play.SynchronizePlayerPosition (SC.Play.Position 0 130 0) (SC.Play.Rotation 180 0) mempty (SC.Play.TeleportId 0) SC.Play.NoDismount)
 
+  Server.set eid initialChunkYPosition
   Server.set eid initialPosition
   Server.set eid initialRotation
   Server.set eid initialVelocity

@@ -4,17 +4,20 @@ module Brokkr.System.PlayerMovement (
 , OldPosition(..)
 , OldRotation(..)
 , Land, Fly
+, ChunkYPosition(..)
 ) where
 
 import Brokkr.Chunk.Internal (force)
 import Brokkr.Chunk.Position
 import Brokkr.Client
 
+import Brokkr.Debug.Monad
 import Brokkr.Dimension
 
 import Brokkr.IO.ChunkCache (ChunkTicket(ChunkTicket))
 
 import Brokkr.Network.Connection
+import Brokkr.Network.Util.Chunk (mkChunkPacket)
 
 import Brokkr.Packet.ServerToClient.Play qualified as Packet
 
@@ -36,7 +39,6 @@ import Control.Monad
 import Control.Monad.IO.Class
 
 import Foreign.Storable
-import Brokkr.Network.Util.Chunk (mkChunkPacket)
 
 newtype OldPosition = OldPosition Position
   deriving stock Show
@@ -56,6 +58,11 @@ newtype OldFalling = OldFalling Falling
 data Land
 data Fly
 
+newtype ChunkYPosition = ChunkYPosition Int
+  deriving stock Show
+  deriving newtype (Eq, Storable)
+  deriving Server.Component via (Server.ViaFlat Int)
+
 -- TODO When writing out position changes merge them into their respective combined packets
 -- ^-- No? Instead query for enabled and disabled and check when iterating?
 -- TODO Make sure Old-* components are only enabled and disabled. This avoids table moves for
@@ -67,36 +74,42 @@ data Fly
 playerMovement :: Server ()
 playerMovement = do
   -- Position changes
-  Server.system (Server.filterDSL @'[Server.Tag Joined, Connection, Position, OldPosition, Rotation, OldRotation]) $ \aty -> do
+  Server.system (Server.filterDSL @'[Server.Tag Joined, Connection, Position, OldPosition, ChunkYPosition]) $ \aty -> do
     connRef <- Server.getColumn @Connection aty
 
     posRef <- Server.getColumn @Position aty
     oldPosRef <- Server.getColumn @OldPosition aty
+    chunkYRef <- Server.getColumn @ChunkYPosition aty
 
-    rotRef <- Server.getColumn @Rotation aty
+    -- rotRef <- Server.getColumn @Rotation aty
     
     Server.iterateArchetype aty $ \n eid -> do
       conn <- Server.readColumn connRef n
 
       position <- Server.readColumn posRef n
+      let Position _ y _ = position
       oldPosition <- Server.readColumn oldPosRef n
+      oldChunkY <- Server.readColumn chunkYRef n
 
-      _rotation <- Server.readColumn rotRef n
+      -- _rotation <- Server.readColumn rotRef n
 
       -- TODO Disable instead
       Server.removeComponent @OldPosition eid
-      Server.removeComponent @OldRotation eid
-
-      let (Position _ dY _) = position |-| coerce oldPosition
+      -- Server.removeComponent @OldRotation eid
 
       -- Update the view position and maybe load chunks
       let oldChunkPos@(ChunkPosition oldChunkX oldChunkZ) = toChunkPos $ coerce oldPosition
           newChunkPos@(ChunkPosition chunkX chunkZ) = toChunkPos position
           (ChunkPosition deltaChunkX deltaChunkZ) = toDelta oldChunkPos newChunkPos
-          acrossBorder = 0 /= deltaChunkX + deltaChunkZ
+          acrossBorder = 0 /= deltaChunkX || 0 /= deltaChunkZ
+          chunkY = floor y `div` 16
+
+      Server.writeColumn chunkYRef n $ ChunkYPosition chunkY
+      -- liftIO $ print (chunkY, oldChunkY)
 
       -- Yes, I too have no idea why we need to send SetCenterChunk or why the y level change wants requires it
-      when (acrossBorder || abs dY >= 1) $ do
+      when (acrossBorder || chunkY /= coerce oldChunkY) $ do
+        -- liftIO . putStrLn $ "Across " <> show (acrossBorder, oldChunkY, chunkY)
         -- send SetCenterChunk packet
         liftIO . sendPacket @UnsafeDefDimHeight conn $! Packet (EstimateMin 32) (Packet.SetCenterChunk (fromIntegral chunkX) (fromIntegral chunkZ))
 
@@ -114,16 +127,18 @@ playerMovement = do
           -- This is sort of static, so lookup at the start?
           dim <- Server.get @Dimension eid pure $ error "Client without dimension" -- TODO
 
-          withChunkLoading dim $ \(Proxy :: Proxy dimHeight) loadChunk -> liftIO $ forM_ (loadXRows <> loadZRows) $ \cpos ->
-            void . Async.async $ loadChunk playerTicket cpos >>= \ref -> do
-              c <- atomically $ do
-                c <- readTVar ref
-                let !c' = force c
-                writeTVar ref c'
-                pure c'
-              let (sz, cD) = mkChunkPacket c
-              pure ()
-              -- sendPacket @dimHeight conn $! Packet (EstimateMin sz) $! cD
+          -- debug @Verbose   $ "Requesting " <> show (length $ loadXRows <> loadZRows) <> " chunks"
+          -- debug @Verbose $ show $ loadXRows <> loadZRows
+
+          withChunkLoading dim $ \(Proxy :: Proxy dimHeight) loadChunk -> liftIO $ forM_ (loadXRows <> loadZRows) $ \cpos -> do
+            as <- Async.async $ loadChunk playerTicket cpos >>= \ref -> do
+              !c <- atomically $ do
+                !c <- force <$> readTVar ref
+                writeTVar ref c
+                pure c
+              let !(!sz, !cD) = mkChunkPacket c
+              sendPacket @dimHeight conn $! Packet (EstimateMin sz) $! cD
+            Async.link as
 
           liftIO . forM_ (unloadXRows <> unloadZRows) $ \(ChunkPosition x z) -> do
             -- TODO Remove playerTicket from the chunk cache

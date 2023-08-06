@@ -30,6 +30,13 @@ import Brokkr.NBT.ByteOrder
 
 import BigTest
 
+import qualified Data.Serialize as Serialize
+import qualified Data.Nbt as NBT2
+
+-- TODO Make config option
+includeCmp :: Bool
+includeCmp = True
+
 instance NFData NBT where
   -- Both arguments to NBT are strict
   -- _key is a newtype around a ByteString which is also fully strict
@@ -39,6 +46,7 @@ instance NFData NBT where
 data Env = Env {
     envBs      :: !BS.ByteString
   , envNBT     :: !NBT
+  , envNBT2    :: !NBT2.Nbt'
   , envBigTest :: !BigTest
   }
   deriving stock Generic
@@ -56,6 +64,9 @@ setupEnv name = do
   bigTestBs <- handle (\(_ :: SomeException) -> pure initBs) . evaluate . LBS.toStrict . GZip.decompress $ LBS.fromStrict bigTestBs0
 
   let envBigTest = parseBigTest bigTestBs
+      envNBT2 = case Serialize.decode envBs of
+        Left _ -> error "Failed to parse nbt using named-binary-tag"
+        Right n -> n
 
   return $ Env{..}
 
@@ -63,13 +74,36 @@ benchFile :: String -> Benchmark
 benchFile name =
   env (setupEnv name) $ \ ~Env{..} -> 
   bgroup name $
-    [ bench "decode"  $ nf parseBsNBT envBs
-    , bench "encode"  $ nf encodeNBT envNBT 
-    ] <> if name == "bigtest.nbt" then
-        [ bench "decode (schema)" $ nf parseBigTest envBs
-        , bench "encode (schema)" $ nf encodeBigTest envBigTest
+    [ bench "decode (brokkr)"  $ nf parseBsNBT envBs
+    , bench "encode (brokkr)"  $ nf encodeNBT envNBT 
+    ]
+      <> (if includeCmp then
+        [ bench "decode (named-binary-tag)"  $ nf (Serialize.decode @NBT2.Nbt') envBs
+        , bench "encode (named-binary-tag)"  $ nf (Serialize.runPut . Serialize.put) envNBT2 
+        ] else [])
+      <> (if name == "bigtest.nbt" then
+        [ bench "decode (brokkr) (schema)" $ nf parseBigTest envBs
+        , bench "encode (brokkr) (schema)" $ nf encodeBigTest envBigTest
         ]
-      else []
+      else [])
+
+instance NFData b => NFData (NBT2.Nbt b) where
+  rnf (NBT2.Nbt k v) = rnf k `seq` rnf v
+instance NFData b => NFData (NBT2.Tag b) where
+  rnf (NBT2.Byte b) = rnf b
+  rnf (NBT2.Short b) = rnf b
+  rnf (NBT2.Int b) = rnf b
+  rnf (NBT2.Long b) = rnf b
+  rnf (NBT2.Float b) = rnf b
+  rnf (NBT2.Double b) = rnf b
+  rnf (NBT2.String b) = rnf b
+  rnf (NBT2.ByteArray b) = rnf b
+  rnf (NBT2.IntArray b) = rnf b
+  rnf (NBT2.LongArray b) = rnf b
+  rnf (NBT2.List b) = rnf b
+  rnf (NBT2.Compound b) = rnf b
+instance NFData b => NFData (NBT2.Cmpnd b) where
+  rnf (NBT2.Cmpnd b v) = rnf v `seq` rnf b
 
 benchByteSwap :: (Num a, S.Storable a) => String -> (S.Vector a -> S.Vector b) -> Benchmark
 benchByteSwap n f = bgroup n
