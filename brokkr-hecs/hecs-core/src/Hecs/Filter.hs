@@ -13,7 +13,7 @@ module Hecs.Filter (
 , getColumn, getColumnWithId
 , getEntityColumn
 , TypedHas
-, iterateArchetype
+, iterateArchetype, iterateArchetype_
 , And, Or, Not, Tag
 , FilterDSL
 , filterDSL
@@ -52,11 +52,15 @@ getColumnWithId :: forall c ty m . (Component c, TypedHas ty c, MonadBase IO m) 
 getColumnWithId ty c = liftBase $ Hecs.Filter.Internal.getColumnWithId ty c
 {-# INLINE getColumnWithId #-}
 
-iterateArchetype :: MonadBaseControl IO m => TypedArchetype ty -> (Int -> EntityId -> m ()) -> m ()
-iterateArchetype ty f = do
-  st <- liftBaseWith $ \runInBase -> Hecs.Filter.Internal.iterateArchetype ty (\n eid acc -> runInBase $ restoreM acc >>= \() -> f n eid) (runInBase $ pure ())
+iterateArchetype :: MonadBaseControl IO m => TypedArchetype ty -> (Int -> EntityId -> a -> m a) -> m a -> m a
+iterateArchetype ty f z = do
+  st <- liftBaseWith $ \runInBase -> Hecs.Filter.Internal.iterateArchetype ty (\n eid acc -> runInBase $ restoreM acc >>= f n eid) (runInBase z)
   restoreM st
 {-# INLINE iterateArchetype #-}
+
+iterateArchetype_ :: MonadBaseControl IO m => TypedArchetype ty -> (Int -> EntityId -> m ()) -> m ()
+iterateArchetype_ ty f = iterateArchetype ty (\n eid _ -> f n eid) (pure ())
+{-# INLINE iterateArchetype_ #-}
 
 getEntityColumn :: MonadBase IO m => TypedArchetype ty -> m (Column Flat EntityId)
 getEntityColumn ty = liftBase $ Hecs.Filter.Internal.getEntityColumn ty

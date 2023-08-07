@@ -55,9 +55,13 @@ import GHC.TypeLits
 import GHC.Generics hiding (prec)
 
 import Mason.Builder qualified as Mason
+import Data.Void
 
 class ToBinary a where
   put :: a -> Mason.Builder
+
+instance ToBinary Void where
+  put _ = mempty
 
 instance ToBinary Int where
   put i = Mason.int64BE (fromIntegral i)
@@ -186,6 +190,9 @@ class FromBinary a where
   {-# INLINE get #-}
 
   {-# MINIMAL with|get #-}
+
+instance FromBinary Void where
+  get = Flatparse.empty
 
 instance FromBinary Int where
   with f = Flatparse.withAnyInt (f . swapBE)

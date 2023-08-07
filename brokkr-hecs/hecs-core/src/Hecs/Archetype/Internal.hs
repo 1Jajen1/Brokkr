@@ -77,7 +77,6 @@ getNumEntities (Archetype{columns = Columns# szRef eidRef _ _ _}) = IO $ \s ->
     (# s1, i #) -> case readMutVar# eidRef s1 of
       (# s2, arr #) -> (# s2, (I# i, I# (sizeofMutableByteArray# arr)) #) 
 
--- This is a monoid?
 data ArchetypeTy = ArchetypeTy ComponentType# ComponentType# ComponentType#
 
 iterateComponentIds :: ArchetypeTy -> (forall a . ComponentId a -> Int -> b -> IO b) -> IO b -> IO b

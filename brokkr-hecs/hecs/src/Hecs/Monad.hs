@@ -57,3 +57,5 @@ instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) w
   {-# INLINE defer #-}
   sync = HecsM $ ask >>= \w -> liftBase $ Core.sync w
   {-# INLINE sync #-}
+  register actionType cid hdl = HecsM ask >>= \w -> Core.register w actionType cid hdl
+  {-# INLINE register #-}

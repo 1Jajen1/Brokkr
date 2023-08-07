@@ -14,6 +14,8 @@ module Hecs.World (
 , forFilter
 , defer
 , sync
+, register
+, ActionType(..)
 ) where
 
 import Prelude hiding (filter)
@@ -84,3 +86,7 @@ forFilter w fi f z = do
   st <- liftBaseWith $ \runInBase -> filterI w fi (\aty b -> runInBase $ restoreM b >>= f aty) (runInBase z)
   restoreM st
 {-# INLINE forFilter #-}
+
+register :: (WorldClass w, MonadBase IO m) => w -> ActionType -> ComponentId c -> (EntityId -> IO ()) -> m ()
+register w ty cid hdl = liftBase $ registerI w ty cid hdl
+{-# INLINE register #-}

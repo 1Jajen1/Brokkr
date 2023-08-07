@@ -87,6 +87,7 @@ library
                       , Brokkr.Chunk.Position
                       , Brokkr.Client
                       , Brokkr.Client.GameMode
+                      , Brokkr.Client.Username
                       , Brokkr.Debug.Monad
                       , Brokkr.Dimension
                       , Brokkr.Dimension.Internal
@@ -97,14 +98,14 @@ library
                       -- , IO.ChunkCache
                       , Brokkr.IO.ChunkCache
                       , Brokkr.IO.Chunkloading
-                      -- , Network
+                      -- , Systems and listeners
+                      , Brokkr.Listeners.ClientUpdate
                       , Brokkr.Server
                       , Brokkr.Server.Config
                       , Brokkr.Server.Monad
-                      , Brokkr.System.JoinPlayers
                       , Brokkr.System.NetworkCommands
                       , Brokkr.System.PlayerMovement
-                      -- 
+                      -- , Network
                       , Brokkr.Network.Command
                       , Brokkr.Network.Connection
                       , Brokkr.Network.Exception

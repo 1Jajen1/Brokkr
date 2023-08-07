@@ -74,7 +74,7 @@ newtype ChunkYPosition = ChunkYPosition Int
 playerMovement :: Server ()
 playerMovement = do
   -- Position changes
-  Server.system (Server.filterDSL @'[Server.Tag Joined, Connection, Position, OldPosition, ChunkYPosition]) $ \aty -> do
+  Server.system (Server.filterDSL @'[Connection, Position, OldPosition, ChunkYPosition]) $ \aty -> do
     connRef <- Server.getColumn @Connection aty
 
     posRef <- Server.getColumn @Position aty
@@ -83,7 +83,7 @@ playerMovement = do
 
     -- rotRef <- Server.getColumn @Rotation aty
     
-    Server.iterateArchetype aty $ \n eid -> do
+    Server.iterateArchetype_ aty $ \n eid -> do
       conn <- Server.readColumn connRef n
 
       position <- Server.readColumn posRef n

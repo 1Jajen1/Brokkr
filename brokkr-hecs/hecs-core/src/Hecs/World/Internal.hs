@@ -7,6 +7,7 @@ module Hecs.World.Internal (
   WorldImpl(..)
 , WorldClass(..)
 , syncSetComponent
+, ActionType(..)
 ) where
 
 import qualified Hecs.Array as Arr
@@ -37,13 +38,15 @@ import Hecs.Component.Properties (wildcard)
 -- This is going to be wrapped by 'makeWorld "World" [''Comp1, ''Comp2, ...]' which enables
 -- making some component ids static. The componentMap is then only used for unknown/dynamic components
 data WorldImpl (preAllocatedEIds :: Nat) = WorldImpl {
-  freshEIdRef       :: !(MVar EntityId.FreshEntityId) -- allocate unique entity ids with reuse
-, entityIndexRef    :: !(IORef (IntMap ArchetypeRecord)) -- changes often and thus needs good allround performance
-, componentIndexRef :: !(IORef (HTB.HashTable (ComponentId Any) (Arr.Array ArchetypeRecord))) -- changes infrequently if ever after the component graph stabilises, so only read perf matters, but also not too much
-, archetypeIndexRef :: !(IORef (HTB.HashTable ArchetypeTy Archetype)) -- changes infrequently once graph stabilises
-, emptyArchetype    :: !Archetype
-, deferredOpsRef    :: !(MVar (Arr.Array Command))
-, isDeferred        :: !Bool -- TODO Experiment with this on the type level
+  freshEIdRef          :: !(MVar EntityId.FreshEntityId) -- allocate unique entity ids with reuse
+, entityIndexRef       :: !(IORef (IntMap ArchetypeRecord)) -- changes often and thus needs good allround performance
+, componentIndexRef    :: !(IORef (HTB.HashTable (ComponentId Any) (Arr.Array ArchetypeRecord))) -- changes infrequently if ever after the component graph stabilises, so only read perf matters, but also not too much
+, archetypeIndexRef    :: !(IORef (HTB.HashTable ArchetypeTy Archetype)) -- changes infrequently once graph stabilises
+, emptyArchetype       :: !Archetype
+, deferredOpsRef       :: !(MVar (Arr.Array Command))
+, isDeferred           :: !Bool -- TODO Experiment with this on the type level
+, componentHandlersAdd :: !(IORef (HTB.HashTable (ComponentId Any) (Arr.Array (EntityId -> IO ()))))
+, componentHandlersRem :: !(IORef (HTB.HashTable (ComponentId Any) (Arr.Array (EntityId -> IO ()))))
 }
 
 -- TODO This is temporary and not very efficient yet
@@ -54,6 +57,7 @@ data Command =
   | forall c .                RemoveTag       !EntityId !(ComponentId c)
   | forall c . Component c => RemoveComponent !EntityId !(ComponentId c)
   | DestroyEntity !EntityId
+  | Register !ActionType !(ComponentId Any) (EntityId -> IO ())
 
 -- TODO Revisit derring inside processing set/get etc
 data ArchetypeRecord = ArchetypeRecord !Int !Int !Archetype
@@ -86,6 +90,12 @@ instance KnownNat n => WorldClass (WorldImpl n) where
 
     deferred <- Arr.new 8
     deferredOpsRef <- newMVar deferred
+
+    componentHandlersAddTable <- HTB.new 8
+    componentHandlersAdd <- newIORef componentHandlersAddTable
+
+    componentHandlersRemTable <- HTB.new 8
+    componentHandlersRem <- newIORef componentHandlersRemTable
 
     let isDeferred = False
 
@@ -134,6 +144,10 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     then modifyMVar_ deferredOpsRef (`Arr.writeBack` RemoveComponent eid compId) -- TODO Strictness
     else syncRemove (Proxy @(ComponentKind c)) w eid compId
   {-# INLINE removeComponentI #-}
+  registerI w@(WorldImpl{..}) actionType cid hdl = if isDeferred
+    then modifyMVar_ deferredOpsRef (`Arr.writeBack` Register actionType (coerce cid) hdl)
+    else syncRegister w actionType (coerce cid) hdl
+  {-# INLINE registerI #-}
   -- TODO Check if ghc removes the filter entirely
   filterI WorldImpl{componentIndexRef} fi f z = readIORef componentIndexRef >>= \componentIndex -> HTB.lookup componentIndex (Filter.extractMainId fi)
     (\arr ->
@@ -162,6 +176,7 @@ instance KnownNat n => WorldClass (WorldImpl n) where
             RemoveTag e cId -> syncRemove (Proxy @Tag) w e cId
             RemoveComponent @c e cId -> syncRemove (Proxy @(ComponentKind c)) w e cId
             DestroyEntity e -> syncDestroyEntity w e
+            Register actionType cid hdl -> syncRegister w actionType cid hdl
           go arr (n + 1)
 
 syncAllocateEntity :: WorldImpl n -> EntityId -> IO ()
@@ -177,72 +192,77 @@ syncAdd :: forall c n .
 syncAdd newArchetype addToType lookupCol WorldImpl{..} eid compId = do
   eIndex <- readIORef entityIndexRef
   let ArchetypeRecord row _ aty = IM.findWithDefault (error "Hecs.World.Internal:syncAdd entity id not in entity index!") (coerce eid) eIndex
-  lookupCol aty (\c -> pure (aty, row, c)) $ Archetype.getEdge aty compId >>= \case
-    ArchetypeEdge (Just dstAty) _ -> lookupCol dstAty (\c -> do
-      (newRow, movedEid) <- Archetype.moveEntity aty row c dstAty
-      -- Important insert the moved first in case it is ourselves so that we overwrite it after
-      writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow 1 dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row 1 aty) eIndex
-      pure (dstAty, newRow, c)
-      )
-      (error $ "Hecs.World.Internal:syncAdd edge destination did not have component: " <> show compId <> ". Searched in " <> show (getTy dstAty) )
-    ArchetypeEdge Nothing _ -> do
-      (newTy, newColumn) <- addToType (Archetype.getTy aty)
+  lookupCol aty (\c -> pure (aty, row, c)) $ do
+    -- run handlers
+    hdlTable <- readIORef componentHandlersAdd
+    HTB.lookup hdlTable (coerce compId) (\hdlArr -> Arr.iterate_ hdlArr $ \f -> f eid) $ pure ()
 
-      archetypeIndex <- readIORef archetypeIndexRef
-      dstAty <- HTB.lookup archetypeIndex newTy (\dstAty -> do
-          -- putStrLn "Cheap move (no edge)" 
-          Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
-          pure dstAty
-        ) $ do
-          -- putStrLn "Expensive move" 
-          dstAty <- newArchetype aty newTy newColumn
+    Archetype.getEdge aty compId >>= \case
+      ArchetypeEdge (Just dstAty) _-> lookupCol dstAty (\c -> do
+        (newRow, movedEid) <- Archetype.moveEntity aty row c dstAty
+        -- Important insert the moved first in case it is ourselves so that we overwrite it after
+        writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow 1 dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row 1 aty) eIndex
+        pure (dstAty, newRow, c)
+        )
+        (error $ "Hecs.World.Internal:syncAdd edge destination did not have component: " <> show compId <> ". Searched in " <> show (getTy dstAty) )
+      ArchetypeEdge Nothing _ -> do
+        (newTy, newColumn) <- addToType (Archetype.getTy aty)
 
-          Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
-          !newArchetypeIndex <- HTB.insert archetypeIndex newTy dstAty
-          writeIORef archetypeIndexRef newArchetypeIndex
+        archetypeIndex <- readIORef archetypeIndexRef
+        dstAty <- HTB.lookup archetypeIndex newTy (\dstAty -> do
+            -- putStrLn "Cheap move (no edge)" 
+            Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
+            pure dstAty
+          ) $ do
+            -- putStrLn "Expensive move" 
+            dstAty <- newArchetype aty newTy newColumn
 
-          componentIndex <- readIORef componentIndexRef
-          !compIndex <- Archetype.iterateComponentIds newTy (\tyId col ind' -> do 
-              -- Relation components are treated slightly different
-              ind <- if (coerce @_ @(Bitfield Int EntityId.Entity) tyId).tag.isRelation
-                then do
-                  let (first, second) = unwrapRelation $ coerce compId
-                      writeWildCard rel ind = do
-                        arr <- HTB.lookup ind rel
-                          (\arr -> do
-                            let i = Arr.size arr - 1
-                            ArchetypeRecord _ count aty' <- Arr.read arr i
-                            if aty' == dstAty
-                              then Arr.write arr i (ArchetypeRecord col (count + 1) dstAty) >> pure arr
-                              else Arr.writeBack arr $ ArchetypeRecord col 1 dstAty
-                          )
-                          $ Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty)
-                        HTB.insert ind rel arr
+            Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
+            !newArchetypeIndex <- HTB.insert archetypeIndex newTy dstAty
+            writeIORef archetypeIndexRef newArchetypeIndex
+
+            componentIndex <- readIORef componentIndexRef
+            !compIndex <- Archetype.iterateComponentIds newTy (\tyId col ind' -> do 
+                -- Relation components are treated slightly different
+                ind <- if (coerce @_ @(Bitfield Int EntityId.Entity) tyId).tag.isRelation
+                  then do
+                    let (first, second) = unwrapRelation $ coerce compId
+                        writeWildCard rel ind = do
+                          arr <- HTB.lookup ind rel
+                            (\arr -> do
+                              let i = Arr.size arr - 1
+                              ArchetypeRecord _ count aty' <- Arr.read arr i
+                              if aty' == dstAty
+                                then Arr.write arr i (ArchetypeRecord col (count + 1) dstAty) >> pure arr
+                                else Arr.writeBack arr $ ArchetypeRecord col 1 dstAty
+                            )
+                            $ Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty)
+                          HTB.insert ind rel arr
+                    
+                    -- add the wildcard parts to the index: Rel Type x and Rel x Type for both first and second
+                    writeWildCard (coerce $ mkRelation wildcard first) ind'
+                      >>= writeWildCard (coerce $ mkRelation first wildcard)
+                      >>= writeWildCard (coerce $ mkRelation wildcard second)
+                      >>= writeWildCard (coerce $ mkRelation second wildcard)
                   
-                  -- add the wildcard parts to the index: Rel Type x and Rel x Type for both first and second
-                  writeWildCard (coerce $ mkRelation wildcard first) ind'
-                    >>= writeWildCard (coerce $ mkRelation first wildcard)
-                    >>= writeWildCard (coerce $ mkRelation wildcard second)
-                    >>= writeWildCard (coerce $ mkRelation second wildcard)
+                  else pure ind'
                 
-                else pure ind'
+                -- add to the component index
+                arr <- HTB.lookup ind (coerce tyId) (`Arr.writeBack` ArchetypeRecord col 1 dstAty) $ Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty) -- TODO Check if count=1 is a safe assumption?
+                HTB.insert ind (coerce tyId) arr
               
-              -- add to the component index
-              arr <- HTB.lookup ind (coerce tyId) (`Arr.writeBack` ArchetypeRecord col 1 dstAty) $ Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty) -- TODO Check if count=1 is a safe assumption?
-              HTB.insert ind (coerce tyId) arr
-            
-            ) (pure componentIndex)
+              ) (pure componentIndex)
 
-          writeIORef componentIndexRef compIndex
+            writeIORef componentIndexRef compIndex
 
-          pure dstAty
-      -- now move the entity and its current data between the two
-      (newRow, movedEid) <- Archetype.moveEntity aty row newColumn dstAty
+            pure dstAty
+        -- now move the entity and its current data between the two
+        (newRow, movedEid) <- Archetype.moveEntity aty row newColumn dstAty
 
-      -- Important insert the moved first in case it is ourselves so that we overwrite it after
-      writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow 1 dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row 1 aty) eIndex -- TODO Check if count=1 is a safe assumption?
+        -- Important insert the moved first in case it is ourselves so that we overwrite it after
+        writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow 1 dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row 1 aty) eIndex -- TODO Check if count=1 is a safe assumption?
 
-      pure (dstAty, newRow, newColumn)
+        pure (dstAty, newRow, newColumn)
 {-# INLINE syncAdd #-}
 
 syncAddTag :: WorldImpl n -> EntityId -> ComponentId c -> IO ()
@@ -269,8 +289,12 @@ syncSetComponent w eid compId comp = do
 syncRemove :: forall ty c n . KnownComponentType ty => Proxy ty -> WorldImpl n -> EntityId -> ComponentId c -> IO ()
 syncRemove ty WorldImpl{..} eid compId = do
   eIndex <- readIORef entityIndexRef
-  let ArchetypeRecord row _ aty = IM.findWithDefault (error "Hecs.World.Internal:syncAdd entity id not in entity index!") (coerce eid) eIndex
+  let ArchetypeRecord row _ aty = IM.findWithDefault (error "Hecs.World.Internal:syncRemove entity id not in entity index!") (coerce eid) eIndex
   Archetype.lookupComponent ty aty compId (\removedColumn -> do
+    -- run handlers
+    hdlTable <- readIORef componentHandlersRem
+    HTB.lookup hdlTable (coerce compId) (\hdlArr -> Arr.iterate_ hdlArr $ \f -> f eid) $ pure ()
+
     dstAty <- Archetype.getEdge aty compId >>= \case
       ArchetypeEdge _ (Just dstAty) -> pure dstAty
       ArchetypeEdge _ Nothing -> do
@@ -343,9 +367,32 @@ syncDestroyEntity WorldImpl{..} eid = do
   modifyMVar_ freshEIdRef $ flip EntityId.deAllocateEntityId eid -- TODO Strictness
   eIndex <- readIORef entityIndexRef
   let ArchetypeRecord row _ aty = IM.findWithDefault (error "Hecs.World.Internal:syncAdd entity id not in entity index!") (coerce eid) eIndex
+
+  -- TODO Get all components and run the remove handlers
+  Archetype.iterateComponentIds (Archetype.getTy aty) (\cid _ _ -> do
+    hdlTable <- readIORef componentHandlersRem
+    HTB.lookup hdlTable (coerce cid) (\hdlArr -> Arr.iterate_ hdlArr $ \f -> f eid) $ pure ()
+    ) (pure ())
+  
   movedEid <- Archetype.removeEntity aty row
 
   writeIORef entityIndexRef $! IM.delete (coerce eid) $ IM.insert (coerce movedEid) (ArchetypeRecord row 1 aty) eIndex -- TODO Check if count=1 is a safe assumption?
+
+syncRegister :: WorldImpl n -> ActionType -> ComponentId Any -> (EntityId -> IO ()) -> IO ()
+syncRegister WorldImpl{..} OnAdd cid hdl = do
+  -- add it to the global registry of handlers
+  table <- readIORef componentHandlersAdd
+  table' <- HTB.lookup table (coerce cid)
+    (\arr -> Arr.writeBack arr hdl >>= HTB.insert table (coerce cid)) 
+    $ Arr.new 2 >>= \arr -> Arr.writeBack arr hdl >>= HTB.insert table (coerce cid)
+  writeIORef componentHandlersAdd table'
+syncRegister WorldImpl{..} OnRemove cid hdl = do
+  -- add it to the global registry of handlers
+  table <- readIORef componentHandlersRem
+  table' <- HTB.lookup table (coerce cid)
+    (\arr -> Arr.writeBack arr hdl >>= HTB.insert table (coerce cid)) 
+    $ Arr.new 2 >>= \arr -> Arr.writeBack arr hdl >>= HTB.insert table (coerce cid)
+  writeIORef componentHandlersRem table'
 
 -- All behavior a World has to support. makeWorld creates a newtype around WorldImpl and derives this
 class WorldClass w where
@@ -361,6 +408,9 @@ class WorldClass w where
   filterI :: w -> Filter ty Filter.HasMainId -> (Filter.TypedArchetype ty -> b -> IO b) -> IO b -> IO b
   defer :: w -> (w -> IO a) -> IO a
   sync :: w -> IO ()
+  registerI :: w -> ActionType -> ComponentId c -> (EntityId -> IO ()) -> IO ()
+
+data ActionType = OnAdd | OnRemove
 
 -- TODO I am probably (most likely) a little excessive on the inline/inlineable pragmas
 -- I probably need them on functions that take continuation arguments. And inlineable on functions with typeclasses so that I can specialize them on import.

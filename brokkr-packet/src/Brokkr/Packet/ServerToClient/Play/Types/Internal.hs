@@ -7,6 +7,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module Brokkr.Packet.ServerToClient.Play.Types.Internal (
   Angle(..)
 , Dismount(..)
@@ -42,6 +44,12 @@ module Brokkr.Packet.ServerToClient.Play.Types.Internal (
 , module Brokkr.Packet.ServerToClient.Play.Types.Codec
 , PosBitField(..)
 , pattern PosBitField
+, PlayerInfoUpdates(..)
+, pattern InfoAddPlayer
+, pattern InfoGameMode
+, pattern InfoListed
+, combinePlayerInfo
+, PlayerInfoRemoves(..)
 ) where
 
 -- TODO
@@ -81,7 +89,11 @@ import GHC.Generics (Generic)
 import GHC.Int (Int8(..))
 import GHC.TypeLits
 
-import Mason.Builder qualified as Mason
+import Unsafe.Coerce qualified as Unsafe (unsafeCoerce)
+import qualified FlatParse.Basic as FP
+import Data.Type.Bool
+import Data.Monoid
+import Data.Void (Void)
 
 newtype Angle = Angle Word8
   deriving stock Show
@@ -469,3 +481,109 @@ instance Show PosBitField where
     . showString ", yawRel = " . showsPrec 11 yawRel
     . showString ", pitchRel = " . showsPrec 11 pitchRel
     . showString " }"
+
+data PlayerInfoUpdates =
+    forall hasAdd hasInitChat hasGameMode hasListed hasLatency hasDisplayName
+  . (KnownPlayerInfoMask hasAdd hasInitChat hasGameMode hasListed hasLatency hasDisplayName)
+  => PlayerInfoUpdates (V.Vector (UUID, PlayerInfo hasAdd hasInitChat hasGameMode hasListed hasLatency hasDisplayName))
+
+class KnownPlayerInfoMask (hasAdd :: Bool) (hasInitChat :: Bool) (hasGameMode :: Bool) (hasListed :: Bool) (hasLatency :: Bool) (hasDisplayName :: Bool) where
+  playerInfoMask :: Word8
+
+class KnownBool (b :: Bool) where bool' :: a -> a -> a
+instance KnownBool True where bool' l _ = l
+instance KnownBool False where bool' _ r = r
+
+instance
+  ( KnownBool hasAdd
+  , KnownBool hasInitChat
+  , KnownBool hasGameMode
+  , KnownBool hasListed
+  , KnownBool hasLatency
+  , KnownBool hasDisplayName
+  ) => KnownPlayerInfoMask hasAdd hasInitChat hasGameMode hasListed hasLatency hasDisplayName where
+    playerInfoMask =
+          bool' @hasAdd         (bit 0) 0
+      .|. bool' @hasInitChat    (bit 1) 0
+      .|. bool' @hasGameMode    (bit 2) 0
+      .|. bool' @hasListed      (bit 3) 0
+      .|. bool' @hasLatency     (bit 4) 0
+      .|. bool' @hasDisplayName (bit 5) 0
+
+instance Eq PlayerInfoUpdates where
+  PlayerInfoUpdates @l1 @l2 @l3 @l4 @l5 @l6 lv == PlayerInfoUpdates @r1 @r2 @r3 @r4 @r5 @r6 rv
+    =    playerInfoMask @l1 @l2 @l3 @l4 @l5 @l6 == playerInfoMask @r1 @r2 @r3 @r4 @r5 @r6
+      && lv == Unsafe.unsafeCoerce rv
+
+instance Show PlayerInfoUpdates where
+  show (PlayerInfoUpdates v) = show v
+
+instance ToBinary PlayerInfoUpdates where
+  put (PlayerInfoUpdates @l1 @l2 @l3 @l4 @l5 @l6 vec) =
+       put (playerInfoMask @l1 @l2 @l3 @l4 @l5 @l6)
+    <> put @VarInt (fromIntegral $ V.length vec)
+    <> V.foldMap (\(uid, info) -> put uid <> put info) vec
+
+instance FromBinary PlayerInfoUpdates where
+  get = do
+    mask <- get @Word8
+    VarInt sz <- get
+    let getOne :: forall l1 l2 l3 l4 l5 l6 st . FP.ParserT st PacketParseError (PlayerInfo l1 l2 l3 l4 l5 l6)
+        getOne = UnsafePlayerInfo <$> getMasked 0 <*> getMasked 1 <*> getMasked 2 <*> getMasked 3 <*> getMasked 4 <*> getMasked 5
+        getMasked :: FromBinary a => Int -> FP.ParserT st PacketParseError (Maybe a)
+        getMasked n
+          | testBit mask n = Just <$> get
+          | otherwise = pure Nothing
+        -- TODO Why does ghc think these are unused? This errors without them because withDict needs them
+        mkPlayerInfoUpdates
+          :: forall (l1 :: Bool) (l2 :: Bool) (l3 :: Bool) (l4 :: Bool) (l5 :: Bool) (l6 :: Bool) st . FP.ParserT st PacketParseError PlayerInfoUpdates
+        mkPlayerInfoUpdates =
+          withDict @(KnownPlayerInfoMask l1 l2 l3 l4 l5 l6) mask $
+            PlayerInfoUpdates <$> V.replicateM (fromIntegral sz) ((,) <$> get <*> getOne @l1 @l2 @l3 @l4 @l5 @l6)
+    mkPlayerInfoUpdates
+
+data PlayerInfo (hasAdd :: Bool) (hasInitChat :: Bool) (hasGameMode :: Bool) (hasListed :: Bool) (hasLatency :: Bool) (hasDisplayName :: Bool)
+  = UnsafePlayerInfo
+    (Maybe Username)
+    (Maybe Void)
+    (Maybe GameMode)
+    (Maybe Bool)
+    (Maybe Void)
+    (Maybe Void)
+  deriving stock (Eq, Show)
+
+pattern InfoAddPlayer :: Username -> PlayerInfo True False False False False False
+pattern InfoAddPlayer x <- UnsafePlayerInfo (Just x) _ _ _ _ _
+  where InfoAddPlayer x = UnsafePlayerInfo (Just x) Nothing Nothing Nothing Nothing Nothing
+
+pattern InfoGameMode :: GameMode -> PlayerInfo False False True False False False
+pattern InfoGameMode x <- UnsafePlayerInfo _ _ (Just x) _ _ _
+  where InfoGameMode x = UnsafePlayerInfo Nothing Nothing (Just x) Nothing Nothing Nothing
+
+pattern InfoListed :: Bool -> PlayerInfo False False False True False False
+pattern InfoListed x <- UnsafePlayerInfo _ _ _ (Just x) _ _
+  where InfoListed x = UnsafePlayerInfo Nothing Nothing Nothing (Just x) Nothing Nothing
+
+combinePlayerInfo :: PlayerInfo l1 l2 l3 l4 l5 l6 -> PlayerInfo r1 r2 r3 r4 r5 r6 -> PlayerInfo (l1 || r1) (l2 || r2) (l3 || r3) (l4 || r4) (l5 || r5) (l6 || r6)
+combinePlayerInfo (UnsafePlayerInfo l1 l2 l3 l4 l5 l6) (UnsafePlayerInfo r1 r2 r3 r4 r5 r6)
+  = UnsafePlayerInfo
+    (getLast $ Last l1 <> Last r1)
+    (getLast $ Last l2 <> Last r2)
+    (getLast $ Last l3 <> Last r3)
+    (getLast $ Last l4 <> Last r4)
+    (getLast $ Last l5 <> Last r5)
+    (getLast $ Last l6 <> Last r6)
+
+instance ToBinary (PlayerInfo hasAdd hasInitChat hasGameMode hasListed hasLatency hasDisplayName) where
+  put (UnsafePlayerInfo a b c d e f) =
+       maybe mempty (\x -> put x <> put (0 :: Word8)) a
+    <> maybe mempty (\x -> put x) b
+    <> maybe mempty (\x -> put x) c
+    <> maybe mempty (\x -> put x) d
+    <> maybe mempty (\x -> put x) e
+    <> maybe mempty (\x -> put x) f
+
+newtype PlayerInfoRemoves = PlayerInfoRemoves (V.Vector UUID)
+  deriving stock Show
+  deriving newtype Eq
+  deriving (ToBinary, FromBinary) via SizePrefixed VarInt (V.Vector UUID)

@@ -2,6 +2,8 @@ module Brokkr.Network.Handler (
   handleConnection
 ) where
 
+import Brokkr.Client (Client)
+
 import Brokkr.Chunk.Internal (force)
 import Brokkr.Chunk.Position
 
@@ -55,6 +57,7 @@ import Control.Exception
 
 import Data.Bitfield qualified as Bitfield
 
+import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 
 import Data.Coerce
@@ -64,8 +67,10 @@ import Data.Proxy
 
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as T
 
 import Data.UUID
+import Data.UUID.V3 qualified as UUID.V3 
 
 import Data.Vector qualified as V
 
@@ -75,7 +80,7 @@ import Hecs.Entity.Internal (Entity(..))
 
 import Debug.Trace
 import Brokkr.Network.Exception
-import Data.ByteString qualified as BS (toStrict, length)
+import Brokkr.Client.Username
 
 handleConnection :: Network ()
 handleConnection = context @Info "Network" $ do
@@ -84,7 +89,7 @@ handleConnection = context @Info "Network" $ do
     CS.Handshake.Handshake _ _ _ CS.Handshake.Login  -> handleLogin
   context @Info (show $ coerce @_ @UUID uid) $ do
     debug @Info $ show (CS.Play.unUsername uName) <> " logged in" 
-    handlePlay uid uName cs es
+    handlePlay (coerce uid) (coerce . CS.Play.unUsername $ uName) cs es
 
 handleStatus :: Network a
 handleStatus = closeConnection
@@ -95,8 +100,8 @@ handleLogin = do
     CS.Login.LoginStart uName _ -> pure uName
     -- TODO Check for other packets and throw InvalidProtocol on those
 
-  -- TODO generate proper uid
-  let uid = CS.Play.UserUUID nil
+  let offlineNamespace = UUID.V3.generateNamed nil (BS.unpack "OfflinePlayer")
+      uid = CS.Play.UserUUID $ UUID.V3.generateNamed offlineNamespace (BS.unpack $ T.encodeUtf8 $ CS.Play.unUsername uName)
 
   -- TODO Have a config check if we use compression and what the threshold is
   let thresh = 512000 -- TODO Compression is broken right now
@@ -109,16 +114,16 @@ handleLogin = do
 
   pure $ LoginRes uid uName finalCs finalEs
 
-data LoginResult = LoginRes CS.Play.UserUUID CS.Play.Username CompressionSettings EncryptionSettings
+data LoginResult = LoginRes !CS.Play.UserUUID !CS.Play.Username !CompressionSettings !EncryptionSettings
 
-handlePlay :: CS.Play.UserUUID -> CS.Play.Username -> CompressionSettings -> EncryptionSettings -> Network a
-handlePlay _playerUUID playerName cs es = do
+handlePlay :: ClientUUID -> Username -> CompressionSettings -> EncryptionSettings -> Network a
+handlePlay playerUUID playerName cs es = do
   !conn <- liftIO Conn.new
 
-  liftIO $ myThreadId >>= flip labelThread ("Network thread for: " <> T.unpack (CS.Play.unUsername playerName))
+  liftIO $ myThreadId >>= flip labelThread ("Network thread for: " <> T.unpack (coerce playerName))
 
   let send = do
-        liftIO $ myThreadId >>= flip labelThread ("Network send for: " <> T.unpack (CS.Play.unUsername playerName))
+        liftIO $ myThreadId >>= flip labelThread ("Network send for: " <> T.unpack (coerce playerName))
         go
         where
           go = do
@@ -128,7 +133,7 @@ handlePlay _playerUUID playerName cs es = do
               -- TODO Is this enough strictness? Does this even work?!
             go
       keepAlive = do
-        liftIO $ myThreadId >>= flip labelThread ("Network keep-alive for: " <> T.unpack (CS.Play.unUsername playerName))
+        liftIO $ myThreadId >>= flip labelThread ("Network keep-alive for: " <> T.unpack (coerce playerName))
         go
         where
           -- TODO make a config option so testing is a little easier 
@@ -155,8 +160,8 @@ handlePlay _playerUUID playerName cs es = do
               (\eidSt -> runInBase $ do
                 restoreM eidSt >>= Server.freeEntity
                 debug @Error "Failed to join player")
-              (\eidSt -> runInBase $ restoreM eidSt >>= \eid -> joinPlayer conn eid >> pure eid)
-          ) (\_ -> pure ()) -- TODO The client joined, but crashed, so we must remove it
+              (\eidSt -> runInBase $ restoreM eidSt >>= \eid -> joinPlayer conn playerName playerUUID eid >> pure eid)
+          ) (\(eid, _) -> void . runInBase $ Server.freeEntity eid) -- TODO The client joined, but crashed, so we must remove it
             $ \clientSt -> runInBase $ restoreM clientSt >>= \_client -> do
               debug @Debug "Player joined"
               -- packet loop
@@ -171,8 +176,8 @@ handlePlay _playerUUID playerName cs es = do
   -- The packet loop in the bracket already diverges, but if for whatever reason we end up here, just kill the connection
   closeConnection
 
-joinPlayer :: Connection -> Server.EntityId -> Network ()
-joinPlayer conn eid = do
+joinPlayer :: Connection -> Username -> ClientUUID -> Server.EntityId -> Network ()
+joinPlayer conn username clientUUID eid = do
   -- Create/Load player data -- SYNC Because we need to know where to join the player
   -- TODO Move
   let initialYPosition = 150
@@ -255,11 +260,15 @@ joinPlayer conn eid = do
   liftIO . Conn.sendPacket @Conn.UnsafeDefDimHeight conn $ Conn.Packet (Conn.EstimateMin 38)
     (SC.Play.SynchronizePlayerPosition (SC.Play.Position 0 130 0) (SC.Play.Rotation 180 0) mempty (SC.Play.TeleportId 0) SC.Play.NoDismount)
 
+  Server.set eid username
+  Server.set eid clientUUID
   Server.set eid initialChunkYPosition
   Server.set eid initialPosition
   Server.set eid initialRotation
   Server.set eid initialVelocity
   Server.set eid initialWorld
-  
-  -- This is the write that exposes us to the global state proper because that is what the JoinPlayer system queries on
   Server.set eid conn
+
+  -- This write will trigger the server to fully join the new client, so make sure it is done last
+  -- TODO How can I, or should I, enforce that the required components have been added
+  Server.addTag @Client eid

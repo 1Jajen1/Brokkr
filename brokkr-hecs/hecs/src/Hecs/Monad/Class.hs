@@ -10,6 +10,7 @@ module Hecs.Monad.Class (
 , hasTag
 , removeTag
 , removeComponent
+, registerListener
 ) where
 
 import qualified Hecs.Entity.Internal as Core
@@ -40,6 +41,7 @@ class Monad m => MonadHecs (w :: Type) (m :: Type -> Type) | m -> w where
   filter :: Core.Filter ty Core.HasMainId -> (Core.TypedArchetype ty -> b -> m b) -> m b -> m b
   defer :: m a -> m a
   sync :: m ()
+  register :: Core.ActionType -> Core.ComponentId c -> (Core.EntityId -> IO ()) -> m ()
 
 instance MonadHecs w m => MonadHecs w (ReaderT r m) where
   newEntity = lift newEntity
@@ -64,7 +66,12 @@ instance MonadHecs w m => MonadHecs w (ReaderT r m) where
   {-# INLINE defer #-}
   sync = lift sync
   {-# INLINE sync #-}
+  register actType cid hdl = lift $ register actType cid hdl
+  {-# INLINE register #-}
 
+registerListener  :: forall c w m . (MonadHecs w m, Core.Has w c) => Core.ActionType -> (Core.EntityId -> IO ()) -> m ()
+registerListener actionType = register actionType (Core.getComponentId @_ @_ @c (Proxy @w))
+{-# INLINE registerListener #-}
 
 set :: forall c w m . (MonadHecs w m, Core.BranchRel c, Core.Has w c, Core.Component c) => Core.EntityId -> c -> m ()
 set eid comp = setWithId eid (Core.getComponentId @_ @_ @c (Proxy @w)) (coerce comp)

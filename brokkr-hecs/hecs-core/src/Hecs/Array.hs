@@ -7,6 +7,7 @@ module Hecs.Array (
 , writeBack
 , read
 , write
+, iterate_
 ) where
 
 import Prelude hiding (read)
@@ -52,3 +53,13 @@ writeBack a@(Array# sz arr) el
   where
     cap = sizeofSmallMutableArray# arr
 {-# INLINE writeBack #-}
+
+iterate_ :: Array a -> (a -> IO ()) -> IO ()
+iterate_ (Array# sz arr) hdl = IO $ \s -> (# go 0# s, () #)
+  where
+    go n s
+      | isTrue# (n >=# sz) = s
+      | otherwise = case readSmallArray# arr n s of
+        (# s', a #) -> case hdl a of
+          IO f -> case f s' of
+            (# s'', () #) -> go (n +# 1#) s''

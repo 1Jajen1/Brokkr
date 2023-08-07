@@ -4,12 +4,17 @@ module Brokkr.Server (
 , Server.runServerM
 ) where
 
+import Brokkr.Client (Client)
+
 import Brokkr.Debug.Monad
 
 import Brokkr.Dimension qualified as Dimension
 
 import Brokkr.IO.Chunkloading qualified as Chunkloading
 
+import Brokkr.Listeners.ClientUpdate
+
+import Brokkr.Network.Connection (Connection)
 import Brokkr.Network.Handler
 import Brokkr.Network.Monad hiding (getUniverse)
 
@@ -17,7 +22,6 @@ import Brokkr.Server.Config
 import Brokkr.Server.Monad (Server)
 import Brokkr.Server.Monad qualified as Server
 
-import Brokkr.System.JoinPlayers
 import Brokkr.System.PlayerMovement
 import Brokkr.System.NetworkCommands
 
@@ -59,8 +63,14 @@ setupServer readyCallback = do
   --theEnd <- Server.newEntity
   --Dimension.new @Dimension.TheEnd "./server/world/region" theEnd
 
-  u <- Server.getUniverse
+  -- register handlers
+  -- TODO: Register the connection for more updates!
+  liftBaseWith $ \runInBase -> do
+    void . runInBase $ Server.registerListener @Client Server.OnAdd    $ \eid -> void . runInBase $ addClient    eid
+    void . runInBase $ Server.registerListener @Client Server.OnRemove $ \eid -> void . runInBase $ removeClient eid
 
+  -- start network and then gameloop
+  u <- Server.getUniverse
   liftBaseWith $ \runInBase -> Async.withAsync (do
     Network.listen (configHostPreference cfg) (configServiceName cfg) $ \(lsock, _) -> do
       readyCallback
@@ -93,16 +103,18 @@ gameLoop = go
 
         -- Sync all async changes to the world state
         Server.sync
-
-        -- Join new clients
-        joinPlayers
       
         -- process all the stuff the clients sent
         networkCommands
 
         -- player block placing/breaking
         -- weather
+
         -- create entities
+        --  - look for completely new entities and properly join them
+        --  - ie register them to the correct locations?
+        -- This really should not be a system but instead a listener for adding an entity
+
         -- world time
         -- tile events
         -- light updates

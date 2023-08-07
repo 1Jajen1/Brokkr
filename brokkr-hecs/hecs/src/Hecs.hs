@@ -11,6 +11,7 @@ module Hecs (
 , EntityId(..)
 , ComponentId(..)
 , Has
+, ActionType(..)
 ) where
 
 import Hecs.Monad

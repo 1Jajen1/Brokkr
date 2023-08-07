@@ -82,7 +82,7 @@ main = do
       (\aty _ -> do
         x <- getColumn @Int aty
         es <- getEntityColumn aty
-        iterateArchetype aty $ \n e -> do
+        iterateArchetype_ aty $ \n e -> do
           liftIO $ print e
           readColumn x n >>= liftIO . print 
         pure ()

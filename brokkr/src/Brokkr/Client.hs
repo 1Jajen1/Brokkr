@@ -1,7 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Brokkr.Client (
   Client(..)
-, Joined
 , Sneaking
 , Sprinting
 , Flying
@@ -9,11 +8,9 @@ module Brokkr.Client (
 
 import Prelude hiding (init)
 
-import Hecs
+import Hecs qualified
 
-newtype Client = Client EntityId
-
-data Joined
+newtype Client = Client Hecs.EntityId
 
 -- TODO Don't forget better bitset setting/unsetting so we don't move archetypes
 data Sneaking

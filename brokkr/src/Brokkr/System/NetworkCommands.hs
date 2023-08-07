@@ -25,10 +25,10 @@ import Data.Foldable
 
 networkCommands :: Server ()
 networkCommands = Server.system
-  (Server.filterDSL @'[Server.Tag Joined, Connection])
+  (Server.filterDSL @'[Connection])
   $ \aty -> do
     connRef <- Server.getColumn @Connection aty
-    Server.iterateArchetype aty $ \n eid -> do
+    Server.iterateArchetype_ aty $ \n eid -> do
       conn <- Server.readColumn connRef n
       st <- liftBaseWith $ \runInBase -> flushCommands conn $ runInBase . traverse_ (handleCommand eid)
       restoreM st

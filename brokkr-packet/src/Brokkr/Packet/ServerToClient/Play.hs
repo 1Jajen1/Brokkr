@@ -78,8 +78,8 @@ data PlayPacket dimHeight =
   | EndCombat
   | EnterCombat
   | CombatDeath
-  | PlayerInfoRemove
-  | PlayerInfoUpdate
+  | PlayerInfoRemove !PlayerInfoRemoves
+  | PlayerInfoUpdate !PlayerInfoUpdates
   | LookAt
   | SynchronizePlayerPosition !Position !Rotation !PosBitField !TeleportId !Dismount
   | UpdateRecipeBook

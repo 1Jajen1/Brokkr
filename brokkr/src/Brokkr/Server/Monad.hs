@@ -39,7 +39,8 @@ import Brokkr.Debug.Monad
 -- Components
 -- Network
 import Brokkr.Client
-import {-# SOURCE #-} Brokkr.Network.Connection (Connection)
+import Brokkr.Client.Username
+import Brokkr.Network.Connection (Connection)
 -- Common
 import Brokkr.Util.Position (Position, Falling)
 import Brokkr.Util.Rotation (Rotation)
@@ -54,8 +55,7 @@ import {-# SOURCE #-} Brokkr.System.PlayerMovement
 
 makeWorld "Universe"
   [ -- Network related components
-    ''Joined -- Tag which is added once a player fully joined the server. Every (globally known) connection without this is either not a player or has not joined
-  , ''Connection -- Self contained connection, has everything the network thread needs to work. Can also disconnect the client
+    ''Connection -- Self contained connection, has everything the network thread needs to work. Can also disconnect the client
     -- Common components
   , ''Position -- Position and velocity both have a V3 Double underneath. This could be modeled with (Position, V3 Double) and (Velocity, V3 Double) instead
   , ''Velocity --  but this encoding makes it easier to have type safe functions where this distinction is necessary
@@ -74,6 +74,8 @@ makeWorld "Universe"
   , ''Land, ''Fly
   -- other player move states
   , ''Sneaking, ''Sprinting, ''Flying
+  -- client identifiers
+  , ''Client, ''Username, ''ClientUUID
   ]
 
 type Server a = ServerM IO a
