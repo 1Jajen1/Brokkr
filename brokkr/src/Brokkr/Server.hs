@@ -108,7 +108,10 @@ gameLoop = go
         networkCommands
 
         -- player block placing/breaking
+
         -- weather
+        -- => iterate all things that have weather components
+        -- => What do we do for redstone or other listeners?
 
         -- create entities
         --  - look for completely new entities and properly join them

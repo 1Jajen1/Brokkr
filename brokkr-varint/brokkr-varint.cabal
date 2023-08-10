@@ -17,7 +17,6 @@ tested-with:         GHC == 9.4.3
 common common-options
   build-depends:       base >= 4.17 && < 5
                      , bytestring
-                     , template-haskell
                      , flatparse
                      , mason
                      , primitive
@@ -43,6 +42,7 @@ library
   import:              common-options
   hs-source-dirs:      src
   exposed-modules:     Brokkr.VarInt
+                       Brokkr.VarLong
                        Brokkr.VarInt.Decode
                        Brokkr.VarInt.Encode
 
@@ -52,6 +52,7 @@ test-suite brokkr-varint-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   other-modules:       VarIntSpec
+                       VarLongSpec
   build-tool-depends:  sydtest-discover:sydtest-discover
   build-depends:       brokkr-varint
                      , sydtest

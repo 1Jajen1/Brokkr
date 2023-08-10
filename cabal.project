@@ -2,7 +2,7 @@
 source-repository-package
   type: git
   location: git@github.com:1Jajen1/sydtest.git
-  tag: 0c70dccd7d0eecafc6622597478f00fa112a6086
+  tag: 2a7cb0ce093ef1e8c4d5b15cd99860678bef0ac7
   subdir: sydtest
 
 -- uuid

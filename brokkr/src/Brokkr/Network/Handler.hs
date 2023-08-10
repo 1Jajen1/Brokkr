@@ -3,6 +3,7 @@ module Brokkr.Network.Handler (
 ) where
 
 import Brokkr.Client (Client)
+import Brokkr.Client.Username
 
 import Brokkr.Chunk.Internal (force)
 import Brokkr.Chunk.Position
@@ -78,9 +79,6 @@ import GHC.Conc (labelThread)
 
 import Hecs.Entity.Internal (Entity(..))
 
-import Debug.Trace
-import Brokkr.Network.Exception
-import Brokkr.Client.Username
 
 handleConnection :: Network ()
 handleConnection = context @Info "Network" $ do
@@ -186,9 +184,8 @@ joinPlayer conn username clientUUID eid = do
       initialVelocity = Position 0 0 0
       initialChunkYPosition = ChunkYPosition $ floor initialYPosition `div` 16
 
-  initialWorld <- Server.get @Dimension (coerce $ Server.getComponentId @Dimension.Overworld)
-    pure
-    (error "World singleton missing") -- TODO error. Also check other cases similar to this
+  initialWorld <- Server.get @Dimension (coerce $ Server.getComponentId @Dimension.Overworld) pure
+    $ error "World singleton missing" -- TODO error. Also check other cases similar to this
 
   -- TODO ugly
   viewDistance <- configServerRenderDistance <$> getConfig
@@ -224,6 +221,7 @@ joinPlayer conn username clientUUID eid = do
     SC.Play.IsNotDebug -- This is bad!
     SC.Play.IsFlat
     Nothing
+
   liftIO . Conn.sendPacket @Conn.UnsafeDefDimHeight conn
     $ Conn.Packet (Conn.EstimateMin 28) (SC.Play.SetDefaultSpawnPosition (SC.Play.Location 0 130 0) (SC.Play.SpawnAngle 0))
 
@@ -255,11 +253,12 @@ joinPlayer conn username clientUUID eid = do
 
   liftIO $ takeMVar doneRef
   -- debug @Verbose $ "Sent " <> show numChunksToLoad <> " chunks"
-  
+
   liftIO . Conn.sendPacket @Conn.UnsafeDefDimHeight conn $ Conn.Packet (Conn.EstimateMin 10) (SC.Play.SetCenterChunk 0 0)
   liftIO . Conn.sendPacket @Conn.UnsafeDefDimHeight conn $ Conn.Packet (Conn.EstimateMin 38)
     (SC.Play.SynchronizePlayerPosition (SC.Play.Position 0 130 0) (SC.Play.Rotation 180 0) mempty (SC.Play.TeleportId 0) SC.Play.NoDismount)
 
+  -- TODO All of this needs to be somewhere in Brokkr.Client.*
   Server.set eid username
   Server.set eid clientUUID
   Server.set eid initialChunkYPosition

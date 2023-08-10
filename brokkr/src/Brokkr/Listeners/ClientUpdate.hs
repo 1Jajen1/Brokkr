@@ -16,16 +16,16 @@ import Brokkr.Packet.ServerToClient.Play qualified as SC.Play
 import Brokkr.Packet.Common.Internal qualified as SC.Play.Unsafe
 
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Control
 
 import Hecs.Array qualified as Arr
-
 import Data.Coerce (coerce)
 import Data.Vector qualified as V
 
 -- Gets called when an entity receives the 'Client' tag. At this point it is expected to already have a Connection, a Username and a ClientUUID
 --
 -- Iterates all existing connections and sends them the new player. Then sends the new player all existing connections
+-- TODO Maybe instead of a Client Tag, add a Tag for the protocol state?
+--  => Make this change when the configuration phase gets added
 addClient :: EntityId -> Server ()
 addClient newPlayerEid = do
   newConn <- Server.get @Connection newPlayerEid pure $ error "New client without a connection" -- TODO Errors
@@ -39,17 +39,17 @@ addClient newPlayerEid = do
   arr <- liftIO $ Arr.new 8 >>= \arr -> Arr.writeBack arr newUpdate
 
   acc <- Server.filter (Server.filterDSL @'[Server.Tag Client, Connection, Username, ClientUUID]) (\aty acc0 -> do
-    connRef <- Server.getColumn @Connection aty
-    usernameRef <- Server.getColumn @Username aty
-    uuidRef <- Server.getColumn @ClientUUID aty
+    connRef     <- Server.getColumn @Connection aty
+    usernameRef <- Server.getColumn @Username   aty
+    uuidRef     <- Server.getColumn @ClientUUID aty
     Server.iterateArchetype aty (\n _ acc -> do
-      conn <- Server.readColumn connRef n
+      conn  <- Server.readColumn connRef     n
       uname <- Server.readColumn usernameRef n
-      uuid <- Server.readColumn uuidRef n
+      uuid  <- Server.readColumn uuidRef     n
       liftIO . sendPacket @UnsafeDefDimHeight conn
              . Encode.Packet (Encode.EstimateMin 32) -- TODO Estimate correctly
              $ SC.Play.PlayerInfoUpdate (SC.Play.PlayerInfoUpdates $ V.singleton newUpdate)
-      liftIO $ Arr.writeBack acc (coerce uuid, updateNew . SC.Play.Unsafe.UnsafeUsername $ coerce uname)
+      liftIO $ Arr.writeBack acc (coerce uuid, updateNew . SC.Play.Unsafe.UnsafeUsername $ coerce uname) -- TODO This is indeed unsafe as I have no checks on Username
       ) (pure acc0)
     ) (pure arr)
 

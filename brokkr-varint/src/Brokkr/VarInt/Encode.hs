@@ -18,6 +18,13 @@ import GHC.TypeLits
 
 import Mason.Builder qualified as Mason
 
+-- | Encode any 'Word' with a given max size into a variable-length number
+--
+-- Named unsafe because no actual checks are made that the number fits into
+-- the maximum amount of bytes. The size is merely used to specialize
+-- for better performance on the 5 byte case (ie 'VarInt').
+--
+-- The two lower level functions are 'writeVarNumInternal' and 'pdepEncodeVarInt'
 unsafePutVarInt :: forall maxSize . KnownNat maxSize => Word -> Mason.Builder
 {-# INLINE unsafePutVarInt #-}
 unsafePutVarInt i = Mason.primBounded varIntPrim i
@@ -28,6 +35,11 @@ unsafePutVarInt i = Mason.primBounded varIntPrim i
       -- TODO Write a specialized version for VarLong as well...
       _ -> Prim.boundedPrim maxSz writeVarNumInternal
 
+-- | Encode and write a number to a buffer using variable length encoding
+--
+-- This method uses a simple loop to write a byte at a time. For
+-- 'VarInt' a faster method is 'pdepEncodeVarInt' which performs
+-- just one write and does not branch.
 writeVarNumInternal :: Word -> Ptr Word8 -> IO (Ptr Word8)
 writeVarNumInternal !n !ptr
   | n < 128 = do
@@ -37,6 +49,12 @@ writeVarNumInternal !n !ptr
       writeOffPtr ptr 0 . fromIntegral $ setBit (n .&. 127) 7
       writeVarNumInternal (unsafeShiftR n 7) (advancePtr ptr 1)
 
+-- | Encode and write a number to a buffer using variable length encoding
+--
+-- While often faster than 'writeVarNumInternal', it writes 8 bytes at once.
+-- This is not usually a problem, as builders often write left to right in order.
+-- However if you must not overwrite the bytes 3-7 bytes after the 'VarInt',
+-- consider using the slightly slower 'writeVarNumInternal' instead.
 pdepEncodeVarInt :: Word -> Ptr Word8 -> IO (Ptr Word8)
 pdepEncodeVarInt !value !ptr = do
   let s1 = toS1 value

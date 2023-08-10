@@ -24,7 +24,7 @@ import GHC.TypeLits (KnownNat, Div)
 data PlayPacket dimHeight =
     SpawnEntity
   | SpawnExperienceOrb
-  | SpawnPlayer
+  | SpawnPlayer !(EntityId VarInt) !UUID !Position !Angle !Angle
   | EntityAnimation
   | AwardStatistics
   | AcknowledgeBlockChange

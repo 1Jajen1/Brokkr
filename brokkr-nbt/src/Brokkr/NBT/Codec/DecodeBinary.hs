@@ -150,6 +150,18 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
               initBM :: Int = (1 `unsafeShiftL` length keysToParsers) - 1
               -- 0 for all keys that are optional, 1 for all others
               reqBM :: Int = foldr (\(n, (_,opt,_,_)) b -> if opt then b else setBit b n) 0 $ zip [0..] keysToParsers
+              -- TODO For trie matching:
+              --   When we have
+              -- a -> b -> c -> (d,e) don't generate
+              -- abc -> (d | e)
+              -- but instead generate
+              -- abcd | abce
+              -- Has one less branch, and one less memory read
+              -- 
+              -- Maybe even go for max size reads all the time and let ghc create
+              -- the lookup then? (Actually the below is impossible because I have a eq size guarantee)
+              -- a -> (b -> d | c -> e | f -> j -> l)
+              -- abd | ace | (afj -> l) 
               genBranch validKey tagId trie0 =
                 let go64 [] cont = cont
                     go64 (x:xs) cont

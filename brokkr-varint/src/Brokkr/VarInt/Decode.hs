@@ -18,9 +18,21 @@ import FlatParse.Basic qualified as Flatparse
 import GHC.Exts
 import GHC.TypeLits
 
+-- | Collection of errors which may occur when parsing variable-length numbers
+--
+-- Currently only contains 'OverMaxSize', which refers to minecrafts size restriction
+-- on 'VarInt' and 'VarLong' (5 and 10 bytes)
 newtype VarIntDecodeError = OverMaxSize Int
   deriving stock Show
 
+-- | CPS style parser for variable-length encoded numbers
+--
+-- Needs a statically known maximum size and specializes for 5 bytes.
+-- 
+-- Also requires a handler for errors.
+--
+-- It is not always trivial to have GHC unbox even with the callback,
+-- so a manually unboxed version is available: 'withVarInt#'
 withVarInt :: forall maxSize a e st . KnownNat maxSize
   => (VarIntDecodeError -> e) -> (Int -> Flatparse.ParserT st e a) -> Flatparse.ParserT st e a
 {-# INLINE withVarInt #-}
@@ -29,6 +41,7 @@ withVarInt = case natVal (Proxy @maxSize) of
   -- TODO Specialize the VarLong variant
   _ -> withVarIntLoop @maxSize
 
+-- | Manually unboxed version of 'withVarInt'.
 withVarInt# :: forall maxSize (st :: ZeroBitType) . KnownNat maxSize
   => Addr# -> Addr# -> st -> (# st, (# (# Int#, Addr# #) | (# #) | (# VarIntDecodeError #) #) #)
 {-# INLINE withVarInt# #-}
@@ -37,6 +50,11 @@ withVarInt# = case natVal (Proxy @maxSize) of
   -- TODO Specialize the VarLong variant
   _ -> withVarIntLoop# @maxSize
 
+-- | Loop version of variable-length decoding.
+--
+-- Used if not enough bytes are present for the branchless parse
+--
+-- A manually unboxed version exists: 'withVarIntLoop#'
 withVarIntLoop :: forall maxSize a e st . KnownNat maxSize
   => (VarIntDecodeError -> e) -> (Int -> Flatparse.ParserT st e a) -> Flatparse.ParserT st e a
 {-# INLINE withVarIntLoop #-}
@@ -46,6 +64,7 @@ withVarIntLoop err f = Flatparse.ParserT $ \fp eob s st -> case withVarIntLoop# 
   (# st', (# (# i, s' #) | | #) #) -> case f (I# i) of
     Flatparse.ParserT g -> g fp eob s' st' 
 
+-- Manually unboxed version of 'withVarIntLoop'
 withVarIntLoop# :: forall maxSize (st :: ZeroBitType) . KnownNat maxSize
   => Addr# -> Addr# -> st -> (# st, (# (# Int#, Addr# #) | (# #) | (# VarIntDecodeError #) #) #)
 {-# INLINE withVarIntLoop# #-}
@@ -65,6 +84,12 @@ withVarIntLoop# eob s0 st = go 0# 0## s0
             else go newAcc newRes (plusAddr# s 1#)
       | otherwise = (# st, (# | (# #) | #) #) 
 
+-- | Branchless version of variable-length decoding.
+--
+-- Outperforms the loop based version on architectures supporting fast
+-- pext instructions (most modern x86), but requires 8 bytes to be available.
+--
+-- A manually unboxed version is available: 'pextDecode#'
 pextDecode :: (VarIntDecodeError -> e) -> (Int -> Flatparse.ParserT st e a) -> Flatparse.ParserT st e a
 {-# INLINE pextDecode #-}
 pextDecode err f = Flatparse.ParserT $ \fp eob s st -> case pextDecode# eob s st of
@@ -73,6 +98,7 @@ pextDecode err f = Flatparse.ParserT $ \fp eob s st -> case pextDecode# eob s st
   (# st', (# (# i, s' #) | | #) #) -> case f (I# i) of
     Flatparse.ParserT g -> g fp eob s' st' 
 
+-- | Manually unboxed version of 'pextDecode'
 pextDecode# :: forall (st :: ZeroBitType) .
   Addr# -> Addr# -> st -> (# st, (# (# Int#, Addr# #) | (# #) | (# VarIntDecodeError #) #) #)
 pextDecode# eob s st =
