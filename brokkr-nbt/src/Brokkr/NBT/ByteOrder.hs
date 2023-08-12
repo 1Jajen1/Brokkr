@@ -11,9 +11,6 @@ module Brokkr.NBT.ByteOrder (
 , arrSwapBE64
 , unsafeArrSwapBE32
 , unsafeArrSwapBE64
-, toBE16
-, toBE32
-, toBE64
 ) where
 
 import Control.Monad.ST.Strict (runST)
@@ -35,6 +32,14 @@ import GHC.ForeignPtr
 
 import Unsafe.Coerce qualified as Unsafe
 
+-- | Big-endian 32-bit integer type
+--
+-- Represented by a host order 32-bit integer. Only exists
+-- for the 'Storable' instance to byteswap when reading or writing.
+--
+-- Main use-case is big-endian ordered storable vectors. Those are 
+-- kept in big-endian order in memory and are only swapped on each
+-- individual read or when explicitly converted.
 newtype Int32BE = Int32BE Int32
   deriving newtype (Show, Eq, Ord, Num, Real, Enum, Integral)
 
@@ -48,6 +53,14 @@ instance Storable Int32BE where
   peek = fmap (Int32BE . swapBE32) . peek . coerce
   {-# INLINE peek #-}
 
+-- | Big-endian 64-bit integer type
+--
+-- Represented by a host order 64-bit integer. Only exists
+-- for the 'Storable' instance to byteswap when reading or writing.
+--
+-- Main use-case is big-endian ordered storable vectors. Those are 
+-- kept in big-endian order in memory and are only swapped on each
+-- individual read or when explicitly converted.
 newtype Int64BE = Int64BE Int64
   deriving newtype (Show, Eq, Ord, Num, Real, Enum, Integral)
 
@@ -61,9 +74,10 @@ instance Storable Int64BE where
   peek = fmap (Int64BE . swapBE64) . peek . coerce
   {-# INLINE peek #-}
 
--- Swap byte order if and only if the native byte order is not big endian
+-- | Swap byte order if and only if the native byte order is not big endian
 swapBE32 :: Int32 -> Int32
 {-# INLINE swapBE32 #-}
+-- | Swap byte order if and only if the native byte order is not big endian
 swapBE64 :: Int64 -> Int64
 {-# INLINE swapBE64 #-}
 
@@ -73,29 +87,34 @@ type instance Swapped Int64 = Int64BE
 type instance Swapped Int32BE = Int32
 type instance Swapped Int64BE = Int64
 
--- Copies the vector with all bytes swapped
+-- | Copies the vector with all bytes swapped
+--
 -- Noop on big endian systems
 arrSwapBE32 :: (Coercible a Int32, Storable a, Storable (Swapped a)) => S.Vector a -> S.Vector (Swapped a)
 {-# INLINE arrSwapBE32 #-}
+-- | Copies the vector with all bytes swapped
+--
+-- Noop on big endian systems
 arrSwapBE64 :: (Coercible a Int64, Storable a, Storable (Swapped a)) => S.Vector a -> S.Vector (Swapped a)
 {-# INLINE arrSwapBE64 #-}
--- Swap bytes in place. Unsafe if the original vector is used again
+-- | Swap bytes in place. Unsafe if the original vector is used again
+--
 -- Noop on big endian systems
+--
 -- More beneficial on small to medium sized vectors, on large vectors the additional allocation
 -- is a fraction of the cost of byteswapping. This is because the cost of
 -- allocation is almost constant after a given threshold whereas the byteswapping is linear.
 unsafeArrSwapBE32 :: (Coercible a Int32, Storable a) => S.Vector a -> S.Vector (Swapped a)
 {-# INLINE unsafeArrSwapBE32 #-}
+-- | Swap bytes in place. Unsafe if the original vector is used again
+--
+-- Noop on big endian systems
+--
+-- More beneficial on small to medium sized vectors, on large vectors the additional allocation
+-- is a fraction of the cost of byteswapping. This is because the cost of
+-- allocation is almost constant after a given threshold whereas the byteswapping is linear.
 unsafeArrSwapBE64 :: (Coercible a Int64, Storable a) => S.Vector a -> S.Vector (Swapped a)
 {-# INLINE unsafeArrSwapBE64 #-}
-
--- Convert a word from host endianess into big endian
-toBE16 :: Int16 -> Int16
-{-# INLINE toBE16 #-}
-toBE32 :: Int32 -> Int32
-{-# INLINE toBE32 #-}
-toBE64 :: Int64 -> Int64
-{-# INLINE toBE64 #-}
 
 #ifdef WORDS_BIGENDIAN
 
@@ -107,10 +126,6 @@ arrSwapBE64 = Unsafe.unsafeCoerce
 
 unsafeArrSwapBE32 = Unsafe.unsafeCoerce
 unsafeArrSwapBE64 = Unsafe.unsafeCoerce
-
-toBE16 = id
-toBE32 = id
-toBE64 = id
 
 #else
 
@@ -135,9 +150,5 @@ unsafeArrSwapBE64 v = seq (c_vec_bswap64 (Ptr addr) (Ptr addr) (fromIntegral sz)
 
 foreign import ccall unsafe "vec_bswap32" c_vec_bswap32 :: Ptr Int32BE -> Ptr Int32 -> CSize -> ()
 foreign import ccall unsafe "vec_bswap64" c_vec_bswap64 :: Ptr Int64BE -> Ptr Int64 -> CSize -> ()
-
-toBE16 = fromIntegral . byteSwap16 . fromIntegral
-toBE32 = fromIntegral . byteSwap32 . fromIntegral
-toBE64 = fromIntegral . byteSwap64 . fromIntegral
 
 #endif

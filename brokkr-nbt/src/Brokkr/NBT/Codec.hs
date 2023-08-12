@@ -31,7 +31,6 @@ module Brokkr.NBT.Codec (
 , optionalField
 , optionalFieldVia
 , (.=)
-, viaCodec
 , utf8String
 , unsafeIntArray
 , unsafeLongArray

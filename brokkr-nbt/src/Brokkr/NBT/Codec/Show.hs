@@ -102,6 +102,9 @@ showsPrecCodec prec (LmapCodec _ inner) = showParen (prec > 10) $
 showsPrecCodec prec (RmapCodec _ inner) = showParen (prec > 4) $
     showString "<<f>> <$#> "
   . showsPrecCodec 5 inner
+showsPrecCodec prec (RmapEitherCodec _ inner) = showParen (prec > 4) $
+    showString "<<f>> <$?#> "
+  . showsPrecCodec 5 inner
 
 showsPrecCodec _ (PureCodec _) = showString "Pure <<a>>"
 

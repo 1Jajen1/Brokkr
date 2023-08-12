@@ -41,6 +41,15 @@ import Mason.Builder qualified as B
 data NBT = NBT {-# UNPACK #-} !NBTString !Tag
   deriving stock (Eq, Show)
 
+-- | The "Tag" portion of Named-Binary-Tag (NBT)
+-- 
+-- Note: End tags are never parsed. This would be pointless and only clutter the datatype needlessly
+--
+-- Unless otherwise noted, numbers will be converted to host byte order. Except for arrays where the
+-- newtypes 'Int32BE' and 'Int64BE' signify that the array is kept in big-endian order.
+-- See 'Brokkr.NBT.ByteOrder' for easy and fast methods to convert these arrays.
+--
+-- Important: The constructor order matters. See 'getTagId'
 data Tag where
   TagByte      :: {-# UNPACK #-} !Int8               -> Tag
   TagShort     :: {-# UNPACK #-} !Int16              -> Tag
@@ -58,14 +67,14 @@ data Tag where
 
 -- Decode
 
--- | Parses arbitrary 'NBT'
+-- | Parse arbitrary 'NBT'
 --
 -- Strings are 'NBTString' which is encoded in java modified utf8
 --
 -- Strings and storable vectors are slices into the original input
 -- and thus keep the original input alive until they are copied.
 --
--- The IntArray and LongArray use 'Int32BE' and 'Int64BE' respectively
+-- The IntArray and LongArray use 'Int32BE' and 'Int64BE' respectively.
 -- 'Brokkr.NBT.ByteOrder' contains efficient methods to convert back
 -- to 'Int32' and 'Int64'.
 --
@@ -79,7 +88,7 @@ parseNBT = do
   tag <- parseTag tagId
   pure $ NBT name tag
 
--- | Parse a single nbt tag given the tags type
+-- | Parse a single nbt tag given a tag type
 parseTag :: Word8 -> FP.ParserT st NBTError Tag
 {-# INLINE parseTag #-}
 -- Primitive types
@@ -90,7 +99,7 @@ parseTag  4 = TagLong  <$> FP.anyInt64be
 -- Floating point
 parseTag  5 = TagFloat  . castWord32ToFloat  <$> FP.anyWord32be
 parseTag  6 = TagDouble . castWord64ToDouble <$> FP.anyWord64be
--- Primtive array types
+-- Primitive array types
 parseTag  7 = TagByteArray <$> takeArray
 parseTag 11 = TagIntArray  <$> takeArray
 parseTag 12 = TagLongArray <$> takeArray
@@ -104,7 +113,7 @@ parseTag  9 = parseList
       len@(I# len#) <- fromIntegral <$> FP.anyInt32be
       localST $ do
         -- TODO Check against stupidly large lists
-        SmallMutableArray mut <- FP.liftST $ newSmallArray len (error "parse nbt list")
+        SmallMutableArray mut <- FP.liftST $ newSmallArray len $ error "parse nbt list"
         go mut 0# len# tagId
         arr <- FP.liftST $ unsafeFreezeSmallArray (SmallMutableArray mut)
         pure $ TagList arr
@@ -164,7 +173,7 @@ parseTag 10 = parseCompound
     {-# INLINE insertSorted #-}
 -- anything else fails
 -- Note: We don't parse TagEnd, parseCompound and parseList
--- parse it seperately, so a TagEnd here would be invalid nbt
+-- parse it separately, so a TagEnd here would be invalid nbt
 parseTag _ = FP.empty
 -- Throwing this error causes a 2x slowdown. TODO Investigate why
 -- parseTag t = FP.err $ InvalidTagType (fromIntegral t)
@@ -173,7 +182,7 @@ parseTag _ = FP.empty
 takeArray :: forall a e st . S.Storable a => FP.ParserT st e (S.Vector a)
 {-# INLINE takeArray #-}
 takeArray = FP.withAnyWord32 $ \w -> do
-  -- TODO Define this somewhere with cpp so that we can
+  -- TODO Define this somewhere with cpp so that we
   -- skip this on big endian systems
   let !len = fromIntegral $ byteSwap32 w 
       !sz = S.sizeOf (undefined :: a)
@@ -209,13 +218,14 @@ putNBT (NBT key tag) =
 -- result by one.
 getTagId :: Tag -> Int
 {-# INLINE getTagId #-}
-getTagId !tag = (I# (dataToTag# tag)) + 1
+getTagId !tag = 1 + I# (dataToTag# tag)
 
 -- | Encode a single nbt tag
 putTag :: Tag -> B.Builder
 {-# INLINE putTag #-}
 putTag (TagByte i)   = B.int8 i
 -- TODO Investigate why ghc performs 2,4,8 bytewise writes instead of a larger write all at once with byteswap
+-- I think it no longer does on later versions (9.4+) which explains the large speedup
 putTag (TagShort i)  = B.int16BE i
 putTag (TagInt i)    = B.int32BE i
 putTag (TagLong i)   = B.int64BE i

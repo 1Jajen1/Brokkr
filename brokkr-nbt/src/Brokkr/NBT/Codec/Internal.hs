@@ -24,7 +24,6 @@ module Brokkr.NBT.Codec.Internal (
 , optionalField
 , optionalFieldVia
 , (.=)
-, viaCodec
 , utf8String
 , unsafeIntArray
 , unsafeLongArray
@@ -56,6 +55,11 @@ import Language.Haskell.TH qualified as TH
 data CodecContext = Compound | Value
 
 -- | A template haskell based nbt codec
+--
+-- The context signifies whether we are parsing values or
+-- parts of a compound.
+--
+-- Based on 'autodocodec' but adapted for template-haskell use.
 data NBTCodec (c :: CodecContext) i o where
   TagCodec :: NBTCodec Value Tag Tag
 
@@ -90,30 +94,38 @@ data NBTCodec (c :: CodecContext) i o where
   RmapEitherCodec :: Code (o -> Either NBTError o') -> NBTCodec c i o -> NBTCodec c i o'
 
 -- Api
+
+-- | Map over both the input and output type of a 'NBTCodec'
 dimapCodec :: Code (o -> o') -> Code (i' -> i) -> NBTCodec c i o -> NBTCodec c i' o'
 dimapCodec r l = rmapCodec r . lmapCodec l
 
+-- | Map over the input type of 'NBTCodec'
 lmapCodec :: Code (i' -> i) -> NBTCodec c i o -> NBTCodec c i' o
 lmapCodec = LmapCodec
 
+-- | Map over the output type of 'NBTCodec'
 rmapCodec :: Code (o -> o') -> NBTCodec c i o -> NBTCodec c i o'
 rmapCodec = RmapCodec
 
+-- | Map over the output type of 'NBTCodec' but allows failing the parse
 rmapEitherCodec :: Code (o -> Either NBTError o') -> NBTCodec c i o -> NBTCodec c i o'
 rmapEitherCodec = RmapEitherCodec
 
 infixl 4 <$#>
+-- | Operator version of 'rmapCodec'. Effectively 'fmap' but over template-haskell
 (<$#>) :: Code (o -> o') -> NBTCodec c i o -> NBTCodec c i o'
 (<$#>) = rmapCodec
 
+-- | 'pure' but for template-haskell
 pureC :: Code o -> NBTCodec Compound i o
 pureC = PureCodec
 
 infixl 4 <*#>
+-- | Operator version of 'ApCodec'. Effectively '<*>' but over template-haskell
 (<*#>) :: NBTCodec Compound i (o -> o') -> NBTCodec Compound i o -> NBTCodec Compound i o'
 (<*#>) = ApCodec
 
--- class
+-- | Typeclass for types which have a 'NBTCodec'
 class HasCodec a where
   codec :: NBTCodec Value a a
 
@@ -194,42 +206,84 @@ instance (HasCodec a, Integral a) => HasCodec (ViaSizedInt a) where
 
 -- Combinators
 
+-- | Shorthand for creating a value codec from a compound codec
 compound :: Text -> NBTCodec Compound i o -> NBTCodec Value i o
 compound = CompoundCodec . Just
 
+-- | Parse a required field given a 'NBTString' key
+--
+-- @
+--    compound "MyCompound" $ [|| MyObj ||]
+--      <$#> requiredField "arg1" .= [|| \(MyObj i _) -> i ||]
+--      <*#> requiredField "arg2" .= [|| \(MyObj _ j) -> j ||]
+-- @
 requiredField :: HasCodec a => NBTString -> NBTCodec Compound a a
 requiredField key = RequiredKeyCodec key codec Nothing
 
+-- | Parse a required field given a 'NBTString' key
+--
+-- Parses via the representation of a newtype
+--
+-- @
+--    compound "MyCompound" $ [|| MyObj ||]
+--      <$#> requiredFieldVia @Int32 @NewtypeInt32 "arg1" .= [|| \(MyObj i) -> i ||]
+-- @
 requiredFieldVia :: forall a b . (HasCodec a, Coercible a b) => NBTString -> NBTCodec Compound b b
 requiredFieldVia key = RequiredKeyCodec key (dimapCodec [|| coerce ||] [|| coerce ||] $ codec @a) Nothing
 
+-- | Parse an optional field given a 'NBTString' key
+--
+-- @
+--    compound "MyCompound" $ [|| MyObj ||]
+--      <$#> optionalField "arg1" .= [|| \(MyObj i) -> i ||]
+-- @
 optionalField :: HasCodec a => NBTString -> NBTCodec Compound (Maybe a) (Maybe a)
 optionalField key = OptionalKeyCodec key codec Nothing
 
+-- | Parse an optional field given a 'NBTString' key
+--
+-- Parses via the representation of a newtype
+--
+-- @
+--    compound "MyCompound" $ [|| MyObj ||]
+--      <$#> optionalFieldVia @Int32 @NewtypeInt32 "arg1" .= [|| \(MyObj i) -> i ||]
+-- @
 optionalFieldVia :: forall a b . (HasCodec a, Coercible a b) => NBTString -> NBTCodec Compound (Maybe b) (Maybe b)
 optionalFieldVia key = OptionalKeyCodec key (dimapCodec [|| coerce ||] [|| coerce ||] $ codec @a) Nothing
 
 infixr 8 .=
+-- | Operator version of 'lmapCodec'
+--
+-- Used to complete compound codecs
+--
+-- @
+--    compound "MyCompound" $ [|| MyObj ||]
+--      <$#> optionalFieldVia @Int32 @NewtypeInt32 "arg1" .= [|| \(MyObj i) -> i ||]
+-- @
 (.=) :: NBTCodec Compound i o -> Code (i' -> i) -> NBTCodec Compound i' o
 (.=) = flip lmapCodec
 
-viaCodec :: Coercible a b => NBTCodec ctx a a -> NBTCodec ctx b b
-viaCodec = dimapCodec [|| coerce ||] [|| coerce ||]
-
 -- | Read 'NBTString' and convert into a utf8 'ByteString'
 --
--- If the underlying data is already valid utf8 this method will not allocate.
+-- If the underlying data is already valid utf8 this method will not copy. (Currently this is a lie. It will always copy)
 utf8String :: Maybe Text -> NBTCodec Value ByteString ByteString
 utf8String = dimapCodec [|| toUtf8 ||] [|| fromUtf8 ||] . StringCodec
 
+-- | Read 'IntArray' and byteswap in place
+--
+-- Warning: This will modify the input bytestring!
 unsafeIntArray :: Maybe Text -> NBTCodec Value (S.Vector Int32) (S.Vector Int32)
-unsafeIntArray = dimapCodec [|| arrSwapBE32 ||] [|| arrSwapBE32 ||] . IntArrayCodec
+unsafeIntArray = dimapCodec [|| unsafeArrSwapBE32 ||] [|| unsafeArrSwapBE32 ||] . IntArrayCodec
 
+-- | Read 'LongArray' and byteswap in place
+--
+-- Warning: This will modify the input bytestring!
 unsafeLongArray :: Maybe Text -> NBTCodec Value (S.Vector Int64) (S.Vector Int64)
-unsafeLongArray = dimapCodec [|| arrSwapBE64 ||] [|| arrSwapBE64 ||] . LongArrayCodec
+unsafeLongArray = dimapCodec [|| unsafeArrSwapBE64 ||] [|| unsafeArrSwapBE64 ||] . LongArrayCodec
 
 type Code a = TH.Code TH.Q a
 
+-- | Fold over the codec and simplify some patterns
 simplifyCodec :: forall i x . NBTCodec Compound i x -> NBTCodec Compound i x
 simplifyCodec (LmapCodec l i) = constantFold (LmapCodec l (simplifyCodec i))
 simplifyCodec (RmapCodec r i) = constantFold (RmapCodec r (simplifyCodec i))

@@ -15,18 +15,24 @@ import Data.ByteString (ByteString)
 import Data.Text (Text)
 import Data.Text qualified as T
 
+-- TODO This whole thing is a mess and needs a rework
+
+-- | Everything that can go wrong when parsing 'NBT'
 data NBTError =
-    InvalidTagType !Int
-  | InvalidStringEncoding !ByteString
-  | InvalidType !Text
-  | MissingKey !Text
-  | InvalidStringEnum !Text [Text]
+    InvalidTagType !Int               -- ^ The tag byte was completely invalid
+  | InvalidStringEncoding !ByteString -- ^ The string is not valid modified utf-8
+  | InvalidType !Text                 -- ^ Expected a different NBT type
+  | MissingKey !Text                  -- ^ Missing keys when parsing from NBT
+  -- TODO This really shouldn't be here
+  | InvalidStringEnum !Text [Text]    -- ^ An enum encoded as string has an invalid value
   deriving stock Show
   deriving anyclass Exception
 
+-- | Given a path and a number of missing keys, create an error message
 missingKey :: [Text] -> [Text] -> NBTError
 missingKey path keys = MissingKey $ "Missing keys [" <> T.dropEnd 1 (foldr (\y acc -> y <> "," <> acc) "" keys) <> "]" <> showPath path
 
+-- | Given a path, an invalid type and an optional name create an error message
 invalidType :: [Text] -> Text -> Maybe Text -> NBTError
 invalidType path ty Nothing = InvalidType $ "Invalid type. Expected " <> ty <> "." <> showPath path
 invalidType path ty (Just name) = InvalidType $ "Invalid type for " <> name <> ". Expected " <> ty <> "." <> showPath path

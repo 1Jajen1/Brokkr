@@ -27,6 +27,12 @@ import Data.Primitive.SmallArray
 
 import Brokkr.NBT.Slice
 
+-- | Class based 'NBT' encoding
+--
+-- Encode any type to the intermediate 'NBT' structure
+--
+-- Encodes into 'Tag' instead of 'NBT' as not all applications
+-- need or want an empty top level 'NBT'.
 class ToNBT a where
   toNBT :: a -> Tag
 
@@ -60,9 +66,11 @@ instance ToNBT (S.Vector Int32BE) where
 instance ToNBT (S.Vector Int64BE) where
   toNBT = TagLongArray
 
+-- | Copies and byteswaps the vector
 instance ToNBT (S.Vector Int32) where
   toNBT = toNBT . arrSwapBE32
 
+-- | Copies and byteswaps the vector
 instance ToNBT (S.Vector Int64) where
   toNBT = toNBT . arrSwapBE64
 
@@ -81,11 +89,17 @@ instance ToNBT a => ToNBT (V.Vector a) where
 instance ToNBT Tag where
   toNBT = id
 
+-- | Run an 'NBTParser' over a 'Tag'
+--
+-- Usually the parser is obtained from 'FromNBT'
 runParser :: NBTParser a -> Tag -> Either NBTError a
 runParser (NBTParser f) t = case f t of
   (# res | #) -> Right res
   (# | e #) -> Left e 
 
+-- | Parser over 'Tag'
+--
+-- Based on 'Aeson'.
 newtype NBTParser a = NBTParser { runNBTParser# :: Tag -> (# a | NBTError #) }
 
 err :: NBTError -> NBTParser a
@@ -110,7 +124,9 @@ instance Monad NBTParser where
     (# a | #) -> case f a of
       NBTParser h -> h t
 
+-- | Class based 'NBT' decoding
 class FromNBT a where
+  -- | Given a name and a 'Tag', decode into a domain object
   fromNBT :: Text -> Tag -> NBTParser a
 
 instance FromNBT Int8 where
@@ -163,9 +179,13 @@ instance FromNBT (S.Vector Int64BE) where
     TagLongArray v -> pure v
     _ -> err $ InvalidType name
 
+
+-- | Copies and byteswaps the vector
 instance FromNBT (S.Vector Int32) where
   fromNBT name t = arrSwapBE32 <$> fromNBT @(S.Vector Int32BE) name t
 
+
+-- | Copies and byteswaps the vector
 instance FromNBT (S.Vector Int64) where
   fromNBT name t = arrSwapBE64 <$> fromNBT @(S.Vector Int64BE) name t
 
@@ -190,21 +210,36 @@ instance FromNBT (Slice NBT) where
 instance FromNBT Tag where
   fromNBT _ = pure
 
+-- | Create a domain object from a compound tag
+--
+-- Fails if not given a compound
+--
+-- @
+--    data MyObj = MyObj Int (Maybe Byte)
+--
+--    withCompound "name" $ \c -> do
+--      arg1 <- c .:  "arg1"
+--      arg2 <- c .:? "arg2"
+--      pure $ MyObj arg1 arg2
+-- @
 withCompound :: Text -> (Slice NBT -> NBTParser a) -> Tag -> NBTParser a
 withCompound name f = \case
   TagCompound slice -> f slice
   _ -> err $ InvalidType name
 
+-- | Given a compound slice, a key and a type, parse an object from the 'Tag' with the given required key
 (.:) :: FromNBT a => Slice NBT -> NBTString -> NBTParser a
 !m .: !k = case findWithIndex (\(NBT key _) -> key) k m of
   (# _, (# NBT _ t | #) #) -> fromNBT (toText k) t
   (# _, (# | (#  #) #) #) -> err $ MissingKey $ toText k
 
+-- | Given a compound slice, a key and a type, parse an object from the 'Tag' with the given optional key
 (.:?) :: FromNBT a => Slice NBT -> NBTString -> NBTParser (Maybe a)
 m .:? k = case findWithIndex (\(NBT key _) -> key) k m of
   (# _, (# NBT _ t | #) #) -> Just <$> fromNBT (toText k) t
   (# _, (# | _ #) #) -> pure Nothing
 
+-- | Create a compound tag from a key value list
 compound :: [(NBTString, Tag)] -> Tag
 compound = TagCompound . fromList . fmap (uncurry NBT)
 

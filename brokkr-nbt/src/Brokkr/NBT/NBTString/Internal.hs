@@ -106,18 +106,30 @@ instance Show NBTString where
 parseNBTString :: FP.ParserT st NBTError NBTString
 parseNBTString = withAnyWord16be $ \len -> do
   let !(I# len#) = fromIntegral len
-  -- This specifc conversion from W16 -> Int cannot be negative, so
+  -- This specific conversion from W16 -> Int cannot be negative, so
   -- the check on FP.take makes no sense
   bs <- FP.takeUnsafe# len#
   unless (isValidModifiedUtf8 bs) . FP.err $ InvalidStringEncoding bs
   pure $ NBTString bs
 {-# INLINE parseNBTString #-}
 
+-- | CPS version of 'parseNBTString'. Can help GHC avoid an allocation of the 'NBTString'
+--
+-- Expects a short in big-endian format and then n bytes of valid
+-- modified utf-8.
+--
+-- Returns a slice of the original input, which
+-- means the inputs lifetime is bound to this string.
+--
+-- Either use 'Data.ByteString.copy' or any of the
+-- utf8 conversion methods that always copy to release
+-- the original input.
 withNBTString :: (NBTString -> FP.ParserT st NBTError a) -> FP.ParserT st NBTError a
 {-# INLINE withNBTString #-}
 withNBTString f = withAnyWord16be $ \len -> do
   let !(I# len#) = fromIntegral len
-  -- See above
+  -- This specific conversion from W16 -> Int cannot be negative, so
+  -- the check on FP.take makes no sense
   bs <- FP.takeUnsafe# len#
   unless (isValidModifiedUtf8 bs) . FP.err $ InvalidStringEncoding bs
   f (NBTString bs)
@@ -149,22 +161,34 @@ isValidModifiedUtf8 (BS.BS fptr len) = BS.accursedUnutterablePerformIO $ BS.unsa
   pure $ i /= 0
 {-# INLINE isValidModifiedUtf8 #-}
 
--- Always copies
+-- | Convert a utf-8 'Text' into a modified utf-8 'NBTString'
+--
+-- Always copies.
 fromText :: Text -> NBTString
 -- TODO Do something more efficient
 fromText = fromString . T.unpack
 
--- only copies if invalid
+-- | Convert a utf-8 'ByteString' into a modified utf-8 'NBTString'
+--
+-- Always copies. (For now. Later on it will only copy if the null byte
+-- or other invalid modified utf-8 is present. Some utf-8 is also valid modified utf-8 and vice versa)
 fromUtf8 :: ByteString -> NBTString
-fromUtf8 = error "TODO"
+-- TODO Do something more efficient
+fromUtf8 = fromString . T.unpack . T.decodeUtf8
 
--- Always copies
+-- | Convert a modified utf-8 'NBTString' into a utf-8 'Text'
+--
+-- Always copies.
 toText :: NBTString -> Text
 -- TODO Actual decoding
 toText (NBTString bs) = T.decodeUtf8 bs
 
--- Only copies if invalid
+-- | Convert a modified utf-8 'NBTString' into a utf-8 'ByteString'
+--
+-- Always copies. (For now. Later on it will only copy if the null byte
+-- or other invalid modified utf-8 is present. Some utf-8 is also valid modified utf-8 and vice versa)
 toUtf8 :: NBTString -> ByteString
+-- TODO
 toUtf8 = error "TODO"
 
 encodeChar ::

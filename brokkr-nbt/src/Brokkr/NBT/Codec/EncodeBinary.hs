@@ -22,6 +22,7 @@ import Language.Haskell.TH qualified as TH
 
 import Mason.Builder qualified as Mason
 
+-- | Generate a builder which encodes to binary 'NBT'
 genBuilder :: NBTCodec Value i0 o0 -> TH.Q TH.Exp
 genBuilder c = [| \a -> Mason.int8 ($(extractTag c) a) <> putNBTString (NBTString mempty) <> $(go c) a |]
   where

@@ -9,14 +9,22 @@ module Brokkr.NBT.Slice (
 import GHC.Exts hiding (fromList)
 import GHC.ST
 
+-- | An empty slice
 emptySlice :: Slice a
 emptySlice = runST $ ST $ \s ->
   case newSmallArray# 0# (error "Empty slice") s of
     (# s', mar #) -> case unsafeFreezeSmallArray# mar s' of
       (# s'', arr #) -> (# s'', Slice arr 0# #)
 
+-- | (Sorted) slice over an array of elements
+--
+-- Why not Vector? Vector has 8 bytes additional overhead
+-- but is otherwise exactly the same on the heap.
+-- 
+-- Used for compounds where the content is always sorted
 data Slice a = Slice (SmallArray# a) Int#
 
+-- | O(n^2) Create a slice from a list
 fromList :: [a] -> Slice a
 fromList [] = emptySlice
 fromList xs0 = runST $ ST $ \s0 ->
@@ -28,9 +36,18 @@ fromList xs0 = runST $ ST $ \s0 ->
     go _ _ [] s = s
     go mar n (x:xs) s = go mar (n +# 1#) xs (writeSmallArray# mar n x s)
 
+-- | O(log n) Assuming a sorted slice, yields the first element and index that matches
+--
+-- The elements have to be ordered on 'b' to work
+--
+-- The return type is the unboxed version of `(Int, Maybe a)`.
+--
+-- The first integer is either the element index or the index where the element
+-- should be inserted. The 'Maybe' indicates whether an element was found. 
 findWithIndex :: Ord b => (a -> b) -> b -> Slice a -> (# Int#, (# a | (##) #) #)
 findWithIndex onEl el (Slice arr sz) = goBin 0# sz
   where
+    -- TODO Bench both!
     -- maxBinSearchLen = 8#
     goBin l u
       | isTrue# (l >=# u) = (# l, (# | (##) #) #)
@@ -73,4 +90,4 @@ instance Eq a => Eq (Slice a) where
             (# r #) = indexSmallArray# rarr n
 
 instance Show a => Show (Slice a) where
-  show = show . foldr (:) []
+  show = ("fromList " <>) . show . foldr (:) []
