@@ -5,9 +5,9 @@
 module Hecs.Component.Relation (
   Rel(..)
 , mkRelation
+, unwrapRelation
 , CaseTag
 , BranchRel(..)
-, unwrapRelation
 ) where
 
 import Hecs.Component.Internal
@@ -42,8 +42,19 @@ How the actual type machinery works:
   It does not provide an alternative for tags because those don't need instances (they are empty types)
 -}
 
+-- | A relation of two components
+--
+-- A relation is either a tag or a full component:
+-- * If both parts are tags, the relation is a tag
+-- * If the left is not a tag, the relation stores the left component
+-- * Otherwise the relation stores the right component
+--
+-- This requires a little bit of type machinery. For static components TH will set this up just fine.
+-- For dynamic components, a instance of 'CaseTag' is required, unless the dynamic component is just
+-- a tag, in which case specify the Relation as 'Rel (Tag x) r'.
 newtype Rel l r = Rel (CaseTag l (CaseTag r Void r) l)
 
+-- | Type level branching on whether or not 'k' is a tag component
 type CaseTag :: k -> x -> x -> x
 type family CaseTag a b c
 
@@ -146,6 +157,7 @@ instance
       (backing (Proxy @r) b f)
     {-# INLINE backing #-}
 
+-- | Create a component id for a relation
 mkRelation :: ComponentId l -> ComponentId r -> ComponentId (Rel l r)
 mkRelation (ComponentId (EntityId (unwrap -> l))) (ComponentId (EntityId (unwrap -> r))) = ComponentId (EntityId $ coerce combined)
   where
@@ -153,11 +165,17 @@ mkRelation (ComponentId (EntityId (unwrap -> l))) (ComponentId (EntityId (unwrap
     combined = pack $ Relation (fromIntegral l) (fromIntegral r) . pack $ EntityTag True
 {-# INLINE mkRelation #-}
 
+-- | Retrieve the component ids used to create a relation
 unwrapRelation :: ComponentId (Rel l r) -> (ComponentId l, ComponentId r)
 unwrapRelation (ComponentId (EntityId (coerce @_ @(Bitfield Int Relation) -> b))) = (mk . fromIntegral $ get @"first" b, mk . fromIntegral $ get @"second" b)
   where mk = ComponentId . EntityId . Bitfield
 {-# INLINE unwrapRelation #-}
 
+-- | Branch on the term level if 'c' is a relation
+--
+-- This is currently quite the footgun when writing custom combinators using things
+-- that have a 'BranchRel' constraint. Make sure to propagate it regardless of what
+-- ghc tells you!
 class BranchRel (c :: k) where
   branchRel :: Proxy c
     -> r -- c is Rel l r

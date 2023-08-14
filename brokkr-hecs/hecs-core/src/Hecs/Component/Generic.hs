@@ -18,6 +18,15 @@ import Hecs.Component.Internal
 -- https://github.com/mkloczko/derive-storable-benchmark/tree/plugin
 
 -- TODO Only allows product types atm. Should be enough for most ecs uses anyway
+
+-- | Newtype for use with deriving via to derive 'Component' and 'Storable'
+--
+-- Instructs ecs to store the component as raw bytes
+--
+-- The storable instance will follow c-struct padding rules, field order matters!  
+--
+-- See 'ViaBox' to instead store as boxed values
+-- See 'ViaFlat' if you already have a 'Storable' instance
 newtype GenericFlat a = GenericFlat a
 
 instance (Generic a, GSizeOf (Rep a), GAlignment (Rep a), GPoke (Rep a), GPeek (Rep a)) => Component (GenericFlat a) where

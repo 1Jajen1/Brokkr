@@ -94,8 +94,8 @@ playerMovement = do
       -- _rotation <- Server.readColumn rotRef n
 
       -- TODO Disable instead
-      Server.removeComponent @OldPosition eid
-      -- Server.removeComponent @OldRotation eid
+      Server.remove @OldPosition eid
+      -- Server.remove @OldRotation eid
 
       -- Update the view position and maybe load chunks
       let oldChunkPos@(ChunkPosition oldChunkX oldChunkZ) = toChunkPos $ coerce oldPosition

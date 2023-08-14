@@ -77,7 +77,7 @@ import Data.Vector qualified as V
 
 import GHC.Conc (labelThread)
 
-import Hecs.Entity.Internal (Entity(..))
+import Hecs.Entity.Internal as Server (unEntityId, Entity(..))
 
 
 handleConnection :: Network ()

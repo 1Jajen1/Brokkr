@@ -36,42 +36,72 @@ import Data.Kind
 import Control.Monad.Base
 import Control.Monad.Trans.Control
 
+-- | Create a filter with a static component id
+--
+-- Rarely used as the TH world generation will generate a method that does not require an explicit type
+-- and proxy for 'w'
 component :: forall c w . (BranchRel c, Component c, Has w c) => Proxy w -> Filter c HasMainId
 component w = componentWithId $ getComponentId w
 {-# INLINE component #-}
 
+-- | Create a filter for tags with a static component id
+--
+-- Rarely used as the TH world generation will generate a method that does not require an explicit type
+-- and proxy for 'w'
 tag :: forall {k} (c :: k) (w :: Type) . (BranchRel c, Has w c) => Proxy w -> Filter c HasMainId
 tag w = tagWithId $ getComponentId w
 {-# INLINE tag #-}
 
+-- | Retrieve a component column from a 'TypedArchetype'
+--
+-- The archetype is guaranteed to have the column, so no error condition applies
+--
+-- Rarely used as the TH world generation will generate a method that does not require an explicit type
+-- and proxy for 'w'
 getColumn :: forall c w ty m . (Component c, Has w c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> m (Column (ComponentKind c) c)
 getColumn aty = getColumnWithId @c aty (getComponentId @_ @_ @c (Proxy @w))
 {-# INLINE getColumn #-}
 
+-- | Retrieve a component column from a 'TypedArchetype' with an explicit component id
+--
+-- The archetype is guaranteed to have the column, so no error condition applies
 getColumnWithId :: forall c ty m . (Component c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> ComponentId c -> m (Column (ComponentKind c) c)
 getColumnWithId ty c = liftBase $ Hecs.Filter.Internal.getColumnWithId ty c
 {-# INLINE getColumnWithId #-}
 
+-- | Iterate all entities currently stored in the passed archetype
+--
+-- The first argument is the index in the column, the second the entity-id
+--
+-- Matches a monadic fold structure to allow for many kinds of iteration patterns
 iterateArchetype :: MonadBaseControl IO m => TypedArchetype ty -> (Int -> EntityId -> a -> m a) -> m a -> m a
 iterateArchetype ty f z = do
   st <- liftBaseWith $ \runInBase -> Hecs.Filter.Internal.iterateArchetype ty (\n eid acc -> runInBase $ restoreM acc >>= f n eid) (runInBase z)
   restoreM st
 {-# INLINE iterateArchetype #-}
 
+-- | Iterate all entities currently stored in the passed archetype
+--
+-- The first argument is the index in the column, the second the entity-id
+--
+-- Simply iterates, does not accumulate a result other than the changes to monadic context
 iterateArchetype_ :: MonadBaseControl IO m => TypedArchetype ty -> (Int -> EntityId -> m ()) -> m ()
 iterateArchetype_ ty f = iterateArchetype ty (\n eid _ -> f n eid) (pure ())
 {-# INLINE iterateArchetype_ #-}
 
+-- | Explicitly get the column of entity ids stored in the archetype
 getEntityColumn :: MonadBase IO m => TypedArchetype ty -> m (Column Flat EntityId)
 getEntityColumn ty = liftBase $ Hecs.Filter.Internal.getEntityColumn ty
 {-# INLINE getEntityColumn #-}
 
+-- | Transform a list of filter elements into a filter tree 
 type FilterFromList :: [k] -> k
 type family FilterFromList xs where
   FilterFromList (x:y:ys) = And x (FilterFromList (y:ys))
   FilterFromList '[x] = x
   FilterFromList '[] = TypeError ('Text "Cannot create an empty filter (yet)") -- TODO Empty filters could work?
 
+-- | Keeps track of a filter having at least one main component
 type HasMain :: k -> FilterContext
 type family HasMain ty :: FilterContext where
   HasMain (And l r) = CombineCtx (HasMain l) (HasMain r)
@@ -80,10 +110,15 @@ type family HasMain ty :: FilterContext where
   HasMain (Tag c) = HasMain c
   HasMain c = HasMainId
 
+-- | Create a term level filter from a type level filter list
+--
+-- Rarely used as the TH world generation will generate a method that does not require an explicit type
+-- and proxy for 'w'
 filterDSL :: forall {k} (w :: Type) (xs :: [k]) . FilterDSL w (FilterFromList xs) => Filter (FilterFromList xs) (HasMain (FilterFromList xs))
 filterDSL = filterDSLI (Proxy @w) (Proxy @(FilterFromList xs))
 {-# INLINE filterDSL #-}
 
+-- | Typeclass which folds a type level filter into a term level filter
 class FilterDSL (w :: Type) (ty :: k) where
   filterDSLI :: Proxy w -> Proxy ty -> Filter ty (HasMain ty)
 

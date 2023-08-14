@@ -8,6 +8,24 @@ module Hecs.Component (
 ) where
 
 import Hecs.Component.Internal
+  ( Component
+  , ComponentId(..)
+  , Column
+  , ComponentKind
+  , AccessColumn(..)
+  , ViaBox(..)
+  , ViaFlat(..)
+  )
 import Hecs.Component.Generic
 import Hecs.Component.Relation
+  ( Rel(..)
+  , mkRelation
+  , unwrapRelation
+  , CaseTag
+  , BranchRel
+  )
 import Hecs.Component.Properties
+  ( IsComponent(..), isComponent
+  , EntityName(..), entityName
+  , WildCard, wildcard
+  )

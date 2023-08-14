@@ -8,8 +8,7 @@ module Hecs (
 , module Hecs.Component
 , module Hecs.Monad.Class
 , module Hecs.Filter
-, EntityId(..)
-, ComponentId(..)
+, EntityId
 , Has
 , ActionType(..)
 ) where

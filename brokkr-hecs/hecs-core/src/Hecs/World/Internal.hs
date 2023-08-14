@@ -37,6 +37,10 @@ import Hecs.Component.Properties (wildcard)
 
 -- This is going to be wrapped by 'makeWorld "World" [''Comp1, ''Comp2, ...]' which enables
 -- making some component ids static. The componentMap is then only used for unknown/dynamic components
+
+-- | ECS World
+--
+-- This is the internal definition of a world. Most users will generate a newtype of this with 'makeWorld'.
 data WorldImpl (preAllocatedEIds :: Nat) = WorldImpl {
   freshEIdRef          :: !(MVar EntityId.FreshEntityId) -- allocate unique entity ids with reuse
 , entityIndexRef       :: !(IORef (IntMap ArchetypeRecord)) -- changes often and thus needs good allround performance
@@ -163,6 +167,7 @@ instance KnownNat n => WorldClass (WorldImpl n) where
       in z >>= go 0)
     z
   {-# INLINE filterI #-}
+  -- TODO Should I sync here? I don't think so, but then I probably need to wrap this in Hecs.World!
   defer w act = act $ w { isDeferred = True }
   sync w@WorldImpl{deferredOpsRef} = modifyMVar_ deferredOpsRef $ \arr -> go arr 0 >> Arr.new (max 8 $ Arr.size arr `unsafeShiftR` 2) -- TODO Better shrinking?
     where
@@ -394,7 +399,7 @@ syncRegister WorldImpl{..} OnRemove cid hdl = do
     $ Arr.new 2 >>= \arr -> Arr.writeBack arr hdl >>= HTB.insert table (coerce cid)
   writeIORef componentHandlersRem table'
 
--- All behavior a World has to support. makeWorld creates a newtype around WorldImpl and derives this
+-- | All behavior a World has to support. makeWorld creates a newtype around WorldImpl and derives this
 class WorldClass w where
   new :: IO w
   allocateEntity :: w -> IO EntityId
@@ -410,6 +415,10 @@ class WorldClass w where
   sync :: w -> IO ()
   registerI :: w -> ActionType -> ComponentId c -> (EntityId -> IO ()) -> IO ()
 
+-- | Actions which one can trigger callbacks for
+--
+-- 'OnAdd' triggers when a component is added to an entity
+-- 'OnRemove' triggers when a component is removed from an entity or an entity with this component is destroyed
 data ActionType = OnAdd | OnRemove
 
 -- TODO I am probably (most likely) a little excessive on the inline/inlineable pragmas

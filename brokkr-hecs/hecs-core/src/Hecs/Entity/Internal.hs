@@ -124,11 +124,23 @@ data FreshEntityId where
     -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- 32 bits. maps where in the above array an id is
     -> FreshEntityId
 
+-- | Unique identifier for entities
+--
+-- Internals: The entity id is a 64 bit bitfield and stores the following items:
+-- * The entity id in 32 bits
+-- * The generation in 16 bits
+-- * A tag in 8 bits
+--
+-- This hints that 'EntityId's are reused. Specifically the 32 bit entity id is reused, but
+-- the generation is incremented each time. This way even dead entity ids are unique.
+-- This is often useful for network formats that benefit from having the entity ids be in
+-- a smaller range and when keeping track of dead entity ids is not required.
 newtype EntityId = EntityId { unEntityId :: Bitfield Int Entity }
   deriving stock Show
   deriving newtype (Eq, Storable)
   deriving HashKey via Int
 
+-- | Datatype which encodes how 'Bitfield' accesses the 'EntityId'.
 data Entity = Entity {
   eid        :: {-# UNPACK #-} !Word32
 , generation :: {-# UNPACK #-} !Word16
@@ -137,9 +149,16 @@ data Entity = Entity {
 }
   deriving stock (Show, Generic)
 
+-- | Relations are also entity ids, but stores data differently
+--
+-- Relations store only the entity id, not the generation as that is
+-- redundant for components.
+--
+-- At runtime an entity id contains a 8 bit tag which indicates if it is
+-- a relation or a normal entity id.
 data Relation = Relation {
   first  :: {-# UNPACK #-} !Word32
-, second :: {-# UNPACK #-} !Word24 -- TODO
+, second :: {-# UNPACK #-} !Word24 -- TODO Isn't this quite unsafe if the second is a dynamic tag and needs more bits?!
 , tag    :: {-# UNPACK #-} !(Bitfield Word8 EntityTag) 
 }
   deriving stock Generic

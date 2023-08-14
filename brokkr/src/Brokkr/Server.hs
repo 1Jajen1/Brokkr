@@ -65,9 +65,8 @@ setupServer readyCallback = do
 
   -- register handlers
   -- TODO: Register the connection for more updates!
-  liftBaseWith $ \runInBase -> do
-    void . runInBase $ Server.registerListener @Client Server.OnAdd    $ \eid -> void . runInBase $ addClient    eid
-    void . runInBase $ Server.registerListener @Client Server.OnRemove $ \eid -> void . runInBase $ removeClient eid
+  Server.register @Client Server.OnAdd    $ \eid -> addClient    eid
+  Server.register @Client Server.OnRemove $ \eid -> removeClient eid
 
   -- start network and then gameloop
   u <- Server.getUniverse

@@ -8,10 +8,10 @@ module Hecs.World (
 , addTag, addTagWithId
 , set, setWithId
 , removeTag, removeTagWithId
-, removeComponent, removeComponentWithId
+, remove, removeWithId
 , WorldClass
 , WorldImpl
-, forFilter
+, filter
 , defer
 , sync
 , register
@@ -27,9 +27,11 @@ import Hecs.World.Has
 import Hecs.World.Internal
 import Hecs.Filter
 
-import Data.Proxy
+import Control.Monad (void)
 import Control.Monad.Base
 import Control.Monad.Trans.Control
+
+import Data.Proxy
 
 get :: forall c w r m . (WorldClass w, BranchRel c, Component c, Has w c, MonadBaseControl IO m) => w -> EntityId -> (c -> m r) -> m r -> m r
 get w eid = getWithId w eid (getComponentId @_ @_ @c (Proxy @w))
@@ -73,20 +75,20 @@ removeTagWithId :: forall c w m . (WorldClass w, BranchRel c, MonadBase IO m) =>
 removeTagWithId w eid cid = liftBase $ removeTagI w eid cid
 {-# INLINE removeTagWithId #-}
 
-removeComponent :: forall c w m . (WorldClass w, BranchRel c, Component c, Has w c, MonadBase IO m) => w -> EntityId -> m ()
-removeComponent w eid = removeComponentWithId w eid (getComponentId @_ @_ @c (Proxy @w))
-{-# INLINE removeComponent #-}
+remove :: forall c w m . (WorldClass w, BranchRel c, Component c, Has w c, MonadBase IO m) => w -> EntityId -> m ()
+remove w eid = removeWithId w eid (getComponentId @_ @_ @c (Proxy @w))
+{-# INLINE remove #-}
 
-removeComponentWithId :: forall c w m . (WorldClass w, BranchRel c, Component c, MonadBase IO m) => w -> EntityId -> ComponentId c -> m ()
-removeComponentWithId w eid cid = liftBase $ removeComponentI w eid cid
-{-# INLINE removeComponentWithId #-}
+removeWithId :: forall c w m . (WorldClass w, BranchRel c, Component c, MonadBase IO m) => w -> EntityId -> ComponentId c -> m ()
+removeWithId w eid cid = liftBase $ removeComponentI w eid cid
+{-# INLINE removeWithId #-}
 
-forFilter :: (WorldClass w, MonadBaseControl IO m) => w -> Filter ty HasMainId -> (TypedArchetype ty -> b -> m b) -> m b -> m b
-forFilter w fi f z = do
+filter :: (WorldClass w, MonadBaseControl IO m) => w -> Filter ty HasMainId -> (TypedArchetype ty -> b -> m b) -> m b -> m b
+filter w fi f z = do
   st <- liftBaseWith $ \runInBase -> filterI w fi (\aty b -> runInBase $ restoreM b >>= f aty) (runInBase z)
   restoreM st
-{-# INLINE forFilter #-}
+{-# INLINE filter #-}
 
-register :: (WorldClass w, MonadBase IO m) => w -> ActionType -> ComponentId c -> (EntityId -> IO ()) -> m ()
-register w ty cid hdl = liftBase $ registerI w ty cid hdl
+register :: (WorldClass w, MonadBaseControl IO m) => w -> ActionType -> ComponentId c -> (EntityId -> m ()) -> m ()
+register w ty cid hdl = liftBaseWith $ \runInBase -> registerI w ty cid (void . runInBase . hdl)
 {-# INLINE register #-}

@@ -10,6 +10,7 @@ import qualified Hecs.World
 import Hecs.World.Internal
 import Hecs.World.Has
 import Hecs.Component
+import Hecs.Component.Properties (internalTypes)
 import Hecs.Entity.Internal
 
 import qualified Data.Text as T
@@ -19,6 +20,18 @@ import Control.Monad.Base
 import Data.Coerce
 import Data.Bitfield
 
+-- | Create and setup a world datatype
+--
+-- Creates a datatype with the first argument as its name
+-- and deriving the necessary instances to function as
+-- an ecs world. Specifically an instance of 'WorldClass'
+--
+-- Then derives 'Has' for all passed components.
+--
+-- Components statically registered have a few benefits:
+-- * Can use type application instead of passing an explicit id
+-- * Pre-allocated entity-id's lessen the setup cost
+-- * Faster component archetype lookups (TBD)
 makeWorld :: String -> [Name] -> Q [Dec]
 makeWorld wN names = do
   let wName = mkName wN
