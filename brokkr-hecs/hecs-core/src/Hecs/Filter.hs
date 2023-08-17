@@ -10,7 +10,10 @@ module Hecs.Filter (
 , component, componentWithId
 , tag, tagWithId
 , TypedArchetype(..)
+, Column(..)
+, AccessColumn(..)
 , getColumn, getColumnWithId
+, getColumnM, getColumnWithIdM
 , getEntityColumn
 , TypedHas
 , iterateArchetype, iterateArchetype_
@@ -23,7 +26,7 @@ module Hecs.Filter (
 
 import Prelude hiding (not)
 
-import Hecs.Filter.Internal hiding (getColumnWithId, iterateArchetype, getEntityColumn)
+import Hecs.Filter.Internal hiding (getColumnWithId, iterateArchetype, getEntityColumn, getColumnWithIdM)
 import qualified Hecs.Filter.Internal
 import Hecs.World.Has
 import Hecs.Component.Internal
@@ -54,7 +57,7 @@ tag w = tagWithId $ getComponentId w
 
 -- | Retrieve a component column from a 'TypedArchetype'
 --
--- The archetype is guaranteed to have the column, so no error condition applies
+-- The archetype is guaranteed to have the column
 --
 -- Rarely used as the TH world generation will generate a method that does not require an explicit type
 -- and proxy for 'w'
@@ -64,10 +67,24 @@ getColumn aty = getColumnWithId @c aty (getComponentId @_ @_ @c (Proxy @w))
 
 -- | Retrieve a component column from a 'TypedArchetype' with an explicit component id
 --
--- The archetype is guaranteed to have the column, so no error condition applies
+-- The archetype is guaranteed to have the column
 getColumnWithId :: forall c ty m . (Component c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> ComponentId c -> m (Column (ComponentKind c) c)
 getColumnWithId ty c = liftBase $ Hecs.Filter.Internal.getColumnWithId ty c
 {-# INLINE getColumnWithId #-}
+
+-- | Retrieve a component column from a 'TypedArchetype'
+--
+-- Rarely used as the TH world generation will generate a method that does not require an explicit type
+-- and proxy for 'w'
+getColumnM :: forall c w ty m . (Component c, Has w c, MonadBase IO m) => TypedArchetype ty -> m (Maybe (Column (ComponentKind c) c))
+getColumnM aty = getColumnWithIdM @c aty (getComponentId @_ @_ @c (Proxy @w))
+{-# INLINE getColumnM #-}
+
+
+-- | Retrieve a component column from a 'TypedArchetype' with an explicit component id
+getColumnWithIdM :: forall c ty m . (Component c, MonadBase IO m) => TypedArchetype ty -> ComponentId c -> m (Maybe (Column (ComponentKind c) c))
+getColumnWithIdM aty c = liftBase $ Hecs.Filter.Internal.getColumnWithIdM aty c
+{-# INLINE getColumnWithIdM #-}
 
 -- | Iterate all entities currently stored in the passed archetype
 --

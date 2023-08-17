@@ -1,7 +1,8 @@
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
+{-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
 module Hecs.Entity.Internal (
   EntityId(..)
 , FreshEntityId(..)
@@ -18,35 +19,47 @@ import Control.Monad.Primitive
 
 import Data.Bits
 import Data.Bitfield.Internal
-import Data.Word
 import Data.Primitive.ByteArray
+import Data.Word
 
 import Foreign.Storable
 
 import GHC.Generics
+import GHC.Exts
+import GHC.IO
 
 import Hecs.HashTable.HashKey
 
 new :: IO FreshEntityId
 new = do
   -- Allocate id storage with space for 256 entity ids...
-  arr <- newByteArray initSz
-  indArr <- newByteArray initIndSz
-  pure $ FreshEntityId 0 0 arr indArr
+  szRef <- newByteArray 8
+  writeByteArray @Int szRef 0 0
+  highestIdRef <- newByteArray 8
+  writeByteArray @Int highestIdRef 0 0
+  IO $ \s -> case newByteArray# initSz s of
+    (# s1, arr #) -> case newMutVar# arr s1 of
+      (# s2, arrRef #) -> case newByteArray# initIndSz s2 of
+        (# s3, indArr #) -> case newMutVar# indArr s3 of
+          (# s4, indArrRef #) -> (# s4, FreshEntityId szRef highestIdRef arrRef indArrRef #)
   where
     -- 8 bytes per entityid
-    initSz = 8 * 256
-    initIndSz = 4 * 256
+    initSz = 8# *# 256#
+    initIndSz = 4# *# 256#
 
-allocateEntityId :: FreshEntityId -> IO (FreshEntityId, EntityId)
-allocateEntityId (FreshEntityId sz highestId arr indArr) = do
+allocateEntityId :: FreshEntityId -> IO EntityId
+allocateEntityId f@(FreshEntityId szRef highestIdRef arrRef indArrRef) = do
+  sz <- readByteArray @Int szRef 0
+  highestId <- readByteArray @Int highestIdRef 0
+  !arr <- IO $ \s -> case readMutVar# arrRef s of (# s1, arr# #) -> (# s1, MutableByteArray arr# #)
+  !indArr <- IO $ \s -> case readMutVar# indArrRef s of (# s1, indArr# #) -> (# s1, MutableByteArray indArr# #)
   -- Check if we have exhausted all freed ids
   if sz == highestId
     then do
-      let cap = sizeofMutableByteArray arr
-          capInd = sizeofMutableByteArray indArr
+      cap <- getSizeofMutableByteArray arr
+      capInd <- getSizeofMutableByteArray indArr
       -- check if we have space in the id array left, if not just double it
-      (arr', indArr') <- if sz >= unsafeShiftR cap 3
+      (arr'@(MutableByteArray arr'#), indArr'@(MutableByteArray indArr'#)) <- if sz >= unsafeShiftR cap 3
         then do
           arr' <- newByteArray (cap * 2)
           copyMutableByteArray arr 0 arr' 0 cap
@@ -56,35 +69,47 @@ allocateEntityId (FreshEntityId sz highestId arr indArr) = do
         else pure (arr, indArr)
 
       -- add our new id to the end of the array and also set its index mapping
-      writeByteArray @Int arr' highestId highestId     -- TODO Use pack here?
+      writeByteArray @Int arr' highestId highestId
       writeByteArray @Word32 indArr' highestId (fromIntegral highestId)
       -- increment the size and the highest ever id
-      let st = FreshEntityId (sz + 1) (highestId + 1) arr' indArr'
+      writeByteArray @Int szRef 0 (sz +  1)
+      writeByteArray @Int highestIdRef 0 (highestId +  1)
+      IO $ \s -> (# writeMutVar# arrRef arr'# s, () #)
+      IO $ \s -> (# writeMutVar# indArrRef indArr'# s, () #)
+
       -- return the newly generated id
-      pure (st, EntityId $ Bitfield highestId)
+      pure $ EntityId $ Bitfield highestId
     else do
       -- reuse the last freed id
       -- For details as to why freed ids are at the end of the array in the first place check
       --  the deallocate method
       reusedId <- Bitfield @Int @Entity <$> readByteArray arr sz
       if get @"generation" reusedId == maxBound -- skip this entity forever. We cannot reliably reuse it anymore
-        then allocateEntityId (FreshEntityId (sz + 1) highestId arr indArr)
+        then do
+          writeByteArray @Int szRef 0 (sz + 1)
+          allocateEntityId f
         else do
           let newEid = pack $ Entity { eid = get @"eid" reusedId, generation = 1 + get @"generation" reusedId, pad = 0, tag = pack $ EntityTag False }
           writeByteArray arr sz (unwrap newEid)
           -- increment the size
-          let st = FreshEntityId (sz + 1) highestId arr indArr
+          writeByteArray @Int szRef 0 (sz + 1)
           -- return the reused id but increment the generation
-          pure (st, EntityId newEid)
+          pure $ EntityId newEid
 
-deAllocateEntityId :: FreshEntityId -> EntityId -> IO FreshEntityId
-deAllocateEntityId old@(FreshEntityId sz _ _ _) _ | sz == 0 = pure old
-deAllocateEntityId (FreshEntityId sz highestId arr indArr) (EntityId eid) = do
+deAllocateEntityId :: FreshEntityId -> EntityId -> IO ()
+deAllocateEntityId (FreshEntityId szRef _ arrRef indArrRef) (EntityId eid) = do
+  sz <- readByteArray @Int szRef 0
+
+  indArr <- IO $ \s -> case readMutVar# indArrRef s of (# s1, indArr #) -> (# s1, MutableByteArray indArr #)
+  
   -- lookup where in the id array the id to deallocate is
   eidInd <- readByteArray @Word32 indArr (fromIntegral $ get @"eid" eid)
 
   -- special case: Deallocating the last allocated id simply decreases the size counter
   unless (eidInd == fromIntegral (sz - 1)) $ do
+    arr <- IO $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, MutableByteArray arr #)
+    -- arr <- readIORef arrRef
+
     -- get the last allocated id (at the end of the array by construction. See allocate)
     lastActive <- readByteArray @Int arr (sz - 1)
 
@@ -98,7 +123,7 @@ deAllocateEntityId (FreshEntityId sz highestId arr indArr) (EntityId eid) = do
     writeByteArray @Word32 indArr (fromIntegral $ get @"eid" eid) (fromIntegral $ sz - 1)
 
   -- decrement the size
-  pure $ FreshEntityId (sz - 1) highestId arr indArr
+  writeByteArray @Int szRef 0 (sz - 1)
 
 {- Note: Reusing entity ids
 
@@ -118,10 +143,10 @@ After deallocation the last deallocated id is always at the front of freedIds:
 
 data FreshEntityId where
   FreshEntityId ::
-       {-# UNPACK #-} !Int -- current number of allocated ids
-    -> {-# UNPACK #-} !Int -- highest ever allocated id
-    -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- 64 bits. array containing all allocated and freed ids
-    -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- 32 bits. maps where in the above array an id is
+       {-# UNPACK #-} !(MutableByteArray RealWorld) -- Int - current number of allocated ids
+    -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- Int - highest ever allocated id
+    -> (MutVar# RealWorld (MutableByteArray# RealWorld)) -- 64 bits. array containing all allocated and freed ids
+    -> (MutVar# RealWorld (MutableByteArray# RealWorld)) -- 32 bits. maps where in the above array an id is
     -> FreshEntityId
 
 -- | Unique identifier for entities

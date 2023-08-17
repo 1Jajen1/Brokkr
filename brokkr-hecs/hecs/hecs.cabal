@@ -57,3 +57,13 @@ executable Example
                        -with-rtsopts=-N
                        -O2
 
+benchmark hecs-simple-bench
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      bench
+  main-is:             Simple.hs
+  build-depends:       tasty-bench
+                     , hecs
+                     , deepseq
+  ghc-options:         -O2
+

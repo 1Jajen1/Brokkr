@@ -11,7 +11,7 @@ module Hecs.World (
 , remove, removeWithId
 , WorldClass
 , WorldImpl
-, filter
+, runFilter, runFilter_
 , defer
 , sync
 , register
@@ -32,6 +32,7 @@ import Control.Monad.Base
 import Control.Monad.Trans.Control
 
 import Data.Proxy
+import Hecs.Fold
 
 get :: forall c w r m . (WorldClass w, BranchRel c, Component c, Has w c, MonadBaseControl IO m) => w -> EntityId -> (c -> m r) -> m r -> m r
 get w eid = getWithId w eid (getComponentId @_ @_ @c (Proxy @w))
@@ -83,11 +84,21 @@ removeWithId :: forall c w m . (WorldClass w, BranchRel c, Component c, MonadBas
 removeWithId w eid cid = liftBase $ removeComponentI w eid cid
 {-# INLINE removeWithId #-}
 
-filter :: (WorldClass w, MonadBaseControl IO m) => w -> Filter ty HasMainId -> (TypedArchetype ty -> b -> m b) -> m b -> m b
-filter w fi f z = do
+runFilter :: (WorldClass w, MonadBaseControl IO m) => w -> Filter ty HasMainId -> (TypedArchetype ty -> b -> m b) -> m b -> m b
+runFilter w fi f z = do
   st <- liftBaseWith $ \runInBase -> filterI w fi (\aty b -> runInBase $ restoreM b >>= f aty) (runInBase z)
   restoreM st
-{-# INLINE filter #-}
+{-# INLINE runFilter #-}
+
+runFilter_ :: forall w ty m a b z
+  . ( WorldClass w
+    , MonadBaseControl IO m
+    , HasColumns w ty a, ReadColumns ty a
+    , HasColumns w ty b, WriteColumns ty b
+    )
+  => w -> Filter ty HasMainId -> FoldM m a b z -> m z
+runFilter_ w fi fo = toEntityFold @w fo $ \f z e -> runFilter w fi (flip f) z >>= e
+{-# INLINE runFilter_ #-}
 
 register :: (WorldClass w, MonadBaseControl IO m) => w -> ActionType -> ComponentId c -> (EntityId -> m ()) -> m ()
 register w ty cid hdl = liftBaseWith $ \runInBase -> registerI w ty cid (void . runInBase . hdl)

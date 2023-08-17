@@ -50,12 +50,14 @@ library
                       , Hecs.Archetype
                       , Hecs.Archetype.Internal
                       , Hecs.Entity.Internal
+                      , Hecs.Fold
                       , Hecs.World
                       , Hecs.World.Has
                       , Hecs.World.Internal
                       , Hecs.World.TH
                       , Hecs.HashTable.Boxed
                       , Hecs.HashTable.HashKey
+                      , Hecs.HashTable.Int2Boxed
                       , Hecs.HashTable.Storable
                       , Hecs.Component
                       , Hecs.Component.Generic
@@ -64,3 +66,4 @@ library
                       , Hecs.Component.Properties
                       , Hecs.Filter
                       , Hecs.Filter.Internal
+                      , Hecs.SparseSet

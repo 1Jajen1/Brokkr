@@ -68,6 +68,8 @@ newtype ChunkYPosition = ChunkYPosition Int
 -- TODO Make sure Old-* components are only enabled and disabled. This avoids table moves for
 --  movement changes. In general table moves should be avoided
 
+-- TODO Is this overloaded? Should I instead do this in smaller steps?
+
 -- | Run systems for managing player movement.
 -- Handles chunk loading and unloading, fall damage and sending
 -- the updated player position to clients. 

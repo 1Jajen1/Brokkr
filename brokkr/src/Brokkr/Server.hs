@@ -48,6 +48,9 @@ setupServer readyCallback = do
   cfg <- Server.getConfig
 
   -- set up chunkloading
+  -- TODO Even this should be an entity. This way we can add system which manipulate stuff later on
+  -- TODO Then even chunks should be entities. Makes lifecycles easier right?
+  --      Also we can have systems over chunks, worlds etc.
   chunkloading <- liftBase $ Chunkloading.new (configChunkloadingThreads cfg)
   -- Server.set (coerce $ Server.getComponentId @Chunkloading.Chunkloading) comp
 

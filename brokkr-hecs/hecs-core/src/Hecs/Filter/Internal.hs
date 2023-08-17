@@ -19,6 +19,7 @@ module Hecs.Filter.Internal (
 , tagWithId
 , TypedArchetype(..)
 , getColumnWithId
+, getColumnWithIdM
 , iterateArchetype
 , TypedHas
 , getEntityColumn
@@ -167,11 +168,24 @@ newtype TypedArchetype ty = TypedArchetype Archetype
 -- | Retrieve a column of a typed archetype
 --
 -- The column is guaranteed to exist on the type level!
+--
+-- If you don't statically know the column is present from the typed archetype, use 'getColumnWithIdM'
 getColumnWithId :: forall c ty . (Component c, TypedHas ty c) => TypedArchetype ty -> ComponentId c -> IO (Column (ComponentKind c) c)
 getColumnWithId (TypedArchetype aty) compId = lookupComponent (Proxy @(ComponentKind c)) aty compId
-  (unsfeGetColumn (Proxy @(ComponentKind c)) aty)
+  (unsafeGetColumn (Proxy @(ComponentKind c)) aty)
   (error "Hecs.Filter.Internal:getColumn Component that was on the type level wasn't on the value level")
 {-# INLINE getColumnWithId #-}
+
+-- | Retrieve a column of a typed archetype
+--
+-- The column may or may not be present.
+--
+-- If you statically know the column is present from the typed archetype, use 'getColumnWithId'
+getColumnWithIdM :: forall c ty . Component c => TypedArchetype ty -> ComponentId c -> IO (Maybe (Column (ComponentKind c) c))
+getColumnWithIdM (TypedArchetype aty) compId = lookupComponent (Proxy @(ComponentKind c)) aty compId
+  (fmap Just . unsafeGetColumn (Proxy @(ComponentKind c)) aty)
+  (pure Nothing)
+{-# INLINE getColumnWithIdM #-}
 
 -- TODO Add an option to check for the existence of columns, which should then alter the TypedArchetype's filter
 --      and then safely allow retrieving it. Maybe change the filter. Throw out all useless information (Or filters for example)
@@ -179,7 +193,8 @@ getColumnWithId (TypedArchetype aty) compId = lookupComponent (Proxy @(Component
 -- | Get the 'EntityId' column
 getEntityColumn :: TypedArchetype ty -> IO (Column Flat EntityId)
 getEntityColumn (TypedArchetype Archetype{columns = Columns# _ eidsRef _ _ _}) =
-  IO $ \s -> case readMutVar# eidsRef s of (# s1, arr #) -> (# s1, ColumnFlat arr #) 
+  IO $ \s -> case readMutVar# eidsRef s of (# s1, arr #) -> (# s1, ColumnFlat arr #)
+{-# INLINE getEntityColumn #-}
 
 -- | Iterate all entities that are stored in this 'TypedArchetype'
 --
@@ -191,9 +206,13 @@ iterateArchetype (TypedArchetype (Archetype{columns = Columns# szRef eidsRef _ _
     (# s1, sz #) -> case readMutVar# eidsRef s1 of
       (# s2, eidArr #) -> case z s2 of (# s3, b #) -> go eidArr sz 0# b s3
   where
-    go arr sz n b s
+    go arr sz n !b s
       | isTrue# (n >=# sz) = (# s, b #)
-      | otherwise = case readIntArray# arr n s of (# s1, eid #) -> case f (I# n) (EntityId $ Bitfield (I# eid)) b of IO g -> case g s1 of (# s2, st #) -> go arr sz (n +# 1#) st s2
+      | otherwise =
+          case readIntArray# arr n s of
+            (# s1, eid #) -> case f (I# n) (EntityId $ Bitfield (I# eid)) b of
+              IO g -> case g s1 of
+                (# s2, st #) -> go arr sz (n +# 1#) st s2
 {-# INLINE iterateArchetype #-}
 
 -- | Type level constraint that a filter, often from a 'TypedArchetype', has evidence of a specific component existing

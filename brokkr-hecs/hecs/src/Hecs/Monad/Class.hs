@@ -11,6 +11,7 @@ module Hecs.Monad.Class (
 , removeTag
 , remove
 , register
+, runFilter_
 ) where
 
 import qualified Hecs.Entity.Internal as Core
@@ -18,8 +19,10 @@ import qualified Hecs.Component as Core
 import qualified Hecs.World as Core
 import qualified Hecs.World.Has as Core
 import qualified Hecs.Filter as Core
+import qualified Hecs.Fold as Core
 
 import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Control
 import Control.Monad.Trans.Reader
 
 import Data.Proxy
@@ -69,8 +72,10 @@ class Monad m => MonadHecs (w :: Type) (m :: Type -> Type) | m -> w where
   removeWithId :: (Core.Component c, Core.BranchRel c) => Core.EntityId -> Core.ComponentId c -> m ()
   -- | Filter and iterate all archetypes for the given components
   --
-  -- This method represents a monadic fold over all matching archetypes, allowing all sorts of effects during iteration
-  filter :: Core.Filter ty Core.HasMainId -> (Core.TypedArchetype ty -> b -> m b) -> m b -> m b
+  -- This method represents a monadic fold over all matching archetypes
+  --
+  -- For a convenience filter that directly iterates entities, see 'runFilter_' 
+  runFilter :: Core.Filter ty Core.HasMainId -> (Core.TypedArchetype ty -> b -> m b) -> m b -> m b
   -- | Defer most updates to the world
   --
   -- Updates are written to a shared queue and processed after either the passed computation ends
@@ -106,8 +111,8 @@ instance MonadHecs w m => MonadHecs w (ReaderT r m) where
   {-# INLINE removeTagWithId #-}
   removeWithId eid cid = lift $ removeWithId eid cid
   {-# INLINE removeWithId #-}
-  filter fi s mb = ReaderT $ \r -> Hecs.Monad.Class.filter fi (\aty b -> runReaderT (s aty b) r) (runReaderT mb r)
-  {-# INLINE filter #-}
+  runFilter fi s mb = ReaderT $ \r -> Hecs.Monad.Class.runFilter fi (\aty b -> runReaderT (s aty b) r) (runReaderT mb r)
+  {-# INLINE runFilter #-}
   defer act = ReaderT $ \r -> defer $ runReaderT act r
   {-# INLINE defer #-}
   sync = lift sync
@@ -169,3 +174,18 @@ removeTag eid = removeTagWithId @w @m @c eid (Core.getComponentId (Proxy @w))
 remove :: forall c w m . (MonadHecs w m, Core.BranchRel c, Core.Component c, Core.Has w c) => Core.EntityId -> m ()
 remove eid = removeWithId @w @m @c eid (Core.getComponentId (Proxy @w))
 {-# INLINE remove #-}
+
+-- | Filter and iterate all entities that match the filter
+  --
+  -- This method represents a monadic fold over all matching entities
+  --
+  -- For a more powerful filter with access to the archetypes see 'runFilter'.
+runFilter_ :: forall w ty m a b z
+  . ( MonadHecs w m
+    , MonadBaseControl IO m
+    , Core.HasColumns w ty a, Core.ReadColumns ty a
+    , Core.HasColumns w ty b, Core.WriteColumns ty b
+    )
+  => Core.Filter ty Core.HasMainId -> Core.FoldM m a b z -> m z
+runFilter_ fi fo = Core.toEntityFold @w fo $ \f z e -> runFilter fi (flip f) z >>= e
+{-# INLINE runFilter_ #-}

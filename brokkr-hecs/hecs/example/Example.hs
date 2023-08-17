@@ -2,8 +2,9 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# OPTIONS_GHC -ddump-splices #-}
-module Main where
+--{-# OPTIONS_GHC -ddump-splices #-}
+--{-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
+module Main (main) where
 
 import Data.Int
 
@@ -33,11 +34,11 @@ data Color = Red | Green | Blue
 
 makeWorld "World" [
     ''Int
-  , ''Int8
-  , ''Position
-  , ''Test
-  , ''Boxed
-  , ''Color, 'Red, 'Green, 'Blue
+  -- , ''Int8
+  -- , ''Position
+  -- , ''Test
+  -- , ''Boxed
+  -- , ''Color, 'Red, 'Green, 'Blue
   ]
 
 main :: IO ()
@@ -46,11 +47,15 @@ main = do
   void . runHecsM w $ do
     eid <- newEntity
     set @Int eid 100
-    set @(Rel Color (Tag Red)) eid $ Rel Red
-    set eid $ Pos 30 0.5 2
+    -- set @(Rel Color (Tag Red)) eid $ Rel Red
+    -- set eid $ Pos 30 0.5 2
     eid2 <- newEntity
-    set @Int eid2 100
-    set eid2 $ Pos 30 0.5 2
+    set @Int eid2 105
+
+    get @Int eid2 (liftIO . print) $ liftIO $ putStrLn "No Int"
+
+    remove @Int eid2 
+    -- set eid2 $ Pos 30 0.5 2
     -- defer $ do
     --   eid <- newEntity
     --   set @Boxed eid $ Boxed1 10
@@ -77,17 +82,26 @@ main = do
     --   set @Position car (Pos 10 0 50)
     --   get @Position car (liftIO . print) (pure ())
     --   freeEntity car
+    -- liftIO $ putStrLn "Filter"
+    -- Hecs.filter (filterDSL @'[Int, Rel Color WildCard, Or Boxed Position])
+    --   (\aty _ -> do
+    --     x <- getColumn @Int aty
+    --     es <- getEntityColumn aty
+    --     iterateArchetype_ aty $ \n e -> do
+    --       liftIO $ print e
+    --       readColumn x n >>= liftIO . print 
+    --     pure ()
+    --     )
+    --   (pure ())
+
     liftIO $ putStrLn "Filter"
-    Hecs.filter (filterDSL @'[Int, Rel Color WildCard, Or Boxed Position])
-      (\aty _ -> do
-        x <- getColumn @Int aty
-        es <- getEntityColumn aty
-        iterateArchetype_ aty $ \n e -> do
-          liftIO $ print e
-          readColumn x n >>= liftIO . print 
-        pure ()
-        )
-      (pure ())
+    runFilter_ (filterDSL @'[Int]) $ cmapM_ (\(i :: Int) -> liftIO $ print i)
+    liftIO $ putStrLn "1"
+    liftIO $ putStrLn "2"
+    runFilter_ (filterDSL @'[Int]) $ cmapM_ (\(i :: Int) -> liftIO $ print i)
+    liftIO $ putStrLn "Done"
+    runFilter_ (filterDSL @'[Int]) $ cmap (\(i :: Int, eid :: EntityId) -> i + 1)
+
     -- get @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     -- get @Int e2 (pure . Just) (pure Nothing) >>= liftIO . print
     -- hasTag @Red e2 >>= liftIO . print

@@ -52,7 +52,7 @@ writeBack a@(Array# sz arr) el
   | otherwise = IO $ \s -> case writeSmallArray# arr sz el s of s1 -> (# s1, Array# (sz +# 1#) arr #)
   where
     cap = sizeofSmallMutableArray# arr
-{-# INLINE writeBack #-}
+-- {-# INLINE writeBack #-}
 
 iterate_ :: Array a -> (a -> IO ()) -> IO ()
 iterate_ (Array# sz arr) hdl = IO $ \s -> (# go 0# s, () #)

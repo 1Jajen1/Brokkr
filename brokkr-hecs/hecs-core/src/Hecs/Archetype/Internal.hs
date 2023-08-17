@@ -25,7 +25,7 @@ module Hecs.Archetype.Internal (
 , getColumnSizes
 , addColumnSize
 , iterateComponentIds
-, unsfeGetColumn
+, unsafeGetColumn
 , addEntity
 , showSzs
 , getNumEntities
@@ -38,7 +38,7 @@ module Hecs.Archetype.Internal (
 
 import Hecs.Component.Internal
 import Hecs.Entity.Internal ( EntityId(..), Entity(..), EntityTag(..), Relation(..) )
-import qualified Hecs.HashTable.Boxed as HTB
+import qualified Hecs.HashTable.Int2Boxed as HTB
 import Hecs.HashTable.HashKey
 
 import GHC.Int
@@ -47,7 +47,6 @@ import GHC.IO
 import Foreign.Storable
 import Unsafe.Coerce (unsafeCoerce)
 import Data.Proxy
-import Data.IORef
 import Data.Bitfield
 
 -- TODO This whole file needs a rework once done
@@ -57,7 +56,7 @@ data ArchetypeEdge = ArchetypeEdge !(Maybe Archetype) !(Maybe Archetype)
 
 -- TODO Make sum type for tags and other non-storage affecting data? I could also just share the column structure as it is entirely mutable
 data Archetype = Archetype {
-  edges        :: {-# UNPACK #-} !(IORef (HTB.HashTable (ComponentId Any) ArchetypeEdge))
+  edges        :: {-# UNPACK #-} !(HTB.HashTable ArchetypeEdge) -- TODO Improve lookup speed. This is currently a bottleneck
 , columns      :: {-# UNPACK #-} !Columns#
 , componentTyB :: ComponentType#
 , componentTyF :: ComponentType#
@@ -66,7 +65,6 @@ data Archetype = Archetype {
 
 instance Eq Archetype where
   l == r = getTy l == getTy r
-  {-# INLINE (==) #-}
 
 getTy :: Archetype -> ArchetypeTy
 getTy Archetype{componentTyB, componentTyF, componentTyT} = ArchetypeTy componentTyB componentTyF componentTyT 
@@ -107,13 +105,12 @@ showTy (ComponentType# arr) = "[" <> dropLast (go 0# "") <> "]"
 
 instance Eq ArchetypeTy where
   ArchetypeTy lB lU lT == ArchetypeTy rB rU rT = eqComponentType lB rB && eqComponentType lU rU && eqComponentType lT rT
-  {-# INLINE (==) #-}
 
 instance HashKey ArchetypeTy where
   hashKey (ArchetypeTy b u t) = hashComponentType b <> hashComponentType u <> hashComponentType t
-  {-# INLINE hashKey #-}
   
 -- This does not need to be IO, many others don't need to either, move to arbitrary state and use ST?
+-- Also if this doesn't inline, the Int will be boxed
 addComponentType :: forall c ty . KnownComponentType ty => Proxy ty -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int)
 addComponentType ty (ArchetypeTy boxedTy unboxedTy tagTy) compId =
   branchCompType ty
@@ -123,9 +120,7 @@ addComponentType ty (ArchetypeTy boxedTy unboxedTy tagTy) compId =
       (# s1, newUnboxedTy, ind #) -> (# s1, (ArchetypeTy boxedTy newUnboxedTy tagTy, I# ind) #))
     (IO $ \s -> case addComponent tagTy compId s of
       (# s1, newTagTy, ind #) -> (# s1, (ArchetypeTy boxedTy unboxedTy newTagTy, I# ind) #))
-{-# SPECIALISE addComponentType :: forall c . Proxy Boxed -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int) #-}
-{-# SPECIALISE addComponentType :: forall c . Proxy Flat  -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int) #-}
-{-# SPECIALISE addComponentType :: forall c . Proxy Tag   -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int) #-}
+{-# INLINE addComponentType #-}
 
 removeComponentType :: forall ty . KnownComponentType ty => Proxy ty -> ArchetypeTy -> Int -> IO ArchetypeTy
 removeComponentType ty (ArchetypeTy boxedTy unboxedTy tagTy) col =
@@ -136,9 +131,7 @@ removeComponentType ty (ArchetypeTy boxedTy unboxedTy tagTy) col =
       (# s1, newUnboxedTy #) -> (# s1, ArchetypeTy boxedTy newUnboxedTy tagTy #))
     (IO $ \s -> case removeComponent tagTy col s of
       (# s1, newTagTy #) -> (# s1, ArchetypeTy boxedTy unboxedTy newTagTy #))
-{-# SPECIALISE removeComponentType :: Proxy Boxed -> ArchetypeTy -> Int -> IO ArchetypeTy #-}
-{-# SPECIALISE removeComponentType :: Proxy Flat  -> ArchetypeTy -> Int -> IO ArchetypeTy #-}
-{-# SPECIALISE removeComponentType :: Proxy Tag   -> ArchetypeTy -> Int -> IO ArchetypeTy #-}
+{-# INLINE removeComponentType #-}
 
 removeComponent :: ComponentType# -> Int -> State# RealWorld -> (# State# RealWorld, ComponentType# #)
 removeComponent (ComponentType# arr) (I# col) s0 =
@@ -148,7 +141,6 @@ removeComponent (ComponentType# arr) (I# col) s0 =
         s3 -> case unsafeFreezeByteArray# newArr s3 of (# s4, bar #) -> (# s4, ComponentType# bar #)
   where
     bSz = sizeofByteArray# arr
-{-# INLINE removeComponent #-}
 
 newtype ComponentType# = ComponentType# ByteArray#
 
@@ -167,7 +159,6 @@ hashComponentType (ComponentType# arr) = HashFn $ \i -> go 0# i
     sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
     go n !h | isTrue# (n >=# sz) = h
             | otherwise = go (n +# 1#) (hashWithSalt h (hashKey (I# (indexIntArray# arr n))))
-{-# INLINE hashComponentType #-}
 
 addComponent :: ComponentType# -> ComponentId c -> State# RealWorld -> (# State# RealWorld, ComponentType#, Int# #)
 addComponent (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s0 =
@@ -184,59 +175,63 @@ addComponent (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s0 
       where el = indexIntArray# arr n
     sz = uncheckedIShiftRL# bSz 3#
     bSz = sizeofByteArray# arr
-{-# INLINE addComponent #-}
-  
--- Linear search for the component. Maybe instead use a (storable) hashtable? 
-indexComponent# :: ComponentType# -> ComponentId c -> (Int# -> r) -> r -> r
-indexComponent# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s f = go 0#
+{-# NOINLINE addComponent #-}
+
+-- Linear search for the component
+-- Maybe instead use a (storable) hashtable?
+-- Use a sorted bytearray and map that into the actual indices?
+indexComponent# :: ComponentType# -> ComponentId c -> (# Int# | (# #) #)
+indexComponent# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) = go 0#
   where
     sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
-    go n | isTrue# (n >=# sz) = f
-    go n | isTrue# (indexIntArray# arr n ==# i) = s n
+    go n | isTrue# (n >=# sz) = (# | (# #) #)
+    go n | isTrue# (indexIntArray# arr n ==# i) = (# n | #)
     go n = go (n +# 1#)
-{-# INLINE indexComponent# #-}
+-- Core is much more readable with this not inlined
+-- TODO Benchmark this!
+{-# NOINLINE indexComponent# #-}
 
-indexWildcardB# :: ComponentType# -> (Int# -> r) -> r -> r
-indexWildcardB# (ComponentType# arr) s f = go 0#
+indexWildcardB# :: ComponentType# -> (# Int# | (# #) #)
+indexWildcardB# (ComponentType# arr) = go 0#
   where
     sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
     go n
-      | isTrue# (n >=# sz) = f
-      | (Bitfield @Int @Entity (I# el)).tag.isRelation = s n
+      | isTrue# (n >=# sz) = (# | (# #) #)
+      | (Bitfield @Int @Entity (I# el)).tag.isRelation = (# n | #)
       | otherwise = go (n +# 1#)
       where
         el = indexIntArray# arr n
-{-# INLINE indexWildcardB# #-}
+{-# NOINLINE indexWildcardB# #-}
 
-indexWildcardL# :: ComponentType# -> ComponentId c -> (Int# -> r) -> r -> r
-indexWildcardL# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s f = go 0#
+indexWildcardL# :: ComponentType# -> ComponentId c -> (# Int# | (# #) #)
+indexWildcardL# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) = go 0#
   where
     sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
     go n
-      | isTrue# (n >=# sz) = f
-      | isTrue# (el ==# i) = s n
+      | isTrue# (n >=# sz) = (# | (# #) #)
+      | isTrue# (el ==# i) = (# n | #)
       | otherwise = go (n +# 1#)
       where
         el' = indexIntArray# arr n
         el = if (Bitfield @Int @Entity (I# el')).tag.isRelation
               then let !(I# sndId) = fromIntegral $ (Bitfield @Int @Relation (I# el')).second in sndId
               else el'
-{-# INLINE indexWildcardL# #-}
+{-# NOINLINE indexWildcardL# #-}
 
-indexWildCardR# :: ComponentType# -> ComponentId c -> (Int# -> r) -> r -> r
-indexWildCardR# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s f = go 0#
+indexWildCardR# :: ComponentType# -> ComponentId c -> (# Int# | (# #) #)
+indexWildCardR# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) = go 0#
   where
     sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
     go n
-      | isTrue# (n >=# sz) = f
-      | isTrue# (el ==# i) = s n
+      | isTrue# (n >=# sz) = (# | (# #) #)
+      | isTrue# (el ==# i) = (# n | #)
       | otherwise = go (n +# 1#)
       where
         el' = indexIntArray# arr n
         el = if (Bitfield @Int @Entity (I# el')).tag.isRelation
               then let !(I# firstId) = fromIntegral $ (Bitfield @Int @Relation (I# el')).first in firstId
               else el'
-{-# INLINE indexWildCardR# #-}
+{-# NOINLINE indexWildCardR# #-}
 
 numComponents :: ComponentType# -> Int#
 numComponents (ComponentType# arr) = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
@@ -284,8 +279,7 @@ removeColumnSize (I# at) (ColumnSizes# szs) s0 =
 
 empty :: IO Archetype
 empty = do
-  edgesM <- HTB.new 8 -- TODO Inits
-  edges <- newIORef edgesM
+  edges <- HTB.new 8 -- TODO Inits
   IO $ \s0 ->
     case newArray# 0# (error "No") s0 of
       (# s1, arr #) -> case newSmallArray# 0# arr s1 of
@@ -347,37 +341,38 @@ writeBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# colu
 
 lookupComponent :: forall c ty r . KnownComponentType ty => Proxy ty -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
 lookupComponent ty = branchCompType ty
-  (\Archetype{componentTyB} compId s -> indexComponent# componentTyB compId (\i -> s (I# i)))
-  (\Archetype{componentTyF} compId s -> indexComponent# componentTyF compId (\i -> s (I# i)))
-  (\Archetype{componentTyT} compId s -> indexComponent# componentTyT compId (\i -> s (I# i)))
+  (\Archetype{componentTyB} compId s f -> case indexComponent# componentTyB compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
+  (\Archetype{componentTyF} compId s f -> case indexComponent# componentTyF compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
+  (\Archetype{componentTyT} compId s f -> case indexComponent# componentTyT compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
 {-# INLINE lookupComponent #-}
 
 lookupWildcardB :: forall ty r . KnownComponentType ty => Proxy ty -> Archetype -> (Int -> r) -> r -> r
 lookupWildcardB ty = branchCompType ty
-  (\Archetype{componentTyB} s -> indexWildcardB# componentTyB (\i -> s (I# i)))
-  (\Archetype{componentTyF} s -> indexWildcardB# componentTyF (\i -> s (I# i)))
-  (\Archetype{componentTyT} s -> indexWildcardB# componentTyT (\i -> s (I# i)))
+  (\Archetype{componentTyB} s f -> case indexWildcardB# componentTyB of (# n | #) -> s (I# n); (# | (# #) #) -> f)
+  (\Archetype{componentTyF} s f -> case indexWildcardB# componentTyF of (# n | #) -> s (I# n); (# | (# #) #) -> f)
+  (\Archetype{componentTyT} s f -> case indexWildcardB# componentTyT of (# n | #) -> s (I# n); (# | (# #) #) -> f)
 {-# INLINE lookupWildcardB #-}
 
 lookupWildcardL :: forall c ty r . KnownComponentType ty => Proxy ty -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
 lookupWildcardL ty = branchCompType ty
-  (\Archetype{componentTyB} compId s -> indexWildcardL# componentTyB compId (\i -> s (I# i)))
-  (\Archetype{componentTyF} compId s -> indexWildcardL# componentTyF compId (\i -> s (I# i)))
-  (\Archetype{componentTyT} compId s -> indexWildcardL# componentTyT compId (\i -> s (I# i)))
+  (\Archetype{componentTyB} compId s f -> case indexWildcardL# componentTyB compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
+  (\Archetype{componentTyF} compId s f -> case indexWildcardL# componentTyF compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
+  (\Archetype{componentTyT} compId s f -> case indexWildcardL# componentTyT compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
 {-# INLINE lookupWildcardL #-}
 
 lookupWildcardR :: forall c ty r . KnownComponentType ty => Proxy ty -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
 lookupWildcardR ty = branchCompType ty
-  (\Archetype{componentTyB} compId s -> indexWildCardR# componentTyB compId (\i -> s (I# i)))
-  (\Archetype{componentTyF} compId s -> indexWildCardR# componentTyF compId (\i -> s (I# i)))
-  (\Archetype{componentTyT} compId s -> indexWildCardR# componentTyT compId (\i -> s (I# i)))
+  (\Archetype{componentTyB} compId s f -> case indexWildCardR# componentTyB compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
+  (\Archetype{componentTyF} compId s f -> case indexWildCardR# componentTyF compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
+  (\Archetype{componentTyT} compId s f -> case indexWildCardR# componentTyT compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
 {-# INLINE lookupWildcardR #-}
 
-unsfeGetColumn :: forall c ty . KnownComponentType ty => Proxy ty -> Archetype -> Int -> IO (Column ty c)
-unsfeGetColumn ty (Archetype{columns = Columns# _ _ boxed _ unboxed}) (I# col) = branchCompType ty
+unsafeGetColumn :: forall c ty . KnownComponentType ty => Proxy ty -> Archetype -> Int -> IO (Column ty c)
+unsafeGetColumn ty (Archetype{columns = Columns# _ _ boxed _ unboxed}) (I# col) = branchCompType ty
   (IO $ \s -> case readSmallArray# boxed col s of (# s1, arr #) -> (# s1, ColumnBoxed (unsafeCoerce# arr) #))
   (IO $ \s -> case readSmallArray# unboxed col s of (# s1, arr #) -> (# s1, ColumnFlat arr #))
   (error "Tried to get a column for a tag")
+{-# INLINE unsafeGetColumn #-}
 
 grow :: Columns# -> State# RealWorld -> State# RealWorld
 grow (Columns# _ eids boxed (ColumnSizes# szs) unboxed) s = case copyUnboxed 0# (copyBoxed 0# s) of
@@ -405,10 +400,12 @@ grow (Columns# _ eids boxed (ColumnSizes# szs) unboxed) s = case copyUnboxed 0# 
     numUnboxed = sizeofSmallMutableArray# unboxed
 
 getEdge :: Archetype -> ComponentId c -> IO ArchetypeEdge
-getEdge (Archetype{edges}) compId = readIORef edges >>= \em -> HTB.lookup em (coerce compId) pure (pure $ ArchetypeEdge Nothing Nothing)
+getEdge (Archetype{edges}) compId = HTB.lookup edges (coerce compId) >>= \case
+  Just x -> pure x
+  Nothing -> pure $ ArchetypeEdge Nothing Nothing
 
 setEdge :: Archetype -> ComponentId c -> ArchetypeEdge -> IO ()
-setEdge (Archetype{edges}) compId edge = readIORef edges >>= \em -> HTB.insert em (coerce compId) edge >>= writeIORef edges
+setEdge (Archetype{edges}) = HTB.insert edges . coerce
 
 getColumnSizes :: Archetype -> ColumnSizes#
 getColumnSizes Archetype{columns = Columns# _ _ _ szs _} = szs
@@ -417,12 +414,11 @@ getColumnSizes Archetype{columns = Columns# _ _ _ szs _} = szs
 createArchetype :: ArchetypeTy -> ColumnSizes# -> IO Archetype
 createArchetype (ArchetypeTy boxedTy unboxedTy tagTy) szs = do
   -- traceIO $ "New Archetype with type: " <> show (ArchetypeTy boxedTy unboxedTy tagTy)
-  edgesM' <- HTB.new 8 -- TODO Inits
-  edges <- newIORef edgesM'
+  edges <- HTB.new 8 -- TODO Inits
   IO $ \s0 -> case newColumns initSz numBoxed numUnboxed szs s0 of
     (# s1, cols #) -> (# s1, Archetype edges cols boxedTy unboxedTy tagTy #)
   where
-    initSz = 8# -- TODO Inits
+    initSz = 4# -- TODO Inits. Update: Fun. This being 4 or 256 does not impact performance at all. So growing really does amortize nicely
     numBoxed = numComponents boxedTy
     numUnboxed = numComponents unboxedTy
 

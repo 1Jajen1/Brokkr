@@ -20,6 +20,7 @@ import GHC.TypeLits
 import Data.Coerce
 import Data.Kind
 import Data.Bitfield
+import Data.String (IsString(..))
 
 -- Type voodoo ahead, continue at your own risk
 
@@ -69,8 +70,7 @@ type ClassContext ctx l r =
 classCtx :: forall ctx l r a . ClassContext ctx l r => ((ctx l, CaseTag l (CaseTag r Void r) l ~ l) => a) -> ((ctx r, CaseTag l (CaseTag r Void r) l ~ r) => a) -> a
 classCtx a b = switch @(CaseTag l True False) @(CaseTag r True False)
     @(ctx l, CaseTag l (CaseTag r Void r) l ~ l)
-    @(ctx r, CaseTag l (CaseTag r Void r) l ~ r)
-    a b
+    @(ctx r, CaseTag l (CaseTag r Void r) l ~ r) a b
 {-# INLINE classCtx #-}
 
 instance ClassContext Eq l r => Eq (Rel l r) where
@@ -80,8 +80,38 @@ instance ClassContext Eq l r => Eq (Rel l r) where
 
 instance ClassContext Show l r => Show (Rel l r) where
   show (Rel x) = classCtx @Show @l @r
-    (show @l x) (show @r x)
+    (show x) (show x)
   {-# INLINE show #-}
+
+instance ClassContext Enum l r => Enum (Rel l r) where
+  toEnum i = Rel $ classCtx @Enum @l @r
+    (toEnum i) (toEnum i)
+  {-# INLINE toEnum #-}
+  fromEnum (Rel i) = classCtx @Enum @l @r
+    (fromEnum i) (fromEnum i)
+  {-# INLINE fromEnum #-}
+
+instance ClassContext Num l r => Num (Rel l r) where
+  Rel l + Rel r = Rel $ classCtx @Num @l @r (l + r) (l + r)
+  Rel l * Rel r = Rel $ classCtx @Num @l @r (l * r) (l * r)
+  abs (Rel x) = Rel $ classCtx @Num @l @r (abs x) (abs x)
+  signum (Rel x) = Rel $ classCtx @Num @l @r (signum x) (signum x)
+  Rel l - Rel r = Rel $ classCtx @Num @l @r (l - r) (l - r)
+  fromInteger x = Rel $ classCtx @Num @l @r (fromInteger x) (fromInteger x)
+
+instance (ClassContext Eq l r, ClassContext Ord l r) => Ord (Rel l r) where
+  compare (Rel l) (Rel r) = classCtx @Ord @l @r (compare l r) (compare l r)
+
+instance (ClassContext Eq l r, ClassContext Ord l r, ClassContext Num l r, ClassContext Real l r) => Real (Rel l r) where
+  toRational (Rel x) = classCtx @Real @l @r (toRational x) (toRational x)
+
+instance (ClassContext Eq l r, ClassContext Ord l r, ClassContext Num l r, ClassContext Real l r, ClassContext Enum l r, ClassContext Integral l r) => Integral (Rel l r) where
+  toInteger (Rel x) = classCtx @Integral @l @r (toInteger x) (toInteger x)
+  quotRem (Rel a) (Rel b) = case classCtx @Integral @l @r (quotRem a b) (quotRem a b) of
+    (q,r) -> (Rel q, Rel r)
+
+instance ClassContext IsString l r => IsString (Rel l r) where
+  fromString str = Rel $ classCtx @IsString @l @r (fromString str) (fromString str)
 
 type StorableCtx l r = ClassContext Storable l r
 

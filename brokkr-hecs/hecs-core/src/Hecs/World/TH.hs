@@ -20,6 +20,8 @@ import Control.Monad.Base
 import Data.Coerce
 import Data.Bitfield
 
+import Debug.Trace
+
 -- | Create and setup a world datatype
 --
 -- Creates a datatype with the first argument as its name
@@ -40,7 +42,7 @@ makeWorld wN names = do
       preAllocComps = fromIntegral $ inbuildNum + length names
       wldDec = NewtypeD [] wName [] Nothing (NormalC wName [(Bang NoSourceUnpackedness NoSourceStrictness, AppT (ConT worldImplName) (LitT $ NumTyLit preAllocComps))]) []
       wCon = pure $ ConT wName
-      natTy = pure . LitT $ NumTyLit preAllocComps
+      -- natTy = pure . LitT $ NumTyLit preAllocComps
       processName :: Int -> Name -> Q [Dec]
       processName eid name = do
         reify name >>= \case
@@ -63,7 +65,7 @@ makeWorld wN names = do
               _ -> let cCon = conT name in [d|
                   type instance CaseTag $cCon _ b = b
 
-                  {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> $cCon -> IO () #-}
+                  -- {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> $cCon -> IO () #-}
                 |]
             pure $ xs ++ ys
           _ -> error "TODO"
@@ -110,5 +112,9 @@ makeWorld wN names = do
       getColumn :: forall c ty m . (Component c, Has $wCon c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> m (Column (ComponentKind c) c)
       getColumn ty = Hecs.Filter.getColumn @c @($wCon) @ty @m ty
       {-# INLINE getColumn #-}
+
+      getColumnM :: forall c ty m . (Component c, Has $wCon c, MonadBase IO m) => TypedArchetype ty -> m (Maybe (Column (ComponentKind c) c))
+      getColumnM ty = Hecs.Filter.getColumnM @c @($wCon) @ty @m ty
+      {-# INLINE getColumnM #-}
     |]
   pure $ wldDec : compInstances ++ otherInstances ++ specializedApi ++ newWorldD
