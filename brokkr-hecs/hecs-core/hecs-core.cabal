@@ -58,7 +58,6 @@ library
                       , Hecs.HashTable.Boxed
                       , Hecs.HashTable.HashKey
                       , Hecs.HashTable.Int2Boxed
-                      , Hecs.HashTable.Storable
                       , Hecs.Component
                       , Hecs.Component.Generic
                       , Hecs.Component.Internal

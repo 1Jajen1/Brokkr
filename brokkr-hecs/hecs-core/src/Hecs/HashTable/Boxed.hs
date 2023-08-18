@@ -5,7 +5,7 @@
 {-# LANGUAGE UnliftedDatatypes #-}
 {-# LANGUAGE TypeFamilies #-}
 module Hecs.HashTable.Boxed (
-  HashTable
+  HashTable(..)
 , new
 , insert
 , lookup
@@ -24,14 +24,14 @@ import GHC.IO hiding (liftIO)
 import Control.Monad.IO.Class
 
 -- TODO Tombs are no overwriteable, that is unsafe if the element is still in!
+-- TODO After benchmarks implement robin hood probing with fixed length probes?
 -- TODO Benchmark thoroughly before embarking on any changes from now on
 
 -- Mutable linear hashtable
 -- Used internally to map Components to their ids and will probably have some other uses later on
 data HashTable key value = HashTable {
   -- TODO Merge this into one array with 2 elements
-  size    :: MutableByteArray# RealWorld
-, capMask :: MutableByteArray# RealWorld
+  sizeCapMask :: MutableByteArray# RealWorld
 , backing :: MutVar# RealWorld (MutableArray# RealWorld (Entry key value))
 }
 
@@ -44,24 +44,23 @@ new :: forall key value . Int -> IO (HashTable key value)
 new initSz = IO $ \s ->
   case newArray# iSzP2 Empty s of
     (# s1, arr #) -> case newMutVar# arr s1 of
-      (# s2, arrRef #) -> case newByteArray# 8# s2 of
-        (# s3, szRef #) -> case writeIntArray# szRef 0# 0# s3 of
-          s4 -> case newByteArray# 8# s4 of
-            (# s5, capMaskRef #) -> case writeIntArray# capMaskRef 0# (iSzP2 -# 1#) s5 of
-              s6 -> (# s6, HashTable szRef capMaskRef arrRef #)
+      (# s2, arrRef #) -> case newByteArray# 16# s2 of
+        (# s3, sizeCapMask #) -> case writeIntArray# sizeCapMask 0# 0# s3 of
+          s4 -> case writeIntArray# sizeCapMask 1# (iSzP2 -# 1#) s4 of
+              s5 -> (# s5, HashTable sizeCapMask arrRef #)
   where
     !(I# iSzP2) = if initSz == 1 then 1 else 1 `unsafeShiftL` (8 * sizeOf (undefined :: Int) - countLeadingZeros (initSz - 1))
 
 insert :: forall key value . HashKey key => HashTable key value -> key -> value -> IO ()
 {-# INLINE insert #-}
 insert old@HashTable{..} !k v = IO $ \s0 ->
-  case readIntArray# capMask 0# s0 of
+  case readIntArray# sizeCapMask 1# s0 of
     (# s1, capMask# #) -> case readMutVar# backing s1 of
       (# s2, backing# #) ->
         case unsafeInsert capMask# backing# k (hash (hashKey k)) v of
             IO f -> case f s2 of
-              (# s3, added #) -> case readIntArray# size 0# s3 of
-                (# s4, sz# #) -> case (if added then writeIntArray# size 0# (sz# +# 1#) s4 else s4) of
+              (# s3, added #) -> case readIntArray# sizeCapMask 0# s3 of
+                (# s4, sz# #) -> case (if added then writeIntArray# sizeCapMask 0# (sz# +# 1#) s4 else s4) of
                   s5 ->
                     let threeQuartersCap# = 3# *# ((capMask# +# 1#) `quotInt#` 4#)
                     in if isTrue# (sz# +# 1# >=# threeQuartersCap#)
@@ -86,7 +85,7 @@ unsafeInsert capMask# backing# !k h@(I# h#) v = IO $ \s0 ->
 lookup :: forall key value m . MonadIO m => HashKey key => HashTable key value -> key -> m (Maybe value)
 {-# INLINE lookup #-} -- GHC would inline anyway, but forcing this ensures the maybe is never allocated. Maybe instead return an unboxed sum?
 lookup HashTable{..} !k = liftIO $ IO $ \s0 ->
-  case readIntArray# capMask 0# s0 of
+  case readIntArray# sizeCapMask 1# s0 of
     (# s1, capMask# #) -> case readMutVar# backing s1 of
       (# s2, backing# #) ->
         let !h@(I# h#) = hash (hashKey k)
@@ -102,9 +101,9 @@ lookup HashTable{..} !k = liftIO $ IO $ \s0 ->
 
 delete :: forall key value . HashKey key => HashTable key value -> key -> IO (Maybe value)
 delete HashTable{..} !k = IO $ \s0 ->
-  case readIntArray# capMask 0# s0 of
+  case readIntArray# sizeCapMask 1# s0 of
     (# s1, capMask# #) ->
-      case readIntArray# size 0# s1 of
+      case readIntArray# sizeCapMask 0# s1 of
         (# s2, sz# #) -> case readMutVar# backing s2 of
           (# s3, backing# #) ->
             let !h@(I# h#) = hash (hashKey k)
@@ -119,12 +118,12 @@ delete HashTable{..} !k = IO $ \s0 ->
                     (# s', Tomb #) -> go (n +# 1#) s'
                     (# s', Empty #) -> (# s', undefined, False #)
             in case go start# s3 of
-              (# s4, val, True #) -> (# writeIntArray# size 0# (sz# -# 1#) s4, Just val #)
+              (# s4, val, True #) -> (# writeIntArray# sizeCapMask 0# (sz# -# 1#) s4, Just val #)
               (# s4, _, False #)  -> (# s4, Nothing #)
 
 iterateWithHash :: HashTable key value -> (key -> Int -> value -> IO ()) -> IO ()
 iterateWithHash HashTable{..} f = IO $ \s0 ->
-  case readIntArray# capMask 0# s0 of
+  case readIntArray# sizeCapMask 1# s0 of
     (# s1, capMask# #) -> case readMutVar# backing s1 of
       (# s2, backing# #) ->
         let go n s | isTrue# (n ># capMask#) = (# s, () #)
@@ -137,13 +136,13 @@ iterateWithHash HashTable{..} f = IO $ \s0 ->
 resize :: forall key value . Eq key => HashTable key value -> IO ()
 resize old@HashTable{..} = do
   IO $ \s ->
-    case readIntArray# capMask 0# s of
+    case readIntArray# sizeCapMask 1# s of
       (# s0, capMask# #) ->
         let reqSz = (capMask# +# 1#) *# 2#
         in case newArray# reqSz Empty s0 of
           (# s1, arr #) -> case iterateWithHash old $ \k h v -> void $ unsafeInsert (reqSz -# 1#) arr k h v of
               IO f -> case f s1 of
                 (# s2, () #) -> case writeMutVar# backing arr s2 of
-                  s3 -> case writeIntArray# capMask 0# (reqSz -# 1#) s3 of
+                  s3 -> case writeIntArray# sizeCapMask 1# (reqSz -# 1#) s3 of
                     s4 -> (# s4, () #) 
   

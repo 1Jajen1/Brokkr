@@ -20,8 +20,6 @@ import Control.Monad.Base
 import Data.Coerce
 import Data.Bitfield
 
-import Debug.Trace
-
 -- | Create and setup a world datatype
 --
 -- Creates a datatype with the first argument as its name

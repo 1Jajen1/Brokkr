@@ -26,9 +26,8 @@ import Control.Monad.IO.Class
 -- Mutable linear hashtable
 -- Used internally to map Components to their ids and will probably have some other uses later on
 data HashTable value = HashTable {
-  size    :: MutableByteArray# RealWorld
-, capMask :: MutableByteArray# RealWorld
-, backing :: MutVar# RealWorld (MutableArray# RealWorld (Entry value))
+  sizeCapMask :: MutableByteArray# RealWorld
+, backing     :: MutVar# RealWorld (MutableArray# RealWorld (Entry value))
 }
 
 data Entry value :: UnliftedType where
@@ -40,24 +39,23 @@ new :: forall value . Int -> IO (HashTable value)
 new initSz = IO $ \s ->
   case newArray# iSzP2 Empty s of
     (# s1, arr #) -> case newMutVar# arr s1 of
-      (# s2, arrRef #) -> case newByteArray# 8# s2 of
-        (# s3, szRef #) -> case writeIntArray# szRef 0# 0# s3 of
-          s4 -> case newByteArray# 8# s4 of
-            (# s5, capMaskRef #) -> case writeIntArray# capMaskRef 0# (iSzP2 -# 1#) s5 of
-              s6 -> (# s6, HashTable szRef capMaskRef arrRef #)
+      (# s2, arrRef #) -> case newByteArray# 16# s2 of
+        (# s3, sizeCapMask #) -> case writeIntArray# sizeCapMask 0# 0# s3 of
+          s4 -> case writeIntArray# sizeCapMask 1# (iSzP2 -# 1#) s4 of
+              s5 -> (# s5, HashTable sizeCapMask arrRef #)
   where
     !(I# iSzP2) = if initSz == 1 then 1 else 1 `unsafeShiftL` (8 * sizeOf (undefined :: Int) - countLeadingZeros (initSz - 1))
 
 insert :: forall value . HashTable value -> Int -> value -> IO ()
 {-# INLINE insert #-}
 insert old@HashTable{..} !k v = IO $ \s0 ->
-  case readIntArray# capMask 0# s0 of
+  case readIntArray# sizeCapMask 1# s0 of
     (# s1, capMask# #) -> case readMutVar# backing s1 of
       (# s2, backing# #) ->
         case unsafeInsert capMask# backing# k (hash (hashKey k)) v of
             IO f -> case f s2 of
-              (# s3, added #) -> case readIntArray# size 0# s3 of
-                (# s4, sz# #) -> case (if added then writeIntArray# size 0# (sz# +# 1#) s4 else s4) of
+              (# s3, added #) -> case readIntArray# sizeCapMask 0# s3 of
+                (# s4, sz# #) -> case (if added then writeIntArray# sizeCapMask 0# (sz# +# 1#) s4 else s4) of
                   s5 ->
                     let threeQuartersCap# = 3# *# ((capMask# +# 1#) `quotInt#` 4#)
                     in if isTrue# (sz# +# 1# >=# threeQuartersCap#)
@@ -81,7 +79,7 @@ unsafeInsert capMask# backing# !k h@(I# h#) v = IO $ \s0 ->
 
 lookup :: forall value . HashTable value -> Int -> IO (Maybe value)
 lookup HashTable{..} !k = liftIO $ IO $ \s0 ->
-  case readIntArray# capMask 0# s0 of
+  case readIntArray# sizeCapMask 1# s0 of
     (# s1, capMask# #) -> case readMutVar# backing s1 of
       (# s2, backing# #) ->
         let !h@(I# h#) = hash (hashKey k)
@@ -97,9 +95,9 @@ lookup HashTable{..} !k = liftIO $ IO $ \s0 ->
 
 delete :: forall value . HashTable value -> Int -> IO (Maybe value)
 delete HashTable{..} !k = IO $ \s0 ->
-  case readIntArray# capMask 0# s0 of
+  case readIntArray# sizeCapMask 1# s0 of
     (# s1, capMask# #) ->
-      case readIntArray# size 0# s1 of
+      case readIntArray# sizeCapMask 0# s1 of
         (# s2, sz# #) -> case readMutVar# backing s2 of
           (# s3, backing# #) ->
             let !h@(I# h#) = hash (hashKey k)
@@ -114,12 +112,12 @@ delete HashTable{..} !k = IO $ \s0 ->
                     (# s', Tomb #) -> go (n +# 1#) s'
                     (# s', Empty #) -> (# s', undefined, False #)
             in case go start# s3 of
-              (# s4, val, True #) -> (# writeIntArray# size 0# (sz# -# 1#) s4, Just val #)
+              (# s4, val, True #) -> (# writeIntArray# sizeCapMask 0# (sz# -# 1#) s4, Just val #)
               (# s4, _, False #)  -> (# s4, Nothing #)
 
 iterateWithHash :: HashTable value -> (Int -> Int -> value -> IO ()) -> IO Int
 iterateWithHash HashTable{..} f = IO $ \s0 ->
-  case readIntArray# capMask 0# s0 of
+  case readIntArray# sizeCapMask 1# s0 of
     (# s1, capMask# #) -> case readMutVar# backing s1 of
       (# s2, backing# #) ->
         let go n acc s | isTrue# (n ># capMask#) = (# s, I# acc #)
@@ -132,13 +130,13 @@ iterateWithHash HashTable{..} f = IO $ \s0 ->
 resize :: forall value . HashTable value -> IO ()
 resize old@HashTable{..} = do
   IO $ \s ->
-    case readIntArray# capMask 0# s of
+    case readIntArray# sizeCapMask 1# s of
       (# s0, capMask# #) ->
         let reqSz = (capMask# +# 1#) *# 2#
         in case newArray# reqSz Empty s0 of
           (# s1, arr #) -> case iterateWithHash old $ \k h v -> void $ unsafeInsert (reqSz -# 1#) arr k h v of
               IO f -> case f s1 of
                 (# s2, I# newSz #) -> case writeMutVar# backing arr s2 of
-                  s3 -> case writeIntArray# capMask 0# (reqSz -# 1#) s3 of
-                    s4 -> (# writeIntArray# size 0# newSz s4, () #) 
+                  s3 -> case writeIntArray# sizeCapMask 1# (reqSz -# 1#) s3 of
+                    s4 -> (# writeIntArray# sizeCapMask 0# newSz s4, () #) 
   

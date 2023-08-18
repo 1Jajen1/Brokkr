@@ -27,7 +27,6 @@ data Test
 
 newtype Boxed = Boxed1 Int
   deriving Component via (ViaBox Boxed)
-
 data Color = Red | Green | Blue
   deriving stock (Eq, Show)
   deriving Component via (ViaBox Color)
@@ -37,7 +36,7 @@ makeWorld "World" [
   -- , ''Int8
   -- , ''Position
   -- , ''Test
-  -- , ''Boxed
+  , ''Boxed
   -- , ''Color, 'Red, 'Green, 'Blue
   ]
 

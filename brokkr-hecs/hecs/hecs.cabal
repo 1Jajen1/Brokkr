@@ -65,5 +65,6 @@ benchmark hecs-simple-bench
   build-depends:       tasty-bench
                      , hecs
                      , deepseq
+                     , random
   ghc-options:         -O2
 
