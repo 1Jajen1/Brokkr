@@ -65,4 +65,3 @@ library
                       , Hecs.Component.Properties
                       , Hecs.Filter
                       , Hecs.Filter.Internal
-                      , Hecs.SparseSet

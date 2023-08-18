@@ -17,7 +17,6 @@ import Hecs.Entity.Internal (EntityId(..))
 import qualified Hecs.Entity.Internal as EntityId
 import qualified Hecs.HashTable.Boxed as HTB
 import qualified Hecs.HashTable.Int2Boxed as HTI2B
-import qualified Hecs.SparseSet as SS
 import Hecs.Filter.Internal (Filter)
 import qualified Hecs.Filter.Internal as Filter
 
@@ -42,8 +41,7 @@ import Hecs.Component.Properties (wildcard)
 --
 -- This is the internal definition of a world. Most users will generate a newtype of this with 'makeWorld'.
 data WorldImpl (preAllocatedEIds :: Nat) = WorldImpl {
-  freshEIdRef          :: {-# UNPACK #-} !EntityId.FreshEntityId -- allocate unique entity ids with reuse
-, entityIndexRef       :: {-# UNPACK #-} !(SS.SparseSet ArchetypeRecord) -- changes often and thus needs good allround performance
+  entitySparseSet      :: {-# UNPACK #-} !(EntityId.EntitySparseSet ArchetypeRecord)
 , componentIndexRef    :: {-# UNPACK #-} !(HTI2B.HashTable (Arr.Array ArchetypeRecord)) -- changes infrequently if ever after the component graph stabilises, so only read perf matters, but also not too much
 , archetypeIndexRef    :: {-# UNPACK #-} !(HTB.HashTable ArchetypeTy Archetype) -- changes infrequently once graph stabilises
 , emptyArchetype       :: !Archetype -- root node for the archetype graph
@@ -63,15 +61,13 @@ data Command =
   | DestroyEntity !EntityId
   | Register !ActionType !(ComponentId Any) (EntityId -> IO ())
 
--- TODO Revisit derring inside processing set/get etc
+-- TODO Revisit derring inside proceEntityIding set/get etc
 data ArchetypeRecord = ArchetypeRecord !Int !Int !Archetype
 
 instance KnownNat n => WorldClass (WorldImpl n) where
   new = do
-    freshEIdRef <- EntityId.new -- TODO Better init sz
+    entitySparseSet <- EntityId.new -- TODO Better init sz
 
-    -- let entityIndex = mempty -- TODO Better init sz
-    entityIndexRef <- SS.new 256
     componentIndexRef <- HTI2B.new 32 -- TODO Better init sz
     archetypeIndexRef <- HTB.new 32 -- TODO Better init sz
     emptyArchetype <- Archetype.empty
@@ -81,9 +77,9 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     -- Preallocate a number of ids. This is a setup cost, but enables statically known ids for a list of components
     -- If this is ever too slow, this can be made much more efficient
     replicateM_ (preAllocatedEIds + 1) $ do
-      eid <- EntityId.allocateEntityId freshEIdRef
+      eid <- EntityId.allocateEntityId entitySparseSet
       row <- Archetype.addEntity emptyArchetype eid
-      SS.insert entityIndexRef (fromIntegral (unEntityId eid).eid) (ArchetypeRecord row 1 emptyArchetype)
+      EntityId.insert entitySparseSet eid (ArchetypeRecord row 1 emptyArchetype)
 
     deferred <- Arr.new 8
     deferredOpsRef <- newMVar deferred
@@ -97,7 +93,7 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     where
       preAllocatedEIds = fromIntegral @_ @Int $ natVal (Proxy @n)
   allocateEntity w@WorldImpl{..} = do
-    !eid <- EntityId.allocateEntityId freshEIdRef
+    !eid <- EntityId.allocateEntityId entitySparseSet
 
     if isDeferred
       then enqueue w $ CreateEntity eid
@@ -118,16 +114,16 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     else syncSetComponent w eid compId comp
   {-# INLINE setI #-}
   getI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
-  getI WorldImpl{entityIndexRef} !eid !compId s f = do
-    SS.lookup entityIndexRef (fromIntegral (unEntityId eid).eid)
-      (\(ArchetypeRecord row _ aty) -> Archetype.lookupComponent (Proxy @(ComponentKind c)) aty compId (Archetype.readComponent (Proxy @c) aty row >=> s) f)
-      f
+  getI WorldImpl{entitySparseSet} !eid !compId s f = do
+    EntityId.lookup entitySparseSet eid >>= \case
+      Just (ArchetypeRecord row _ aty) -> Archetype.lookupComponent (Proxy @(ComponentKind c)) aty compId (Archetype.readComponent (Proxy @c) aty row >=> s) f
+      Nothing -> f
   {-# INLINE getI #-}
   hasTagI :: forall c . WorldImpl n -> EntityId -> ComponentId c -> IO Bool
-  hasTagI WorldImpl{entityIndexRef} !eid !compId = do
-    SS.lookup entityIndexRef (fromIntegral (unEntityId eid).eid)
-      (\(ArchetypeRecord _ _ aty) -> Archetype.lookupComponent (Proxy @Tag) aty compId (const $ pure True) (pure False))
-      $ pure False
+  hasTagI WorldImpl{entitySparseSet} !eid !compId = do
+    EntityId.lookup entitySparseSet eid >>= \case
+      Just (ArchetypeRecord _ _ aty) -> Archetype.lookupComponent (Proxy @Tag) aty compId (const $ pure True) (pure False)
+      Nothing -> pure False
   {-# INLINE hasTagI #-}
   removeTagI w@WorldImpl{..} !eid !compId = if isDeferred
     then enqueue w $ RemoveTag eid compId
@@ -180,11 +176,11 @@ enqueue WorldImpl{..} !e = modifyMVar_ deferredOpsRef (`Arr.writeBack` e)
 syncAllocateEntity :: WorldImpl n -> EntityId -> IO ()
 syncAllocateEntity WorldImpl{..} !eid = do
   row <- Archetype.addEntity emptyArchetype eid
-  SS.insert entityIndexRef (fromIntegral (unEntityId eid).eid) (ArchetypeRecord row 1 emptyArchetype)
+  EntityId.insert entitySparseSet eid (ArchetypeRecord row 1 emptyArchetype)
 
 -- Note: Adding or manipulating a component which is no longer alive
 --
--- It is possible to free components as they are just entities under the hood.
+-- It is poEntityIdible to free components as they are just entities under the hood.
 -- There are valid reasons to do so for dynamic components with a fixed lifetime.
 --
 -- Freeing a component removes all listeners and it removes the component from the index.
@@ -198,8 +194,9 @@ syncAdd :: forall c n .
   -> (forall a . Archetype -> (Int -> IO a) -> IO a -> IO a)
   -> WorldImpl n -> EntityId -> ComponentId c -> IO (Archetype, Int, Int)
 syncAdd newArchetype addToType lookupCol w@WorldImpl{..} !eid !compId = do
-  ArchetypeRecord row _ aty <- SS.lookup entityIndexRef (fromIntegral (unEntityId eid).eid) pure
-    $ error "Hecs.World.Internal:syncAdd entity id not in entity index!"
+  ArchetypeRecord row _ aty <- EntityId.lookup entitySparseSet eid >>= \case
+    Just x -> pure x
+    Nothing -> error "Hecs.World.Internal:syncAdd entity id not in entity index!"
   
   -- lookupCol is usually the linear search over column types. This is fast, as shown by simply setting many times and hitting this fast path
   lookupCol aty (\c -> pure (aty, row, c)) $ do
@@ -214,8 +211,8 @@ syncAdd newArchetype addToType lookupCol w@WorldImpl{..} !eid !compId = do
       ArchetypeEdge (Just dstAty) _-> lookupCol dstAty (\c -> do
         (newRow, movedEid) <- Archetype.moveEntity aty row c dstAty -- 30% and worse the more stuff we need to copy
 
-        unless (movedEid == eid) $ SS.insert entityIndexRef (fromIntegral (unEntityId movedEid).eid) (ArchetypeRecord row 1 aty)
-        SS.insert entityIndexRef (fromIntegral (unEntityId eid).eid) (ArchetypeRecord newRow 1 dstAty)
+        unless (movedEid == eid) $ EntityId.insert entitySparseSet movedEid (ArchetypeRecord row 1 aty)
+        EntityId.insert entitySparseSet eid (ArchetypeRecord newRow 1 dstAty)
         pure (dstAty, newRow, c)
         )
         (error $ "Hecs.World.Internal:syncAdd edge destination did not have component: " <> show compId <> ". Searched in " <> show (getTy dstAty))
@@ -269,7 +266,7 @@ syncAddSlow newArchetype addToType WorldImpl{..} !eid !compId !aty !row = do
           -- add to the component index
           arr <- HTI2B.lookup componentIndexRef (coerce tyId) >>= \case
             Just arr -> Arr.writeBack arr $ ArchetypeRecord col 1 dstAty
-            Nothing -> Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty) -- TODO Check if count=1 is a safe assumption?
+            Nothing -> Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty) -- TODO Check if count=1 is a safe aEntityIdumption?
           HTI2B.insert componentIndexRef (coerce tyId) arr
         ) (pure ())
 
@@ -277,8 +274,8 @@ syncAddSlow newArchetype addToType WorldImpl{..} !eid !compId !aty !row = do
   -- now move the entity and its current data between the two
   (newRow, movedEid) <- Archetype.moveEntity aty row newColumn dstAty
 
-  unless (movedEid == eid) $ SS.insert entityIndexRef (fromIntegral (unEntityId movedEid).eid) (ArchetypeRecord row 1 aty)
-  SS.insert entityIndexRef (fromIntegral (unEntityId eid).eid) (ArchetypeRecord newRow 1 dstAty)
+  unless (movedEid == eid) $ EntityId.insert entitySparseSet movedEid(ArchetypeRecord row 1 aty)
+  EntityId.insert entitySparseSet eid (ArchetypeRecord newRow 1 dstAty)
 
   pure (dstAty, newRow, newColumn)
 
@@ -313,8 +310,9 @@ syncSetComponent w !eid !compId comp = do
 
 syncRemove :: forall ty c n . KnownComponentType ty => Proxy ty -> WorldImpl n -> EntityId -> ComponentId c -> IO ()
 syncRemove ty WorldImpl{..} !eid !compId = do
-  ArchetypeRecord row _ aty <- SS.lookup entityIndexRef (fromIntegral (unEntityId eid).eid) pure
-    $ error "Hecs.World.Internal:syncAdd entity id not in entity index!"
+  ArchetypeRecord row _ aty <- EntityId.lookup entitySparseSet eid >>= \case
+    Just x -> pure x
+    Nothing -> error "Hecs.World.Internal:syncRemove entity id not in entity index!"
 
   Archetype.lookupComponent ty aty compId (\removedColumn -> do
     -- run handlers
@@ -371,7 +369,7 @@ syncRemove ty WorldImpl{..} !eid !compId = do
 
               arr <- HTI2B.lookup componentIndexRef (coerce tyId) >>= \case
                 Just arr -> Arr.writeBack arr $ ArchetypeRecord col 1 dstAty
-                Nothing -> Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty) -- TODO Check if count=1 is a safe assumption?
+                Nothing -> Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty) -- TODO Check if count=1 is a safe aEntityIdumption?
               HTI2B.insert componentIndexRef (coerce tyId) arr) (pure ())
 
             pure dstAty
@@ -380,35 +378,34 @@ syncRemove ty WorldImpl{..} !eid !compId = do
     -- now move the entity and its current data between the two
     (newRow, movedEid) <- Archetype.moveEntity aty row removedColumn dstAty
 
-    unless (movedEid == eid) $ SS.insert entityIndexRef (fromIntegral (unEntityId movedEid).eid) (ArchetypeRecord row 1 aty)
-    SS.insert entityIndexRef (fromIntegral (unEntityId eid).eid) (ArchetypeRecord newRow 1 dstAty)
+    unless (movedEid == eid) $ EntityId.insert entitySparseSet movedEid (ArchetypeRecord row 1 aty)
+    EntityId.insert entitySparseSet eid (ArchetypeRecord newRow 1 dstAty)
     ) $ pure ()
 
 syncDestroyEntity :: WorldImpl n -> EntityId -> IO ()
 syncDestroyEntity WorldImpl{..} !eid = do
-  EntityId.deAllocateEntityId freshEIdRef eid
-  ArchetypeRecord row _ aty <- SS.lookup entityIndexRef (fromIntegral (unEntityId eid).eid) pure
-    $ error "Hecs.World.Internal:syncAdd entity id not in entity index!"
+  EntityId.deAllocateEntityId entitySparseSet eid >>= \case
+    -- we could just ignore this, but this is almost always a user bug!
+    Nothing -> error "Tried to free an already freed entityId"
+    Just (ArchetypeRecord row _ aty) -> do
+      -- TODO Get all components and run the remove handlers
+      Archetype.iterateComponentIds (Archetype.getTy aty) (\cid _ _ -> do
+        HTI2B.lookup componentHandlersRem (coerce cid) >>= traverse_ (\hdlArr -> Arr.iterate_ hdlArr $ \f -> f eid)
+        ) (pure ())
 
-  -- TODO Get all components and run the remove handlers
-  Archetype.iterateComponentIds (Archetype.getTy aty) (\cid _ _ -> do
-    HTI2B.lookup componentHandlersRem (coerce cid) >>= traverse_ (\hdlArr -> Arr.iterate_ hdlArr $ \f -> f eid)
-    ) (pure ())
+      -- This eid might be a component, so remove them from the relevant structures
+      HTI2B.delete componentIndexRef (coerce $ ComponentId eid) >>= \case
+        Nothing -> pure ()
+        Just arr -> do
+          -- TODO This is a little annoying. Basically needs an archetype move for every member of every archetype in this list.
+          --      This is reasonably fast as we can copy entire columns at once, its just really annoying to do...
+          Arr.iterate_ arr $ \(ArchetypeRecord _col _ _aty) -> pure ()
+          void $ HTI2B.delete componentHandlersAdd (coerce $ ComponentId eid)
+          void $ HTI2B.delete componentHandlersRem (coerce $ ComponentId eid)
+      
+      movedEid <- Archetype.removeEntity aty row
 
-  -- This eid might be a component, so remove them from the relevant structures
-  HTI2B.delete componentIndexRef (coerce $ ComponentId eid) >>= \case
-    Nothing -> pure ()
-    Just arr -> do
-      -- TODO This is a little annoying. Basically needs an archetype move for every member of every archetype in this list.
-      --      This is reasonably fast as we can copy entire columns at once, its just really annoying to do...
-      Arr.iterate_ arr $ \(ArchetypeRecord _col _ _aty) -> pure ()
-      void $ HTI2B.delete componentHandlersAdd (coerce $ ComponentId eid)
-      void $ HTI2B.delete componentHandlersRem (coerce $ ComponentId eid)
-  
-  movedEid <- Archetype.removeEntity aty row
-
-  unless (movedEid == eid) $ SS.insert entityIndexRef (fromIntegral (unEntityId movedEid).eid) (ArchetypeRecord row 1 aty)
-  SS.delete entityIndexRef (fromIntegral (unEntityId eid).eid)
+      unless (movedEid == eid) $ EntityId.insert entitySparseSet movedEid (ArchetypeRecord row 1 aty)
 
 syncRegister :: WorldImpl n -> ActionType -> ComponentId Any -> (EntityId -> IO ()) -> IO ()
 syncRegister WorldImpl{..} OnAdd !cid hdl = do
@@ -446,4 +443,4 @@ class WorldClass w where
 data ActionType = OnAdd | OnRemove
 
 -- TODO Revisit inline/inlineable pragmas.
---      - Aggressively optimize the fast path, always inline it, always keep the slow path out of line!
+--      - AggreEntityIdively optimize the fast path, always inline it, always keep the slow path out of line!

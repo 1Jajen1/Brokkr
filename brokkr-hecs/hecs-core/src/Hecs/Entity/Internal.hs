@@ -2,23 +2,28 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
-{-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
+-- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
 module Hecs.Entity.Internal (
   EntityId(..)
-, FreshEntityId(..)
+, EntitySparseSet(..)
 , new
 , allocateEntityId
 , deAllocateEntityId
+, isAlive
+, insert, lookup
 , Entity(..)
 , EntityTag(..)
 , Relation(..)
 ) where
+
+import Prelude hiding (lookup)
 
 import Control.Monad
 import Control.Monad.Primitive
 
 import Data.Bits
 import Data.Bitfield.Internal
+import Data.Primitive.Array
 import Data.Primitive.ByteArray
 import Data.Word
 
@@ -30,7 +35,7 @@ import GHC.IO
 
 import Hecs.HashTable.HashKey
 
-new :: IO FreshEntityId
+new :: IO (EntitySparseSet a)
 new = do
   -- Allocate id storage with space for 256 entity ids...
   szRef <- newByteArray 8
@@ -41,14 +46,16 @@ new = do
     (# s1, arr #) -> case newMutVar# arr s1 of
       (# s2, arrRef #) -> case newByteArray# initIndSz s2 of
         (# s3, indArr #) -> case newMutVar# indArr s3 of
-          (# s4, indArrRef #) -> (# s4, FreshEntityId szRef highestIdRef arrRef indArrRef #)
+          (# s4, indArrRef #) -> case newArray# 256# (error "EntitySparseSet:new empty") s4 of
+            (# s5, dataArr #) -> case newMutVar# dataArr s5 of
+              (# s6, dataArrRef #) -> (# s6, EntitySparseSet szRef highestIdRef arrRef indArrRef dataArrRef #)
   where
     -- 8 bytes per entityid
     initSz = 8# *# 256#
     initIndSz = 4# *# 256#
 
-allocateEntityId :: FreshEntityId -> IO EntityId
-allocateEntityId f@(FreshEntityId szRef highestIdRef arrRef indArrRef) = do
+allocateEntityId :: EntitySparseSet a -> IO EntityId
+allocateEntityId f@(EntitySparseSet szRef highestIdRef arrRef indArrRef dataArrRef) = do
   sz <- readByteArray @Int szRef 0
   highestId <- readByteArray @Int highestIdRef 0
   !arr <- IO $ \s -> case readMutVar# arrRef s of (# s1, arr# #) -> (# s1, MutableByteArray arr# #)
@@ -65,6 +72,13 @@ allocateEntityId f@(FreshEntityId szRef highestIdRef arrRef indArrRef) = do
           copyMutableByteArray arr 0 arr' 0 cap
           indArr' <- newByteArray (capInd * 2)
           copyMutableByteArray indArr 0 indArr' 0 capInd
+
+          dataArr <- IO $ \s -> case readMutVar# dataArrRef s of (# s1, dArr #) -> (# s1, MutableArray dArr #)
+          let dataArrCap = sizeofMutableArray dataArr
+          dataArr'@(MutableArray dataArr'#) <- newArray (dataArrCap * 2) (error "EntitySparseSet:grow empty")
+          copyMutableArray dataArr 0 dataArr' 0 dataArrCap
+          IO $ \s -> (# writeMutVar# dataArrRef dataArr'# s, () #)
+
           pure (arr', indArr')
         else pure (arr, indArr)
 
@@ -96,34 +110,104 @@ allocateEntityId f@(FreshEntityId szRef highestIdRef arrRef indArrRef) = do
           -- return the reused id but increment the generation
           pure $ EntityId newEid
 
-deAllocateEntityId :: FreshEntityId -> EntityId -> IO ()
-deAllocateEntityId (FreshEntityId szRef _ arrRef indArrRef) (EntityId eid) = do
+-- TODO Handle double free!
+deAllocateEntityId :: EntitySparseSet a -> EntityId -> IO (Maybe a)
+deAllocateEntityId (EntitySparseSet szRef _ arrRef indArrRef dataArrRef) (EntityId eid) = do
   sz <- readByteArray @Int szRef 0
 
   indArr <- IO $ \s -> case readMutVar# indArrRef s of (# s1, indArr #) -> (# s1, MutableByteArray indArr #)
   
   -- lookup where in the id array the id to deallocate is
   eidInd <- readByteArray @Word32 indArr (fromIntegral $ get @"eid" eid)
+  -- check if the entity is alive first
+  if fromIntegral eidInd >= sz
+    then pure Nothing
+    else do
+      arr <- IO $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, MutableByteArray arr #)
+      mEid <- readByteArray @Int arr (fromIntegral eidInd)
+      if mEid /= coerce eid
+        then pure Nothing
+        else do
+          dataArr <- IO $ \s -> case readMutVar# dataArrRef s of (# s1, dataArr #) -> (# s1, MutableArray dataArr #)
+          dataV <- readArray dataArr (fromIntegral eidInd)
 
-  -- special case: Deallocating the last allocated id simply decreases the size counter
-  unless (eidInd == fromIntegral (sz - 1)) $ do
-    arr <- IO $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, MutableByteArray arr #)
-    -- arr <- readIORef arrRef
+          -- special case: Deallocating the last allocated id simply decreases the size counter
+          unless (eidInd == fromIntegral (sz - 1)) $ do
+            -- arr <- readIORef arrRef
 
-    -- get the last allocated id (at the end of the array by construction. See allocate)
-    lastActive <- readByteArray @Int arr (sz - 1)
+            -- get the last allocated id (at the end of the array by construction. See allocate)
+            lastActive <- readByteArray @Int arr (sz - 1)
+            lastActiveV <- readArray dataArr (sz - 1)
 
-    -- swap the id to deallocate with the last allocated id
-    -- This now means the id we deallocate is at the end of all allocated ids (and before previously freed ids) 
-    writeByteArray @Int arr (fromIntegral eidInd) lastActive 
-    writeByteArray @Int arr (sz - 1) (unwrap eid)
+            -- swap the id to deallocate with the last allocated id
+            -- This now means the id we deallocate is at the end of all allocated ids (and before previously freed ids) 
+            writeByteArray @Int arr (fromIntegral eidInd) lastActive 
+            writeByteArray @Int arr (sz - 1) (unwrap eid)
 
-    -- also swap the places in the index array to keep it up to date
-    writeByteArray @Word32 indArr (fromIntegral $ get @"eid" (Bitfield @Int @Entity lastActive)) eidInd 
-    writeByteArray @Word32 indArr (fromIntegral $ get @"eid" eid) (fromIntegral $ sz - 1)
+            -- swap data array
+            writeArray dataArr (fromIntegral eidInd) lastActiveV
 
-  -- decrement the size
-  writeByteArray @Int szRef 0 (sz - 1)
+            -- also swap the places in the index array to keep it up to date
+            writeByteArray @Word32 indArr (fromIntegral $ get @"eid" (Bitfield @Int @Entity lastActive)) eidInd 
+            writeByteArray @Word32 indArr (fromIntegral $ get @"eid" eid) (fromIntegral $ sz - 1)
+
+          -- decrement the size and overwrite the last entry in the data array with an error to free the gc element
+          writeArray dataArr (sz - 1) $ error "EntitySparseSet:deAllocate empty"
+          writeByteArray @Int szRef 0 (sz - 1)
+          pure $ Just dataV
+
+isAlive :: EntitySparseSet a -> EntityId -> IO Bool
+isAlive (EntitySparseSet szRef _ arrRef indArrRef _) (EntityId eid) = do
+  sz <- readByteArray @Int szRef 0
+
+  indArr <- IO $ \s -> case readMutVar# indArrRef s of (# s1, indArr #) -> (# s1, MutableByteArray indArr #)
+
+  eidInd <- readByteArray @Word32 indArr (fromIntegral $ get @"eid" eid)
+  -- check if the entity is alive first
+  if fromIntegral eidInd >= sz
+    then pure False
+    else do
+      arr <- IO $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, MutableByteArray arr #)
+      mEid <- readByteArray @Int arr (fromIntegral eidInd)
+      pure $ mEid == coerce eid
+
+insert :: EntitySparseSet a -> EntityId -> a -> IO ()
+insert (EntitySparseSet szRef _ arrRef indArrRef dataArrRef) (EntityId eid) v = do
+  sz <- readByteArray @Int szRef 0
+
+  indArr <- IO $ \s -> case readMutVar# indArrRef s of (# s1, indArr #) -> (# s1, MutableByteArray indArr #)
+
+  eidInd <- readByteArray @Word32 indArr (fromIntegral $ get @"eid" eid)
+  -- check if the entity is alive first
+  if fromIntegral eidInd >= sz
+    then pure ()
+    else do
+      arr <- IO $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, MutableByteArray arr #)
+      mEid <- readByteArray @Int arr (fromIntegral eidInd)
+      if mEid /= coerce eid
+        then pure ()
+        else do
+          dataArr <- IO $ \s -> case readMutVar# dataArrRef s of (# s1, dataArr #) -> (# s1, MutableArray dataArr #)
+          writeArray dataArr (fromIntegral eidInd) v
+
+lookup :: EntitySparseSet a -> EntityId -> IO (Maybe a)
+lookup (EntitySparseSet szRef _ arrRef indArrRef dataArrRef) (EntityId eid) = do
+  sz <- readByteArray @Int szRef 0
+
+  indArr <- IO $ \s -> case readMutVar# indArrRef s of (# s1, indArr #) -> (# s1, MutableByteArray indArr #)
+
+  eidInd <- readByteArray @Word32 indArr (fromIntegral $ get @"eid" eid)
+  -- check if the entity is alive first
+  if fromIntegral eidInd >= sz
+    then pure Nothing
+    else do
+      arr <- IO $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, MutableByteArray arr #)
+      mEid <- readByteArray @Int arr (fromIntegral eidInd)
+      if mEid /= coerce eid
+        then pure Nothing
+        else do
+          dataArr <- IO $ \s -> case readMutVar# dataArrRef s of (# s1, dataArr #) -> (# s1, MutableArray dataArr #)
+          Just <$> readArray dataArr (fromIntegral eidInd)
 
 {- Note: Reusing entity ids
 
@@ -141,13 +225,14 @@ After deallocation the last deallocated id is always at the front of freedIds:
 
 -}
 
-data FreshEntityId where
-  FreshEntityId ::
+data EntitySparseSet a where
+  EntitySparseSet ::
        {-# UNPACK #-} !(MutableByteArray RealWorld) -- Int - current number of allocated ids
     -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- Int - highest ever allocated id
     -> (MutVar# RealWorld (MutableByteArray# RealWorld)) -- 64 bits. array containing all allocated and freed ids
     -> (MutVar# RealWorld (MutableByteArray# RealWorld)) -- 32 bits. maps where in the above array an id is
-    -> FreshEntityId
+    -> (MutVar# RealWorld (MutableArray# RealWorld a))
+    -> EntitySparseSet a
 
 -- | Unique identifier for entities
 --

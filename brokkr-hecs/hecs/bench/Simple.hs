@@ -36,8 +36,8 @@ makeWorld "World" [''ECSPos, ''ECSVel]
 instance NFData World where
   rnf World{} = ()
 
-instance NFData Hecs.EntityId.FreshEntityId where
-  rnf Hecs.EntityId.FreshEntityId{} = ()
+instance NFData (Hecs.EntityId.EntitySparseSet a) where
+  rnf Hecs.EntityId.EntitySparseSet{} = () -- this is a lie, the data array is not evaluated
 instance NFData (Hecs.HashTable.Boxed.HashTable k v) where
   rnf Hecs.HashTable.Boxed.HashTable{} = () -- TODO This is a lie. v is not evaluated
 
@@ -54,13 +54,16 @@ posVelInit = do
     pure ()
 
 posVelBaseline :: HecsM World IO ()
-posVelBaseline = runFilter_ (filterDSL @'[ECSPos, ECSVel]) $ cmap (\() -> ())
+posVelBaseline = runFilter_ (filterDSL @'[ECSPos, ECSVel])
+  $ cmap (\() -> ())
 
 posVelStep :: HecsM World IO ()
-posVelStep = runFilter_ (filterDSL @'[ECSPos, ECSVel]) $ cmap (\(ECSPos x y, ECSVel vx vy) -> ECSPos (x + vx) (y + vy))
+posVelStep = runFilter_ (filterDSL @'[ECSPos, ECSVel])
+  $ cmap (\(ECSPos x y, ECSVel vx vy) -> ECSPos (x + vx) (y + vy))
 
 posVelStrictStep :: HecsM World IO ()
-posVelStrictStep = runFilter_ (filterDSL @'[ECSPos, ECSVel]) $ cmapM (\(ECSPos x y, ECSVel vx vy) -> let pos = ECSPos (x + vx) (y + vy) in seq pos (pure pos))
+posVelStrictStep = runFilter_ (filterDSL @'[ECSPos, ECSVel])
+  $ cmapM (\(ECSPos x y, ECSVel vx vy) -> let pos = ECSPos (x + vx) (y + vy) in seq pos (pure pos))
 
 main :: IO ()
 main = defaultMain
@@ -71,8 +74,8 @@ main = defaultMain
 -- init benchmark either way. Not that I even want to. Single writes outside of cmap are rare and not in the spirit of an ecs anyway and
 -- an archetype based ecs just does a lot more work here. So even getting close would be amazing
 --
--- Another note: Comparing boxed to boxed is also fun: But laziness kicks us here. Column writes are not strict for boxed components. With strictness
--- it still beats apecs by 3-5x, without it it's way slower
+-- Another note: Comparing boxed to boxed is also fun: Laziness kicks us here. Column writes are not strict for boxed components. With strictness
+-- manually added it still beats apecs by 3-5x, without it it's way slower
   [ bgroup "pos_vel"
     [ bench "newWorld" $ whnfIO newWorld
     , bench "init" $ whnfIO (newWorld >>= \w -> runHecsM w posVelInit)
@@ -86,7 +89,7 @@ main = defaultMain
     ]
   , bgroup "hecs:EntityId"
     [ bgroup "allocateEntityId"
-      [ bench "baseline" $ whnfIO Hecs.EntityId.new
+      [ bench "new" $ whnfIO Hecs.EntityId.new
       , bench "allocateEntityId" $ whnfIO (Hecs.EntityId.new >>= \e -> replicateM_ 9000 (Hecs.EntityId.allocateEntityId e))
       ] 
     ]
