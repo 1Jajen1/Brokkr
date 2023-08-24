@@ -30,8 +30,8 @@ import Brokkr.NBT.ByteOrder
 
 import BigTest
 
-import qualified Data.Serialize as Serialize
-import qualified Data.Nbt as NBT2
+-- import qualified Data.Serialize as Serialize
+-- import qualified Data.Nbt as NBT2
 
 -- TODO Make config option
 includeCmp :: Bool
@@ -46,7 +46,7 @@ instance NFData NBT where
 data Env = Env {
     envBs      :: !BS.ByteString
   , envNBT     :: !NBT
-  , envNBT2    :: !NBT2.Nbt'
+  -- , envNBT2    :: !NBT2.Nbt'
   , envBigTest :: !BigTest
   }
   deriving stock Generic
@@ -64,9 +64,9 @@ setupEnv name = do
   bigTestBs <- handle (\(_ :: SomeException) -> pure initBs) . evaluate . LBS.toStrict . GZip.decompress $ LBS.fromStrict bigTestBs0
 
   let envBigTest = parseBigTest bigTestBs
-      envNBT2 = case Serialize.decode envBs of
-        Left _ -> error "Failed to parse nbt using named-binary-tag"
-        Right n -> n
+      -- envNBT2 = case Serialize.decode envBs of
+      --   Left _ -> error "Failed to parse nbt using named-binary-tag"
+      --   Right n -> n
 
   return $ Env{..}
 
@@ -79,7 +79,7 @@ benchFile name =
     ]
       <> (if includeCmp then
         [ bench "decode (named-binary-tag)"  $ nf (Serialize.decode @NBT2.Nbt') envBs
-        , bench "encode (named-binary-tag)"  $ nf (Serialize.runPut . Serialize.put) envNBT2 
+        -- , bench "encode (named-binary-tag)"  $ nf (Serialize.runPut . Serialize.put) envNBT2 
         ] else [])
       <> (if name == "bigtest.nbt" then
         [ bench "decode (brokkr) (schema)" $ nf parseBigTest envBs

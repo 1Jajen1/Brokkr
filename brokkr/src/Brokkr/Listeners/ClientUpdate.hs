@@ -38,7 +38,8 @@ addClient newPlayerEid = do
   -- TODO getting all players should instead read from a global how many players are on, then pre-allocate a mutable vector and use that instead of Hecs.Array
   arr <- liftIO $ Arr.new 8 >>= \arr -> Arr.writeBack arr newUpdate
 
-  acc <- Server.filter (Server.filterDSL @'[Server.Tag Client, Connection, Username, ClientUUID]) (\aty acc0 -> do
+  -- TODO Cmap
+  acc <- Server.runFilter (Server.filterDSL @'[Server.Tag Client, Connection, Username, ClientUUID]) (\aty acc0 -> do
     connRef     <- Server.getColumn @Connection aty
     usernameRef <- Server.getColumn @Username   aty
     uuidRef     <- Server.getColumn @ClientUUID aty
@@ -67,7 +68,7 @@ removeClient :: EntityId -> Server ()
 removeClient removedPlayerEid = do
   removedUUID <- Server.get @ClientUUID removedPlayerEid pure $ error "Removed client without a uuid"
 
-  Server.filter (Server.filterDSL @'[Server.Tag Client, Connection]) (\aty _ -> do
+  Server.runFilter (Server.filterDSL @'[Server.Tag Client, Connection]) (\aty _ -> do
     connRef <- Server.getColumn @Connection aty
     Server.iterateArchetype_ aty $ \n _ -> do
       conn <- Server.readColumn connRef n

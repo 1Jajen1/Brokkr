@@ -16,6 +16,7 @@ tested-with:         GHC == 9.4.4
 common common-options
 -- TODO Go through deps soon-ish
   build-depends:       base >= 4.17 && < 5
+                     , brokkr-hashtables
                      , primitive
                      , deepseq
                      , template-haskell

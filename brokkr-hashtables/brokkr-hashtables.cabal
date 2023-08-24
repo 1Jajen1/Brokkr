@@ -1,0 +1,91 @@
+cabal-version:       2.4
+name:                brokkr-hashtables
+version:             0.0.0.1
+synopsis:            Fast flexible hashtables
+description:         Fast flexible hashtables. See the README for more information.
+license:             BSD-3-Clause
+license-file:        LICENSE
+author:              Jannis
+maintainer:          Jannis <overesch.jannis@gmail.com>
+copyright:           2022 Jannis
+category:            Data, Data Structures
+build-type:          Simple
+extra-doc-files:     README.md
+tested-with:         GHC == 9.4.5
+
+common common-options
+  build-depends:       base >= 4.17 && < 5
+  ghc-options:         -Wall
+                       -Wcompat
+                       -Widentities
+                       -Wincomplete-uni-patterns
+                       -Wincomplete-record-updates
+                       -Wredundant-constraints
+                       -Wunused-packages
+                       -fhide-source-paths
+                       -Wmissing-export-lists
+                       -Wpartial-fields
+                       -Wmissing-deriving-strategies
+                       -O2
+  default-extensions:  DerivingVia
+                       LambdaCase
+                       StrictData
+                       OverloadedStrings
+  default-language:    GHC2021
+library
+  import:              common-options
+  build-depends:       primitive >= 0.8 && < 0.9
+  hs-source-dirs:      src
+  exposed-modules:     Brokkr.HashTable
+  exposed-modules:     Brokkr.HashTable.Common
+                       Brokkr.HashTable.Internal
+                       Brokkr.HashTable.BB
+                       Brokkr.HashTable.SB
+                       Brokkr.HashTable.BS
+                       Brokkr.HashTable.SS
+                       Brokkr.HashTable.PB
+                       Brokkr.HashTable.BP
+                       Brokkr.HashTable.PP
+                       Brokkr.HashTable.SP
+                       Brokkr.HashTable.PS
+
+test-suite brokkr-hashtables-test
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Spec.hs
+  other-modules:       HashtableSpec
+  build-tool-depends:  sydtest-discover:sydtest-discover
+  build-depends:       brokkr-hashtables
+                     , sydtest
+                     , sydtest-hedgehog
+                     , hedgehog
+                     , containers
+                     , primitive
+  ghc-options:         -threaded
+                       -rtsopts
+                       -with-rtsopts=-N
+
+benchmark brokkr-hashtables-bench
+  import:              common-options
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      benchmark
+  main-is:             Hashtables.hs
+  build-depends:       brokkr-hashtables
+                     , tasty-bench
+                     , random
+                     , deepseq
+                     , containers
+                     , unordered-containers
+                     , hashtables
+                     , vector
+                     , vector-hashtables
+                     , hashable
+  ghc-options:         -O2
+
+executable ht-example
+  import:              common-options
+  hs-source-dirs:      example
+  main-is:             Main.hs
+  build-depends:       brokkr-hashtables
+  ghc-options:         -O2

@@ -14,6 +14,7 @@ module Brokkr.Server.Monad (
 , getSingleton
 , getComponentId
 , getColumn
+, getColumnM
 , filterDSL
 , component
 , system
@@ -106,7 +107,7 @@ getSingleton =
 
 system :: Filter ty HasMainId -> (TypedArchetype ty -> Server ()) -> Server ()
 system fi act = defer $ do
-  Hecs.filter fi
+  Hecs.runFilter fi
     (\aty _ -> act aty)
     (pure ())
 {-# INLINE system #-}

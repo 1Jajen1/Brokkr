@@ -154,6 +154,7 @@ deAllocateEntityId (EntitySparseSet szRef _ arrRef indArrRef dataArrRef) (Entity
           -- decrement the size and overwrite the last entry in the data array with an error to free the gc element
           writeArray dataArr (sz - 1) $ error "EntitySparseSet:deAllocate empty"
           writeByteArray @Int szRef 0 (sz - 1)
+
           pure $ Just dataV
 
 isAlive :: EntitySparseSet a -> EntityId -> IO Bool
@@ -222,6 +223,14 @@ After allocation the newest allocated id is always the last element of allocated
 After deallocation the last deallocated id is always at the front of freedIds:
   - The only special case here is if the element is already at the back of the allocatedIds, this way we again only need to decrement sz
   - Otherwise we need to move our id back and then decrement sz. Moving back is achieved by swapping with the last element of allocatedIds
+
+-}
+
+{- Note: Why not shrink the dense arrays?
+
+The dense array containing full entity ids cannot be shrunk because otherwise we'd lose generation counts.
+
+TODO The small array can and probably should be grown and shrunk separately to avoid 8 bytes per dead or reserved eid
 
 -}
 
