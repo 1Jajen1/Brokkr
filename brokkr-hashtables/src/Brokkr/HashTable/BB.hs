@@ -31,6 +31,10 @@ import GHC.Exts
 import Control.Monad (when)
 import Foreign.C.Types (CInt(..), CSize(..))
 
+-- TODO:
+-- - Try to get more common code out. Especially the storable and prim utils
+-- - Instances for HashTable' (Eq, Lift) would be nice
+
 type HashTable s key value = HashTable' Boxed Boxed s key value
 
 data instance HashTable' Boxed Boxed s key value =
@@ -45,6 +49,9 @@ data instance HashTable' Boxed Boxed s key value =
   , backingKeysRef :: MutVar# s (MutableArray# s key)
   , backingValRef  :: MutVar# s (MutableArray# s value)
   }
+
+instance Eq (HashTable s k v) where
+  HashTable_BB{sizeRef = szRefL} == HashTable_BB{sizeRef = szRefR} = szRefL == szRefR
 
 new :: PrimMonad m => Salt -> MaxLoadFactor -> m (HashTable (PrimState m) key value)
 {-# INLINE new #-}

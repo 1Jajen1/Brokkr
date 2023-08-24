@@ -132,7 +132,7 @@ deleteWithHash
               val <- readValue ind
               delValue ind
 
-              unless (n >= maxDistance) $ moveNext (n + 1)
+              moveNext (n + 1)
               pure $ Just val
             else goDel (n + 1)
     moveNext n | n >= maxDistance = pure ()
@@ -142,9 +142,9 @@ deleteWithHash
       if distance < n
         then pure ()
         else do
-          writeDistance (ind - 1) (-1)
+          writeDistance ind (-1)
           writeDistance (ind - 1) (distance - 1)
-            
+
           key <- readKey ind
           delKey ind
           writeKey (ind - 1) key

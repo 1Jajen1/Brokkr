@@ -76,6 +76,12 @@ class HashTable keyStorage valueStorage key value where
   -- | Monadically (left)-fold over all values of the table. The accumulator is strict.
   foldM :: PrimMonad m => HashTable' keyStorage valueStorage (PrimState m) key value -> (z -> key -> value -> m z) -> m z -> m z
 
+-- | Hash function
+--
+-- The input integer is the current state of the hash process
+-- and should always be used to derive the result, unless you
+-- know what you are doing. Otherwise the composition of multiple
+-- 'HashFn's makes no sense.
 newtype HashFn = HashFn (Int -> Int)
 
 instance Semigroup HashFn where

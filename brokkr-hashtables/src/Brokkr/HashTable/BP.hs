@@ -48,6 +48,9 @@ data instance HashTable' Boxed I.Prim s key value =
   , backingValRef  :: MutVar# s (MutableByteArray# s)
   }
 
+instance Eq (HashTable s k v) where
+  HashTable_BP{sizeRef = szRefL} == HashTable_BP{sizeRef = szRefR} = szRefL == szRefR
+
 new :: forall key value m . (PrimMonad m, Prim value) => Salt -> MaxLoadFactor -> m (HashTable (PrimState m) key value)
 {-# INLINE new #-}
 new hashSalt maxLoadFactor = do
@@ -70,14 +73,11 @@ new hashSalt maxLoadFactor = do
     initMaxDistance = 5
     initArrSz = initCap + initMaxDistance
 
--- Anything not 1,2,4,8 byte aligned needs a pinned aligned byte array!
 needsAlignment :: forall val . Prim val => Bool
-needsAlignment = case alignment (undefined :: val) of
-  1 -> False
-  2 -> False
-  4 -> False
-  8 -> False
-  _ -> True
+needsAlignment = alWord `rem` alEl /= 0
+  where
+    alEl = alignment (undefined :: val)
+    alWord = alignment (undefined :: Int)
 
 size :: PrimMonad m => HashTable (PrimState m) key value -> m Int
 size HashTable_BP{..} = fromIntegral <$> readPrimVar sizeRef

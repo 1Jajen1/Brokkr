@@ -48,6 +48,9 @@ data instance HashTable' Storable I.Prim s key value =
   , backingValRef  :: MutVar# s (MutableByteArray# s)
   }
 
+instance Eq (HashTable s k v) where
+  HashTable_SP{sizeRef = szRefL} == HashTable_SP{sizeRef = szRefR} = szRefL == szRefR
+
 new :: forall key value m . (PrimMonad m, Storable.Storable key, Prim value) => Salt -> MaxLoadFactor -> m (HashTable (PrimState m) key value)
 {-# INLINE new #-}
 new hashSalt maxLoadFactor = do
