@@ -6,7 +6,7 @@ import Brokkr.HashTable qualified as HT
 import Control.Monad.ST (RealWorld)
 import Foreign.Storable
 
-type HashTable k v = HT.HashTable' HT.Storable HT.Boxed k v
+type HashTable s k v = HT.HashTable' HT.Storable HT.Boxed s k v
 
 main = pure ()
 

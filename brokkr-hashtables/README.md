@@ -36,7 +36,7 @@ import Brokkr.HashTable qualified as HT
 import Control.Monad.ST (RealWorld)
 import Foreign.Storable
 
-type HashTable k v = HT.HashTable' HT.Storable HT.Boxed k v
+type HashTable s k v = HT.HashTable' HT.Storable HT.Boxed s k v
 
 newtype IntIdHash = IntIdHash Int
   deriving newtype (Eq, Storable)
@@ -65,7 +65,7 @@ foo = do
 It is recommended to use qualified imports and define a type alias for the specific key value backend that a table is supposed to use:
 
 ```haskell
-type HashTable k v = HT.HashTable' keyStorage valueStorage k v
+type HashTable s k v = HT.HashTable' keyStorage valueStorage s k v
 ```
 
 The different available storage kinds for both keys and values are:
@@ -240,7 +240,7 @@ Notation: B/S refers to boxed keys and storable values. P refers to prim.
 
 #### Bulk inserts
 
-Benchmarks resizes more than inserts.
+Benchmarks resize operations more than it represents inserts.
 
 No data just yet. `tasty-bench` and `criterion` have very different results here, so I am not yet sure what to do with this benchmark. But `brokkr-hashtables` is fast with `reserve` or on unboxed storage. For very large tables and boxed storage `vector-hashtables` performs better on bulk inserts. `hashtables` and the immutable containers always loose this benchmark.
 
@@ -248,7 +248,7 @@ No data just yet. `tasty-bench` and `criterion` have very different results here
 
 The following segments look at `hashtables`/`vector-hashtables`/`IntMap`/`HashMap` and outlines some conclusions from the benchmark data and some other facts about these libraries.
 
-Statements such as "slow xxx" or "more/less overhead" are made relative to this library.
+Statements such as "slow/fast" or "more/less overhead" are made relative to this library.
 
 #### hashtables
 
@@ -277,7 +277,7 @@ Pro:
 
 - Cheaper resizes lead to faster bulk inserts (ignoring `reserve` that is)
 - Immutable api
-- Allows unboxed, not just primitive data (actually requires unboxed vectors over prim vectors, because do not work with delete)
+- Allows unboxed, not just primitive data
 - Fast failing lookups for `Boxed` components on small to medium-sized tables, because it stores hashes and compares against those first, providing a cheaper inequality check. This advantage vanishes when keys are `Storable` or `Prim` and have a cheap comparison function. And even for `Boxed` this effect vanishes for larger tables as their lookup performance degrades for both successful and failing lookups. [^3]
 - Prime number based growth. Grows slower than powers of 2.[^4]
 
@@ -298,7 +298,7 @@ Con:
 
 #### IntMap/HashMap
 
-> Comparing an immutable variant to a mutable hashtable may not seem fair, and it isn't. But for small sizes, they are actually quite competitive. Slower than `brokkr-hashtables` still, but close to the `Boxed` key versions. Both `vector-hashtables` and `hashtables` are slower than `brokkr-hashtables` at these sizes, but the two immutable maps can keep up with those for a little longer still.
+> Comparing an immutable variant to a mutable hashtable may not seem fair, and it isn't. But for small sizes, they are actually quite competitive. Slower than `brokkr-hashtables` still, but close to the `Boxed` key versions.
 
 Pro:
 
