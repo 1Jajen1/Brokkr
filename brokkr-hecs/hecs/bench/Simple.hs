@@ -19,7 +19,6 @@ import GHC.Generics
 
 import Hecs
 import Hecs.Entity.Internal qualified as Hecs.EntityId
-import Hecs.HashTable.Boxed qualified
 
 data ECSPos = ECSPos {-# UNPACK #-} !Float {-# UNPACK #-} !Float
   deriving stock Generic
@@ -38,8 +37,6 @@ instance NFData World where
 
 instance NFData (Hecs.EntityId.EntitySparseSet a) where
   rnf Hecs.EntityId.EntitySparseSet{} = () -- this is a lie, the data array is not evaluated
-instance NFData (Hecs.HashTable.Boxed.HashTable k v) where
-  rnf Hecs.HashTable.Boxed.HashTable{} = () -- TODO This is a lie. v is not evaluated
 
 posVelInit :: HecsM World IO ()
 posVelInit = do
@@ -92,12 +89,6 @@ main = defaultMain
       [ bench "new" $ whnfIO Hecs.EntityId.new
       , bench "allocateEntityId" $ whnfIO (Hecs.EntityId.new >>= \e -> replicateM_ 9000 (Hecs.EntityId.allocateEntityId e))
       ] 
-    ]
-  , bgroup "hecs:hashtable"
-    [ env (Hecs.HashTable.Boxed.new 32 >>= \table -> traverse_ (\k -> Hecs.HashTable.Boxed.insert table k k) (rnd 20000 10000) >> pure (table, rnd' 20000 10000))
-        $ \ ~(table, items) -> bench "lookup (many)" $ whnfIO (traverse_ (Hecs.HashTable.Boxed.lookup table) items)
-    , env (Hecs.HashTable.Boxed.new 32 >>= \table -> traverse_ (\k -> Hecs.HashTable.Boxed.insert table k k) (rnd 20000 10000) >> pure (table, rnd' 20000 10000))
-        $ \ ~(table, items) -> bench "insert (many)" $ whnfIO (traverse_ (\k -> Hecs.HashTable.Boxed.insert table k k) items)
     ]
   ]
 

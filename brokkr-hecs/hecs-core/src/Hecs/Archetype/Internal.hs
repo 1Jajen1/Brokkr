@@ -38,8 +38,9 @@ module Hecs.Archetype.Internal (
 
 import Hecs.Component.Internal
 import Hecs.Entity.Internal ( EntityId(..), Entity(..), EntityTag(..), Relation(..) )
-import qualified Hecs.HashTable.Int2Boxed as HTB
-import Hecs.HashTable.HashKey
+import Brokkr.HashTable qualified as HT
+
+import Data.Hashable qualified as Hashable
 
 import GHC.Int
 import GHC.Exts
@@ -48,15 +49,27 @@ import Foreign.Storable
 import Unsafe.Coerce (unsafeCoerce)
 import Data.Proxy
 import Data.Bitfield
+import Data.Primitive (Prim)
+
+type HashTable s k v = HT.HashTable' HT.Prim HT.Boxed s k v
 
 -- TODO This whole file needs a rework once done
 -- TODO Add a custom allocator for the pinned aligned column arrays. This is to combat fragmentation
 
 data ArchetypeEdge = ArchetypeEdge !(Maybe Archetype) !(Maybe Archetype)
 
+-- Used for component ids. Statics are sequential, rest is dynamic and also relatively sequential
+newtype IntIdHash = IntIdHash Int
+  deriving newtype (Eq, Prim)
+
+instance HT.Hash IntIdHash where
+  hash (IntIdHash x) = HT.HashFn (const x)
+  {-# INLINE hash #-}
+
+
 -- TODO Make sum type for tags and other non-storage affecting data? I could also just share the column structure as it is entirely mutable
 data Archetype = Archetype {
-  edges        :: {-# UNPACK #-} !(HTB.HashTable ArchetypeEdge) -- TODO Improve lookup speed. This is currently a bottleneck
+  edges        :: {-# UNPACK #-} !(HashTable RealWorld IntIdHash ArchetypeEdge)
 , columns      :: {-# UNPACK #-} !Columns#
 , componentTyB :: ComponentType#
 , componentTyF :: ComponentType#
@@ -105,9 +118,11 @@ showTy (ComponentType# arr) = "[" <> dropLast (go 0# "") <> "]"
 
 instance Eq ArchetypeTy where
   ArchetypeTy lB lU lT == ArchetypeTy rB rU rT = eqComponentType lB rB && eqComponentType lU rU && eqComponentType lT rT
+  {-# INLINE (==) #-}
 
-instance HashKey ArchetypeTy where
-  hashKey (ArchetypeTy b u t) = hashComponentType b <> hashComponentType u <> hashComponentType t
+instance HT.Hash ArchetypeTy where
+  hash (ArchetypeTy b u t) = hashComponentType b <> hashComponentType u <> hashComponentType t
+  {-# INLINE hash #-}
   
 -- This does not need to be IO, many others don't need to either, move to arbitrary state and use ST?
 -- Also if this doesn't inline, the Int will be boxed
@@ -153,12 +168,13 @@ eqComponentType (ComponentType# l) (ComponentType# r)
     nL = sizeofByteArray# l
     nR = sizeofByteArray# r
 
-hashComponentType :: ComponentType# -> HashFn
-hashComponentType (ComponentType# arr) = HashFn $ \i -> go 0# i
+hashComponentType :: ComponentType# -> HT.HashFn
+hashComponentType (ComponentType# arr) = HT.HashFn $ \i -> go 0# i
   where
     sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
     go n !h | isTrue# (n >=# sz) = h
-            | otherwise = go (n +# 1#) (hashWithSalt h (hashKey (I# (indexIntArray# arr n))))
+            | otherwise = go (n +# 1#) (Hashable.hashWithSalt h (I# (indexIntArray# arr n)))
+{-# INLINE hashComponentType #-}
 
 addComponent :: ComponentType# -> ComponentId c -> State# RealWorld -> (# State# RealWorld, ComponentType#, Int# #)
 addComponent (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s0 =
@@ -279,7 +295,7 @@ removeColumnSize (I# at) (ColumnSizes# szs) s0 =
 
 empty :: IO Archetype
 empty = do
-  edges <- HTB.new 8 -- TODO Inits
+  edges <- HT.new 4 0 0.75
   IO $ \s0 ->
     case newArray# 0# (error "No") s0 of
       (# s1, arr #) -> case newSmallArray# 0# arr s1 of
@@ -400,12 +416,12 @@ grow (Columns# _ eids boxed (ColumnSizes# szs) unboxed) s = case copyUnboxed 0# 
     numUnboxed = sizeofSmallMutableArray# unboxed
 
 getEdge :: Archetype -> ComponentId c -> IO ArchetypeEdge
-getEdge (Archetype{edges}) compId = HTB.lookup edges (coerce compId) >>= \case
+getEdge (Archetype{edges}) compId = HT.lookup edges (coerce compId) >>= \case
   Just x -> pure x
   Nothing -> pure $ ArchetypeEdge Nothing Nothing
 
 setEdge :: Archetype -> ComponentId c -> ArchetypeEdge -> IO ()
-setEdge (Archetype{edges}) = HTB.insert edges . coerce
+setEdge (Archetype{edges}) = HT.insert edges . coerce
 
 getColumnSizes :: Archetype -> ColumnSizes#
 getColumnSizes Archetype{columns = Columns# _ _ _ szs _} = szs
@@ -414,7 +430,7 @@ getColumnSizes Archetype{columns = Columns# _ _ _ szs _} = szs
 createArchetype :: ArchetypeTy -> ColumnSizes# -> IO Archetype
 createArchetype (ArchetypeTy boxedTy unboxedTy tagTy) szs = do
   -- traceIO $ "New Archetype with type: " <> show (ArchetypeTy boxedTy unboxedTy tagTy)
-  edges <- HTB.new 8 -- TODO Inits
+  edges <- HT.new 4 0 0.75
   IO $ \s0 -> case newColumns initSz numBoxed numUnboxed szs s0 of
     (# s1, cols #) -> (# s1, Archetype edges cols boxedTy unboxedTy tagTy #)
   where

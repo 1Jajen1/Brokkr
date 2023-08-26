@@ -51,9 +51,9 @@ data instance HashTable' Storable I.Prim s key value =
 instance Eq (HashTable s k v) where
   HashTable_SP{sizeRef = szRefL} == HashTable_SP{sizeRef = szRefR} = szRefL == szRefR
 
-new :: forall key value m . (PrimMonad m, Storable.Storable key, Prim value) => Salt -> MaxLoadFactor -> m (HashTable (PrimState m) key value)
+new :: forall key value m . (PrimMonad m, Storable.Storable key, Prim value) => Int -> Salt -> MaxLoadFactor -> m (HashTable (PrimState m) key value)
 {-# INLINE new #-}
-new hashSalt maxLoadFactor = do
+new initCap0 hashSalt maxLoadFactor = do
   sizeRef <- newPrimVar 0
   maxDistanceRef <- newPrimVar $ fromIntegral initMaxDistance
   capacityRef <- newPrimVar $ fromIntegral initCap
@@ -67,8 +67,9 @@ new hashSalt maxLoadFactor = do
   _ <- unsafeIOToPrim $ memset (Ptr (mutableByteArrayContents# distArr)) (-1) (fromIntegral $ initArrSz * elementSize)
   pure t
   where
-    initCap = 32
-    initMaxDistance = 5
+    initCap1 = floor $ fromIntegral initCap0 / maxLoadFactor
+    initCap = Common.nextPowerOf2 initCap1
+    initMaxDistance = Common.maxDistanceFor initCap
     !initArrSz = initCap + initMaxDistance
     alignKey = Storable.alignment (undefined :: key)
     elementSize = sizeElement @key

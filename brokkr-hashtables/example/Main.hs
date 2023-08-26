@@ -18,7 +18,7 @@ instance HT.Hash IntIdHash where
 
 foo :: IO (HashTable RealWorld IntIdHash String)
 foo = do
-  t <- HT.new initialSalt maxLoadFactor
+  t <- HT.new 32 initialSalt maxLoadFactor
   HT.insert t (IntIdHash 1) "Hello"
   HT.lookup t (IntIdHash 1)
   HT.delete t (IntIdHash 1)

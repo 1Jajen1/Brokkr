@@ -156,33 +156,33 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
     benchOne nm = bgroup nm
         [ bgroup "insert"
           [ bench "baseline" $ whnfIO $ do
-              void $ new @kS @vS @key @key 0 0.75
+              void $ new @kS @vS @key @key 32 0 0.75
           , bench "baseline (reserve)" $ whnfIO $ do
-              t <- new @kS @vS @key @key 0 0.75
+              t <- new @kS @vS @key @key 32 0 0.75
               reserve t sz
           , env (pure keys) $ \ks -> bench "insert" $ whnfIO $ do
-              t <- new @kS @vS @key @key 0 0.75
+              t <- new @kS @vS @key @key 32 0 0.75
               traverse_ (\k -> insert t k k) ks
           , env (pure keys) $ \ks -> bench "insert (new|reserve)" $ whnfIO $ do
-              t <- new @kS @vS @key @key 0 0.75
+              t <- new @kS @vS @key @key 32 0 0.75
               reserve t sz
               traverse_ (\k -> insert t k k) ks
           ]
         , bgroup "insert (maxLoadFactor = 0.9)"
           [ bench "baseline" $ whnfIO $ do
-              void $ new @kS @vS @key @key 0 0.9
+              void $ new @kS @vS @key @key 32 0 0.9
           , bench "baseline (reserve)" $ whnfIO $ do
-              t <- new @kS @vS @key @key 0 0.9
+              t <- new @kS @vS @key @key 32 0 0.9
               reserve t sz
           , env (pure keys) $ \ks -> bench "insert" $ whnfIO $ do
-              t <- new @kS @vS @key @key 0 0.9
+              t <- new @kS @vS @key @key 32 0 0.9
               traverse_ (\k -> insert t k k) ks
           , env (pure keys) $ \ks -> bench "insert (new|reserve)" $ whnfIO $ do
-              t <- new @kS @vS @key @key 0 0.9
+              t <- new @kS @vS @key @key 32 0 0.9
               reserve t sz
               traverse_ (\k -> insert t k k) ks
           ]
-        , env (new @kS @vS @key @key 0 0.75 >>= \t0 -> reserve t0 sz >> traverse_ (\k -> insert t0 k k) keys >> pure (t0, validOthers))
+        , env (new @kS @vS @key @key 32 0 0.75 >>= \t0 -> reserve t0 sz >> traverse_ (\k -> insert t0 k k) keys >> pure (t0, validOthers))
             $ \ ~(t, vo) -> bench "insert + delete" $ whnfIO $ do
               let go1 n
                     | n >= VG.length vo = pure ()
@@ -201,7 +201,7 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
                       insert t k k
                       go1 $ n - 2
               go2 (VG.length vo - 2)
-        , env (new @kS @vS @key @key 0 0.75 >>= \t0 -> reserve t0 sz >> traverse_ (\k -> insert t0 k k) keys >> pure (t0, validOthers))
+        , env (new @kS @vS @key @key 32 0 0.75 >>= \t0 -> reserve t0 sz >> traverse_ (\k -> insert t0 k k) keys >> pure (t0, validOthers))
             $ \ ~(t, vo) -> bench "insert + delete (maxLoadFactor = 0.9)" $ whnfIO $ do
               let go1 n
                     | n >= VG.length vo = pure ()
@@ -221,18 +221,18 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
                       go1 $ n - 2
               go2 (VG.length vo - 2)
         , bgroup "lookup"
-          [ env (new @kS @vS @key @key 0 0.75 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, valid))
+          [ env (new @kS @vS @key @key 32 0 0.75 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, valid))
               $ \ ~(t, _, xs) -> bench "lookup (success)" $ whnfIO $ do
                 traverse_ (\k -> lookup t k >>= \case Nothing -> error (show k); Just _ -> pure ()) xs
-          , env (new @kS @vS @key @key 0 0.75 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, others))
+          , env (new @kS @vS @key @key 32 0 0.75 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, others))
               $ \ ~(t, _, xs) -> bench "lookup (fail)" $ whnfIO $ do
                 traverse_ (\k -> lookup t k >>= \case Nothing -> pure (); Just _ -> error (show k)) xs
           ]
         , bgroup "lookup (maxLoadFactor = 0.9)"
-          [ env (new @kS @vS @key @key 0 0.9 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, valid))
+          [ env (new @kS @vS @key @key 32 0 0.9 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, valid))
               $ \ ~(t, _, xs) -> bench "lookup (success)" $ whnfIO $ do
                 traverse_ (\k -> lookup t k >>= \case Nothing -> error (show k); Just _ -> pure ()) xs
-          , env (new @kS @vS @key @key 0 0.9 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, others))
+          , env (new @kS @vS @key @key 32 0 0.9 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, others))
               $ \ ~(t, _, xs) -> bench "lookup (fail)" $ whnfIO $ do
                 traverse_ (\k -> lookup t k >>= \case Nothing -> pure (); Just _ -> error (show k)) xs
           ]

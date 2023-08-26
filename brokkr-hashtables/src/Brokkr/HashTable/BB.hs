@@ -21,7 +21,6 @@ import Brokkr.HashTable.Internal (Storage(..), HashTable', Hash(..), HashFn(..),
 
 import Control.Monad.Primitive
 
-import Data.Bits
 import Data.Int
 
 import Data.Primitive
@@ -53,9 +52,9 @@ data instance HashTable' Boxed Boxed s key value =
 instance Eq (HashTable s k v) where
   HashTable_BB{sizeRef = szRefL} == HashTable_BB{sizeRef = szRefR} = szRefL == szRefR
 
-new :: PrimMonad m => Salt -> MaxLoadFactor -> m (HashTable (PrimState m) key value)
+new :: PrimMonad m => Int -> Salt -> MaxLoadFactor -> m (HashTable (PrimState m) key value)
 {-# INLINE new #-}
-new hashSalt maxLoadFactor = do
+new initCap0 hashSalt maxLoadFactor = do
   sizeRef <- newPrimVar 0
   maxDistanceRef <- newPrimVar $ fromIntegral initMaxDistance
   capacityRef <- newPrimVar $ fromIntegral initCap
@@ -69,8 +68,9 @@ new hashSalt maxLoadFactor = do
   _ <- unsafeIOToPrim $ memset (Ptr (mutableByteArrayContents# distArr)) (-1) (fromIntegral $ I# initArrSz)
   pure t
   where
-    initCap = 32
-    initMaxDistance = 5
+    initCap1 = floor $ fromIntegral initCap0 / maxLoadFactor
+    initCap = Common.nextPowerOf2 initCap1
+    initMaxDistance = Common.maxDistanceFor initCap
     !(I# initArrSz) = initCap + initMaxDistance
 
 size :: PrimMonad m => HashTable (PrimState m) key value -> m Int
@@ -134,7 +134,7 @@ growTo ht@HashTable_BB{..} newSz = do
 
   when (capacity < newSz) $ do
     let newArrSize = newSz + fromIntegral newMaxDistance
-        newMaxDistance = fromIntegral $ countTrailingZeros newSz
+        newMaxDistance = fromIntegral $ Common.maxDistanceFor newSz
 
     (MutablePrimArray newDistArr#) <- newPrimArray @_ @Int8 newArrSize
     _ <- unsafeIOToPrim $ memset (Ptr (mutableByteArrayContents# newDistArr#)) (-1) (fromIntegral newArrSize)
@@ -168,7 +168,7 @@ reserve ht@HashTable_BB{..} sz0 = do
   when (capacity < newSz) $ growTo ht newSz
   where
     sz :: Int = floor $ fromIntegral sz0 / maxLoadFactor
-    newSz = if sz == 1 then 1 else 1 `unsafeShiftL` (8 * sizeOf (undefined :: Int) - countLeadingZeros (sz - 1))
+    newSz = Common.nextPowerOf2 sz
 
 delete :: (PrimMonad m, Eq key, Hash key) => HashTable (PrimState m) key value -> key -> m (Maybe value)
 {-# INLINE delete #-}

@@ -55,7 +55,7 @@ tableSpec genK genV = do
     it "should use the correct salt" $ property $ do
       s <- forAll $ Gen.int Range.constantBounded
       (k,v) <- forAll ((,) <$> genK <*> genV)
-      table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v s 0.75
+      table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 32 s 0.75
       HT.insert table (ConstSalt k) v
       let kHash = coerce (HT.hash (ConstSalt k)) s
       HT.lookupWithHash table (ConstSalt k) kHash >>= \case
@@ -71,7 +71,7 @@ tableSpec genK genV = do
       -- For protection against dos use an even better hash
       xs0 <- forAll $ Gen.list (Range.linear 5 20) ((,) <$> genK <*> genV)
       let xs = nubOrdOn fst xs0
-      table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v s 0.75
+      table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 32 s 0.75
       traverse_ (\(k,v) -> HT.insert table (ConstSalt k) v) xs
       -- check that the table growth worked and we still have our elements
       traverse_ (\(k,v) -> HT.lookup table (ConstSalt k) >>= \case
@@ -83,7 +83,7 @@ tableSpec genK genV = do
       -- Currently table min capacity is 32. Change the min here to force growth
       xs0 <- forAll $ Gen.list (Range.linear 32 5000) ((,) <$> genK <*> genV)
       let xs = nubOrdOn fst xs0
-      table <- HT.new @keyStorage @valueStorage @k @v s 0.75
+      table <- HT.new @keyStorage @valueStorage @k @v 32 s 0.75
       traverse_ (uncurry $ HT.insert table) xs
       -- check that the table growth worked and we still have our elements
       traverse_ (\(k,v) -> HT.lookup table k >>= \case
@@ -95,7 +95,7 @@ tableSpec genK genV = do
       s <- forAll $ Gen.int Range.constantBounded
       xs0 <- forAll $ Gen.list (Range.linear 0 100) ((,) <$> genK <*> genV)
       let xs = nubOrdOn fst xs0
-      table <- HT.new @keyStorage @valueStorage @k @v s 0.75
+      table <- HT.new @keyStorage @valueStorage @k @v 32 s 0.75
       traverse_ (uncurry $ HT.insert table) xs
       -- reserve n must be called such that
       -- nextPowerOf2(n / loadFactor) > nextPowerOf2(length xs / loadFactor)
@@ -113,7 +113,7 @@ tableSpec genK genV = do
   describe "lookup/insert" $ do
     it "should be able to lookup a previously inserted key" $ property $ do
       (k,v) <- forAll ((,) <$> genK <*> genV)
-      table <- HT.new @keyStorage @valueStorage @k @v 0 0.75
+      table <- HT.new @keyStorage @valueStorage @k @v 32 0 0.75
       HT.insert table k v
       HT.lookup table k >>= \case
         Nothing -> failure
@@ -121,14 +121,14 @@ tableSpec genK genV = do
     it "should be able to lookup a previously inserted key (multiple)" $ property $ do
       kvs0 <- forAll $ Gen.list (Range.linear 1 1_000) ((,) <$> genK <*> genV)
       let kvs = nubOrdOn fst kvs0
-      table <- HT.new @keyStorage @valueStorage @k @v 0 0.75
+      table <- HT.new @keyStorage @valueStorage @k @v 32 0 0.75
       traverse_ (uncurry (HT.insert table)) kvs
       traverse_ (\(k,v) -> HT.lookup table k >>= \case
         Nothing -> annotate (show k) >> failure
         Just v' -> v' === v
         ) kvs
     it "should be able to handle lookup a previously inserted key which collides with another" $ property $ do
-      table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 0 0.75
+      table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 32 0 0.75
       (k1,k2,v1,v2) <- forAll ((,,,) <$> genK <*> genK <*> genV <*> genV)
       HT.insert table (ConstSalt k1) v1
       HT.insert table (ConstSalt k2) v2
@@ -140,13 +140,13 @@ tableSpec genK genV = do
         Just v' -> v' === v2
     it "should not be able to lookup a not inserted key" $ property $ do
       k <- forAll genK
-      table <- HT.new @keyStorage @valueStorage @k @v 0 0.75
+      table <- HT.new @keyStorage @valueStorage @k @v 32 0 0.75
       HT.lookup table k >>= \case
         Nothing -> pure ()
         Just _ -> failure
     it "should not be able to handle lookup a not inserted key which collides with another inserted key" $ property $ do
       (k1,k2,v1) <- forAll ((,,) <$> genK <*> genK <*> genV)
-      table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 0 0.75
+      table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 32 0 0.75
       HT.insert table (ConstSalt k1) v1
       HT.lookup table (ConstSalt k1) >>= \case
         Nothing -> failure
@@ -156,7 +156,7 @@ tableSpec genK genV = do
         Just _ -> failure
     it "should not be able to lookup a deleted inserted key" $ property $ do
       (k,v) <- forAll ((,) <$> genK <*> genV)
-      table <- HT.new @keyStorage @valueStorage @k @v 0 0.75
+      table <- HT.new @keyStorage @valueStorage @k @v 32 0 0.75
       HT.insert table k v
       HT.lookup table k >>= \case
         Nothing -> failure
@@ -166,7 +166,7 @@ tableSpec genK genV = do
         Nothing -> pure ()
         Just _ -> failure
     it "should not be able to handle lookup a not inserted key which collides with another inserted key" $ property $ do
-      table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 0 0.75
+      table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 32 0 0.75
       (k1,k2,v1) <- forAll ((,,) <$> genK <*> genK <*> genV)
       HT.insert table (ConstSalt k1) v1
       HT.lookup table (ConstSalt k1) >>= \case

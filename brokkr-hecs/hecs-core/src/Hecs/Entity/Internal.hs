@@ -33,8 +33,6 @@ import GHC.Generics
 import GHC.Exts
 import GHC.IO
 
-import Hecs.HashTable.HashKey
-
 new :: IO (EntitySparseSet a)
 new = do
   -- Allocate id storage with space for 256 entity ids...
@@ -257,7 +255,6 @@ data EntitySparseSet a where
 newtype EntityId = EntityId { unEntityId :: Bitfield Int Entity }
   deriving stock Show
   deriving newtype (Eq, Storable)
-  deriving HashKey via Int
 
 -- | Datatype which encodes how 'Bitfield' accesses the 'EntityId'.
 data Entity = Entity {

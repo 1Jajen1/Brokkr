@@ -46,7 +46,7 @@ instance HT.Hash IntIdHash where
 
 foo :: IO (HashTable RealWorld IntIdHash String)
 foo = do
-  t <- HT.new initialSalt maxLoadFactor
+  t <- HT.new 8 initialSalt maxLoadFactor
   HT.insert t (IntIdHash 1) "Hello"
   HT.lookup t (IntIdHash 1)
   HT.delete t (IntIdHash 1)
@@ -81,7 +81,7 @@ Interacting with a table is focussed around a small set of functions with fairly
 
 > The `*-WithHash` functions are provided to allow working with precomputed hashes, or avoiding the `Hash` typeclass, without baking this into the key datatype.
 
-Creating a table is done through `new` and can be passed an initial salt for the hash and a max load factor.
+Creating a table is done through `new` and can be passed an initial size, a salt for the hash and a max load factor.
 
 Iterating the table is done through `foldM`.
 

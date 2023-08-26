@@ -19,7 +19,6 @@ import Hecs.Entity.Internal
 import Foreign.Storable
 import Data.Proxy
 import GHC.Exts
-import Hecs.HashTable.HashKey
 import Data.Kind
 import Data.Int
 import Data.Word
@@ -33,7 +32,7 @@ import Control.Monad.Base
 -- the manual construction of component ids. Non-tag components will still need
 -- a 'Component' instance!
 newtype ComponentId (c :: k) = ComponentId EntityId
-  deriving newtype (Eq, Show, HashKey)
+  deriving newtype (Eq, Show)
 
 -- | Hecs supports 3 component types
 --

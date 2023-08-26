@@ -3,13 +3,25 @@ module Brokkr.HashTable.Common (
   lookupWithHash
 , insertWithHash
 , deleteWithHash
+, nextPowerOf2
+, maxDistanceFor
 ) where
 
 import Control.Monad.Primitive
 
 import Data.Bits
 import Data.Int
+import Data.Primitive (sizeOf)
 import Control.Monad
+
+nextPowerOf2 :: Int -> Int
+{-# INLINE nextPowerOf2 #-}
+nextPowerOf2 sz = if sz == 1 then 1 else 1 `unsafeShiftL` (8 * sizeOf (undefined :: Int) - countLeadingZeros (sz - 1))
+
+-- Invariant: Arg is a power of 2
+maxDistanceFor :: Int -> Int
+{-# INLINE maxDistanceFor #-}
+maxDistanceFor sz = countTrailingZeros sz
 
 lookupWithHash
   :: (PrimMonad m, Eq key)

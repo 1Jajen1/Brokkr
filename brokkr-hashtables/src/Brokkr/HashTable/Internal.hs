@@ -36,7 +36,7 @@ class HashTable keyStorage valueStorage key value where
   --
   -- The initial table will have some default initial size. Use 'reserve' to grow the
   -- table to a larger size before doing bulk inserts.
-  new :: PrimMonad m => Salt -> MaxLoadFactor -> m (HashTable' keyStorage valueStorage (PrimState m) key value)
+  new :: PrimMonad m => Int -> Salt -> MaxLoadFactor -> m (HashTable' keyStorage valueStorage (PrimState m) key value)
   -- | Retrieve the number of key value pairs currently in the HashTable
   size :: PrimMonad m => HashTable' keyStorage valueStorage (PrimState m) key value -> m Int
   -- | Reserve space for n elements

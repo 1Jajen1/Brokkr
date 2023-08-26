@@ -17,6 +17,7 @@ common common-options
 -- TODO Go through deps soon-ish
   build-depends:       base >= 4.17 && < 5
                      , brokkr-hashtables
+                     , hashable
                      , primitive
                      , deepseq
                      , template-haskell
@@ -56,9 +57,6 @@ library
                       , Hecs.World.Has
                       , Hecs.World.Internal
                       , Hecs.World.TH
-                      , Hecs.HashTable.Boxed
-                      , Hecs.HashTable.HashKey
-                      , Hecs.HashTable.Int2Boxed
                       , Hecs.Component
                       , Hecs.Component.Generic
                       , Hecs.Component.Internal
