@@ -27,6 +27,7 @@ import Data.Hashable qualified as HS
 import Foreign.Storable qualified as Storable
 import Data.Vector.Primitive qualified as Prim
 import Control.Monad (void)
+import Control.Exception (evaluate)
 
 numIterations = 1_000
 
@@ -90,13 +91,13 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
       , benchVectorHashTables (VHT.initialize @SMV.MVector @key @PMV.MVector @key 32) "SP"
       ]
     , bgroup "HashMap"
-      [ env (pure keys) $ \ks -> bench "baseline" $ whnfIO $ traverse_ (\(!_) -> pure ()) ks
-      , env (pure keys) $ \ks -> bench "insert" $ whnf (foldVec (\k x -> HM.insert k k x) HM.empty) ks
-      , env (pure (foldVec (\k x -> HM.insert k k x) HM.empty keys, valid)) $ \ ~(im, xs) ->
+      [ env (evaluate keys) $ \ks -> bench "baseline" $ whnfIO $ traverse_ (\(!_) -> pure ()) ks
+      , env (evaluate keys) $ \ks -> bench "insert" $ whnf (foldVec (\k x -> HM.insert k k x) HM.empty) ks
+      , env (evaluate (foldVec (\k x -> HM.insert k k x) HM.empty keys, valid)) $ \ ~(im, xs) ->
         bench "lookup (success)" $ whnf (foldVec (\k () -> case HM.lookup k im of Nothing -> error (show k); Just _ -> ()) ()) xs
-      , env (pure (foldVec (\k x -> HM.insert k k x) HM.empty keys, others)) $ \ ~(im, xs) ->
+      , env (evaluate (foldVec (\k x -> HM.insert k k x) HM.empty keys, others)) $ \ ~(im, xs) ->
         bench "lookup (fail)" $ whnf (foldVec (\k () -> case HM.lookup k im of Nothing -> (); Just _ -> error (show k)) ()) xs
-      , env (pure (foldVec (\k x -> HM.insert k k x) HM.empty keys, validOthers))
+      , env (evaluate (foldVec (\k x -> HM.insert k k x) HM.empty keys, validOthers))
           $ \ ~(t, vo') -> bench "insert + delete" $ whnf (\vo ->
             let go1 !n !acc
                   | n >= VG.length vo = acc
@@ -117,13 +118,13 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
     ] <> (
       ifInt
         ( pure $ bgroup "IntMap"
-            [ env (pure keys) $ \ks -> bench "baseline" $ whnfIO $ traverse_ (\(!_) -> pure ()) ks
-            , env (pure keys) $ \ks -> bench "insert" $ whnf (foldVec (\k x -> IM.insert k k x) IM.empty) ks
-            , env (pure (foldVec (\k x -> IM.insert k k x) IM.empty keys, valid)) $ \ ~(im, xs) ->
+            [ env (evaluate keys) $ \ks -> bench "baseline" $ whnfIO $ traverse_ (\(!_) -> pure ()) ks
+            , env (evaluate keys) $ \ks -> bench "insert" $ whnf (foldVec (\k x -> IM.insert k k x) IM.empty) ks
+            , env (evaluate (foldVec (\k x -> IM.insert k k x) IM.empty keys, valid)) $ \ ~(im, xs) ->
               bench "lookup (success)" $ whnf (foldVec (\k () -> case IM.lookup k im of Nothing -> error (show k); Just _ -> ()) ()) xs
-            , env (pure (foldVec (\k x -> IM.insert k k x) IM.empty keys, others)) $ \ ~(im, xs) ->
+            , env (evaluate (foldVec (\k x -> IM.insert k k x) IM.empty keys, others)) $ \ ~(im, xs) ->
               bench "lookup (fail)" $ whnf (foldVec (\k () -> case IM.lookup k im of Nothing -> (); Just _ -> error (show k)) ()) xs
-            , env (pure (foldVec (\k x -> IM.insert k k x) IM.empty keys, validOthers))
+            , env (evaluate (foldVec (\k x -> IM.insert k k x) IM.empty keys, validOthers))
                 $ \ ~(t, vo') -> bench "insert + delete" $ whnf (\vo ->
                   let go1 !n !acc
                         | n >= VG.length vo = acc
@@ -161,10 +162,10 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
           , bench "baseline (reserve)" $ whnfIO $ do
               t <- new @kS @vS @key @key 32 0 0.75
               reserve t sz
-          , env (pure keys) $ \ks -> bench "insert" $ whnfIO $ do
+          , env (evaluate keys) $ \ks -> bench "insert" $ whnfIO $ do
               t <- new @kS @vS @key @key 32 0 0.75
               traverse_ (\k -> insert t k k) ks
-          , env (pure keys) $ \ks -> bench "insert (new|reserve)" $ whnfIO $ do
+          , env (evaluate keys) $ \ks -> bench "insert (new|reserve)" $ whnfIO $ do
               t <- new @kS @vS @key @key 32 0 0.75
               reserve t sz
               traverse_ (\k -> insert t k k) ks
@@ -175,15 +176,15 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
           , bench "baseline (reserve)" $ whnfIO $ do
               t <- new @kS @vS @key @key 32 0 0.9
               reserve t sz
-          , env (pure keys) $ \ks -> bench "insert" $ whnfIO $ do
+          , env (evaluate keys) $ \ks -> bench "insert" $ whnfIO $ do
               t <- new @kS @vS @key @key 32 0 0.9
               traverse_ (\k -> insert t k k) ks
-          , env (pure keys) $ \ks -> bench "insert (new|reserve)" $ whnfIO $ do
+          , env (evaluate keys) $ \ks -> bench "insert (new|reserve)" $ whnfIO $ do
               t <- new @kS @vS @key @key 32 0 0.9
               reserve t sz
               traverse_ (\k -> insert t k k) ks
           ]
-        , env (new @kS @vS @key @key 32 0 0.75 >>= \t0 -> reserve t0 sz >> traverse_ (\k -> insert t0 k k) keys >> pure (t0, validOthers))
+        , env (new @kS @vS @key @key 32 0 0.75 >>= \t0 -> reserve t0 sz >> traverse_ (\k -> insert t0 k k) keys >> evaluate validOthers >>= \vo' -> pure (t0, vo'))
             $ \ ~(t, vo) -> bench "insert + delete" $ whnfIO $ do
               let go1 n
                     | n >= VG.length vo = pure ()
@@ -202,7 +203,7 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
                       insert t k k
                       go1 $ n - 2
               go2 (VG.length vo - 2)
-        , env (new @kS @vS @key @key 32 0 0.75 >>= \t0 -> reserve t0 sz >> traverse_ (\k -> insert t0 k k) keys >> pure (t0, validOthers))
+        , env (new @kS @vS @key @key 32 0 0.75 >>= \t0 -> reserve t0 sz >> traverse_ (\k -> insert t0 k k) keys >> evaluate validOthers >>= \vo' -> pure (t0, vo'))
             $ \ ~(t, vo) -> bench "insert + delete (maxLoadFactor = 0.9)" $ whnfIO $ do
               let go1 n
                     | n >= VG.length vo = pure ()
@@ -222,19 +223,19 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
                       go1 $ n - 2
               go2 (VG.length vo - 2)
         , bgroup "lookup"
-          [ env (new @kS @vS @key @key 32 0 0.75 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, valid))
-              $ \ ~(t, _, xs) -> bench "lookup (success)" $ whnfIO $ do
+          [ env (new @kS @vS @key @key 32 0 0.75 >>= \t -> traverse_ (\k -> insert t k k) keys >> evaluate valid >>= \valid' -> pure (t, valid'))
+              $ \ ~(t, xs) -> bench "lookup (success)" $ whnfIO $ do
                 traverse_ (\k -> lookup t k >>= \case Nothing -> error (show k); Just _ -> pure ()) xs
-          , env (new @kS @vS @key @key 32 0 0.75 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, others))
-              $ \ ~(t, _, xs) -> bench "lookup (fail)" $ whnfIO $ do
+          , env (new @kS @vS @key @key 32 0 0.75 >>= \t -> traverse_ (\k -> insert t k k) keys >> evaluate others >>= \others' -> pure (t, others'))
+              $ \ ~(t, xs) -> bench "lookup (fail)" $ whnfIO $ do
                 traverse_ (\k -> lookup t k >>= \case Nothing -> pure (); Just _ -> error (show k)) xs
           ]
         , bgroup "lookup (maxLoadFactor = 0.9)"
-          [ env (new @kS @vS @key @key 32 0 0.9 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, valid))
-              $ \ ~(t, _, xs) -> bench "lookup (success)" $ whnfIO $ do
+          [ env (new @kS @vS @key @key 32 0 0.9 >>= \t -> traverse_ (\k -> insert t k k) keys >> evaluate valid >>= \valid' -> pure (t, valid'))
+              $ \ ~(t, xs) -> bench "lookup (success)" $ whnfIO $ do
                 traverse_ (\k -> lookup t k >>= \case Nothing -> error (show k); Just _ -> pure ()) xs
-          , env (new @kS @vS @key @key 32 0 0.9 >>= \t -> traverse_ (\k -> insert t k k) keys >> pure (t, keys, others))
-              $ \ ~(t, _, xs) -> bench "lookup (fail)" $ whnfIO $ do
+          , env (new @kS @vS @key @key 32 0 0.9 >>= \t -> traverse_ (\k -> insert t k k) keys >> evaluate others >>= \others' -> pure (t, others'))
+              $ \ ~(t, xs) -> bench "lookup (fail)" $ whnfIO $ do
                 traverse_ (\k -> lookup t k >>= \case Nothing -> pure (); Just _ -> error (show k)) xs
           ]
         ]
@@ -243,11 +244,11 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
       [ bgroup "insert"
         [ bench "baseline" $ whnfIO $ do
             void $ initTable
-        , env (pure keys) $ \ks-> bench "insert" $ whnfIO $ do
+        , env (evaluate keys) $ \ks-> bench "insert" $ whnfIO $ do
             t <- initTable
             traverse_ (\k -> HT.insert t k k) ks
         ]
-        , env (initTable >>= \t0 -> traverse_ (\k -> HT.insert t0 k k) keys >> pure (t0, validOthers))
+        , env (initTable >>= \t0 -> traverse_ (\k -> HT.insert t0 k k) keys >> evaluate validOthers >>= \vo' -> pure (t0, vo'))
             $ \ ~(t, vo) -> bench "insert + delete" $ whnfIO $ do
               let go1 n
                     | n >= VG.length vo = pure ()
@@ -267,11 +268,11 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
                       go1 $ n - 2
               go2 (VG.length vo - 2)
         , bgroup "lookup"
-          [ env (HT.newSized 32 >>= \(t :: HT.BasicHashTable key key) -> traverse_ (\k -> HT.insert t k k) keys >> pure (t, keys, valid))
-              $ \ ~(t, _, xs) -> bench "lookup (success)" $ whnfIO $ do
+          [ env (HT.newSized 32 >>= \(t :: HT.BasicHashTable key key) -> traverse_ (\k -> HT.insert t k k) keys >> evaluate valid >>= \valid' -> pure (t, valid'))
+              $ \ ~(t, xs) -> bench "lookup (success)" $ whnfIO $ do
                 traverse_ (\k -> HT.lookup t k >>= \case Nothing -> error (show k); Just _ -> pure ()) xs
-          , env (HT.newSized 32 >>= \(t :: HT.BasicHashTable key key) -> traverse_ (\k -> HT.insert t k k) keys >> pure (t, keys, others))
-              $ \ ~(t, _, xs) -> bench "lookup (fail)" $ whnfIO $ do
+          , env (HT.newSized 32 >>= \(t :: HT.BasicHashTable key key) -> traverse_ (\k -> HT.insert t k k) keys >> evaluate others >>= \others' -> pure (t, others'))
+              $ \ ~(t, xs) -> bench "lookup (fail)" $ whnfIO $ do
                 traverse_ (\k -> HT.lookup t k >>= \case Nothing -> pure (); Just _ -> error (show k)) xs
           ]
       ]
@@ -280,11 +281,11 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
       [ bgroup "insert"
         [ bench "baseline" $ whnfIO $ do
            void $ initTable
-        , env (pure keys) $ \ks -> bench "insert" $ whnfIO $ do
+        , env (evaluate keys) $ \ks -> bench "insert" $ whnfIO $ do
             t <- initTable
             traverse_ (\k -> VHT.insert t k k) ks
         ]
-      , env (initTable >>= \t0 -> traverse_ (\k -> VHT.insert t0 k k) keys >> pure (t0, validOthers))
+      , env (initTable >>= \t0 -> traverse_ (\k -> VHT.insert t0 k k) keys >> evaluate validOthers >>= \vo' -> pure (t0, vo'))
           $ \ ~(t, vo) -> bench "insert + delete" $ whnfIO $ do
             let go1 n
                   | n >= VG.length vo = pure ()
@@ -304,11 +305,11 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
                     go1 $ n - 2
             go2 (VG.length vo - 2)
       , bgroup "lookup"
-        [ env (initTable >>= \t -> traverse_ (\k -> VHT.insert t k k) keys >> pure (t, keys, valid))
-            $ \ ~(t, _, xs) -> bench "lookup (success)" $ whnfIO $ do
+        [ env (initTable >>= \t -> traverse_ (\k -> VHT.insert t k k) keys >> evaluate valid >>= \valid' -> pure (t, valid'))
+            $ \ ~(t, xs) -> bench "lookup (success)" $ whnfIO $ do
               traverse_ (\k -> VHT.lookup t k >>= \case Nothing -> error (show k); Just _ -> pure ()) xs
-        , env (initTable >>= \t -> traverse_ (\k -> VHT.insert t k k) keys >> pure (t, keys, others))
-            $ \ ~(t, _, xs) -> bench "lookup (fail)" $ whnfIO $ do
+        , env (initTable >>= \t -> traverse_ (\k -> VHT.insert t k k) keys >> evaluate others >>= \others' -> pure (t, others'))
+            $ \ ~(t, xs) -> bench "lookup (fail)" $ whnfIO $ do
               traverse_ (\k -> VHT.lookup t k >>= \case Nothing -> pure (); Just _ -> error (show k)) xs
         ]
       ]
