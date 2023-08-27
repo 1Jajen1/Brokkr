@@ -72,7 +72,7 @@ benchmark brokkr-hashtables-bench
   hs-source-dirs:      benchmark
   main-is:             Hashtables.hs
   build-depends:       brokkr-hashtables
-                     , criterion
+                     , tasty-bench
                      , random
                      , deepseq
                      , containers

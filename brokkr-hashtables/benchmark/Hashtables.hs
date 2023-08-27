@@ -4,7 +4,7 @@ module Main (main) where
 
 import Brokkr.HashTable
 
-import Criterion.Main
+import Test.Tasty.Bench
 import System.Random (mkStdGen, randomRs)
 import Control.DeepSeq
 import Prelude hiding (lookup)
@@ -33,9 +33,10 @@ numIterations = 1_000
 main :: IO ()
 main = do
   defaultMain $ [
-      benchHashTable "Int (random)" (\l _ -> l) V.foldr V.mapM_ numEls (V.fromList keys) (V.fromList $ take numIterations $ filter (\i -> not $ IS.member i keySet) $ rnd' maxBound)
+      benchHashTable "Int (random)" (\l _ -> l) V.foldr V.mapM_ numEls ks others
     | n0 <- take 6 [2..], (n1,n2) <- zip [3,1,1,1,1,0] [4,2,3,4,8,1]
       , let n = 10 ^ (n0 :: Int); numEls = n - (n * n1) `quot` n2; keys = take numEls $ rnd maxBound; keySet = IS.fromList keys
+      , let ks = V.fromList keys; others = V.fromList $ take numIterations $ filter (\i -> not $ IS.member i keySet) $ rnd' maxBound
     ]
 
 -- These NFData instances are a lie, but we don't need to force values for anything and keys are usually forced anyway
