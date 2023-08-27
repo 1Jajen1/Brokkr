@@ -7,7 +7,6 @@ module Hecs.World.Internal (
   WorldImpl(..)
 , WorldClass(..)
 , syncSetComponent
-, ActionType(..)
 ) where
 
 import qualified Hecs.Array as Arr
@@ -23,10 +22,8 @@ import GHC.TypeLits
 import Data.Proxy
 import Control.Monad
 import Data.Coerce
-import Data.Foldable (traverse_)
 import GHC.IO
 import Foreign.Storable (sizeOf, alignment)
-import GHC.Exts (Any)
 import Control.Concurrent.MVar
 import Data.Bits
 import Data.Bitfield
@@ -44,13 +41,11 @@ import GHC.Exts (RealWorld)
 -- This is the internal definition of a world. Most users will generate a newtype of this with 'makeWorld'.
 data WorldImpl (preAllocatedEIds :: Nat) = WorldImpl {
   entitySparseSet      :: {-# UNPACK #-} !(EntityId.EntitySparseSet ArchetypeRecord)
-, componentIndexRef    :: {-# UNPACK #-} !(HT.HashTable' HT.Storable HT.Boxed RealWorld IntIdHash (Arr.Array ArchetypeRecord))
+, componentIndexRef    :: {-# UNPACK #-} !(HT.HashTable' HT.Storable HT.Boxed RealWorld IntIdHash (Arr.Array RealWorld ArchetypeRecord))
 , archetypeIndexRef    :: {-# UNPACK #-} !(HT.HashTable' HT.Boxed    HT.Boxed RealWorld ArchetypeTy Archetype)
 , emptyArchetype       :: !Archetype -- root node for the archetype graph
-, deferredOpsRef       :: {-# UNPACK #-} !(MVar (Arr.Array Command))
+, deferredOpsRef       :: {-# UNPACK #-} !(MVar (Arr.Array RealWorld Command))
 , isDeferred           :: !Bool -- TODO Experiment with this on the type level?
-, componentHandlersAdd :: {-# UNPACK #-} !(HT.HashTable' HT.Storable HT.Boxed RealWorld IntIdHash (Arr.Array (EntityId -> IO ())))
-, componentHandlersRem :: {-# UNPACK #-} !(HT.HashTable' HT.Storable HT.Boxed RealWorld IntIdHash (Arr.Array (EntityId -> IO ())))
 }
 
 -- Used for component or entity ids. Statics are sequential, rest is dynamic and also relatively sequential
@@ -69,7 +64,6 @@ data Command =
   | forall c .                RemoveTag       !EntityId !(ComponentId c)
   | forall c . Component c => RemoveComponent !EntityId !(ComponentId c)
   | DestroyEntity !EntityId
-  | Register !ActionType !(ComponentId Any) (EntityId -> IO ())
 
 -- TODO Revisit derring inside proceEntityIding set/get etc
 data ArchetypeRecord = ArchetypeRecord !Int !Int !Archetype
@@ -93,9 +87,6 @@ instance KnownNat n => WorldClass (WorldImpl n) where
 
     deferred <- Arr.new 8
     deferredOpsRef <- newMVar deferred
-
-    componentHandlersAdd <- HT.new 4 0 0.75
-    componentHandlersRem <- HT.new 4 0 0.75
 
     let isDeferred = False
 
@@ -144,15 +135,11 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     then enqueue w $ RemoveComponent eid compId
     else syncRemove (Proxy @(ComponentKind c)) w eid compId
   {-# INLINE removeComponentI #-}
-  registerI w@(WorldImpl{..}) !actionType !cid hdl = if isDeferred
-    then enqueue w $ Register actionType (coerce cid) hdl
-    else syncRegister w actionType (coerce cid) hdl
-  {-# INLINE registerI #-}
   -- TODO Check if ghc removes the filter entirely
   filterI WorldImpl{componentIndexRef} !fi f z = HT.lookup componentIndexRef (coerce $ Filter.extractMainId fi) >>= \case
-    Just arr ->
-      let sz = Arr.size arr
-          go !n !b
+    Just arr -> do
+      sz <- Arr.size arr
+      let go !n !b
             | n >= sz   = pure b
             | otherwise = do
               ArchetypeRecord _ _ aty <- Arr.read arr n
@@ -160,28 +147,29 @@ instance KnownNat n => WorldClass (WorldImpl n) where
               if Filter.evaluate fi aty
                 then f (coerce aty) b >>= go (n + 1)
                 else go (n + 1) b
-      in z >>= go 0
+      z >>= go 0
     Nothing -> z
   {-# INLINE filterI #-}
   -- TODO Should I sync here? I don't think so, but then I probably need to wrap this in Hecs.World!
   defer w act = act $ w { isDeferred = True }
-  sync w@WorldImpl{deferredOpsRef} = modifyMVar_ deferredOpsRef $ \arr -> go arr 0 >> Arr.new (max 8 $ Arr.size arr `unsafeShiftR` 2) -- TODO Better shrinking?
-    where
-      go !arr !n
-        | n >= Arr.size arr = pure ()
-        | otherwise = do
-          Arr.read arr n >>= \case
-            CreateEntity e -> syncAllocateEntity w e
-            AddTag e cId -> syncAddTag w e cId
-            SetComponent e cId c -> syncSetComponent w e cId c
-            RemoveTag e cId -> syncRemove (Proxy @Tag) w e cId
-            RemoveComponent @c e cId -> syncRemove (Proxy @(ComponentKind c)) w e cId
-            DestroyEntity e -> syncDestroyEntity w e
-            Register actionType cid hdl -> syncRegister w actionType cid hdl
-          go arr (n + 1)
+  sync w@WorldImpl{deferredOpsRef} = modifyMVar_ deferredOpsRef $ \arr -> do
+    sz <- Arr.size arr
+    let go !n
+          | n >= sz = pure ()
+          | otherwise = do
+            Arr.read arr n >>= \case
+              CreateEntity e -> syncAllocateEntity w e
+              AddTag e cId -> syncAddTag w e cId
+              SetComponent e cId c -> syncSetComponent w e cId c
+              RemoveTag e cId -> syncRemove (Proxy @Tag) w e cId
+              RemoveComponent @c e cId -> syncRemove (Proxy @(ComponentKind c)) w e cId
+              DestroyEntity e -> syncDestroyEntity w e
+            go (n + 1)
+    go 0
+    Arr.new (max 8 $ sz `unsafeShiftR` 2) -- TODO Better shrinking?
 
 enqueue :: WorldImpl n -> Command -> IO ()
-enqueue WorldImpl{..} !e = modifyMVar_ deferredOpsRef (`Arr.writeBack` e)
+enqueue WorldImpl{..} !e = withMVar deferredOpsRef (`Arr.writeBack` e)
 
 syncAllocateEntity :: WorldImpl n -> EntityId -> IO ()
 syncAllocateEntity WorldImpl{..} !eid = do
@@ -214,12 +202,9 @@ syncAdd newArchetype addToType lookupCol w@WorldImpl{..} !eid !compId = do
      -- Non-edge moves are about 2x slower compared to edge moves
      -- Moves to new archetypes are likely even worse but harder to benchmark
 
-    -- run handlers
-    HT.lookup componentHandlersAdd (coerce compId) >>= traverse_ (\hdlArr -> Arr.iterate_ hdlArr $ \f -> f eid) -- 10% even on an empty handlers table!
-
     Archetype.getEdge aty compId >>= \case
       ArchetypeEdge (Just dstAty) _-> lookupCol dstAty (\c -> do
-        (newRow, movedEid) <- Archetype.moveEntity aty row c dstAty -- 30% and worse the more stuff we need to copy
+        (newRow, movedEid) <- Archetype.moveEntity aty row c dstAty
 
         unless (movedEid == eid) $ EntityId.insert entitySparseSet movedEid (ArchetypeRecord row 1 aty)
         EntityId.insert entitySparseSet eid (ArchetypeRecord newRow 1 dstAty)
@@ -255,16 +240,18 @@ syncAddSlow newArchetype addToType WorldImpl{..} !eid !compId !aty !row = do
             then do
               let (first, second) = unwrapRelation $ coerce compId
                   writeWildCard rel = do
-                    arr <- HT.lookup componentIndexRef rel >>= \case
+                    HT.lookup componentIndexRef rel >>= \case
                       Just arr -> do
-                        let i = Arr.size arr - 1
+                        i <- (\x -> x - 1) <$> Arr.size arr
                         ArchetypeRecord _ count aty' <- Arr.read arr i
                         if aty' == dstAty
-                          then Arr.write arr i (ArchetypeRecord col (count + 1) dstAty) >> pure arr
+                          then Arr.write arr i (ArchetypeRecord col (count + 1) dstAty)
                           else Arr.writeBack arr $ ArchetypeRecord col 1 dstAty
-                      Nothing -> Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty)
-                    HT.insert componentIndexRef rel arr
-              
+                      Nothing -> do
+                        arr <- Arr.new 4
+                        Arr.writeBack arr $ ArchetypeRecord col 1 dstAty
+                        HT.insert componentIndexRef rel arr
+
               -- add the wildcard parts to the index: Rel Type x and Rel x Type for both first and second
               writeWildCard (coerce $ mkRelation wildcard first)
               writeWildCard (coerce $ mkRelation first wildcard)
@@ -274,10 +261,12 @@ syncAddSlow newArchetype addToType WorldImpl{..} !eid !compId !aty !row = do
             else pure ind'
           
           -- add to the component index
-          arr <- HT.lookup componentIndexRef (coerce tyId) >>= \case
+          HT.lookup componentIndexRef (coerce tyId) >>= \case
             Just arr -> Arr.writeBack arr $ ArchetypeRecord col 1 dstAty
-            Nothing -> Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty) -- TODO Check if count=1 is a safe aEntityIdumption?
-          HT.insert componentIndexRef (coerce tyId) arr
+            Nothing -> do
+              arr <- Arr.new 4
+              Arr.writeBack arr $ ArchetypeRecord col 1 dstAty -- TODO Check if count=1 is a safe assumption?
+              HT.insert componentIndexRef (coerce tyId) arr
         ) (pure ())
 
       pure dstAty
@@ -325,9 +314,6 @@ syncRemove ty WorldImpl{..} !eid !compId = do
     Nothing -> error "Hecs.World.Internal:syncRemove entity id not in entity index!"
 
   Archetype.lookupComponent ty aty compId (\removedColumn -> do
-    -- run handlers
-    HT.lookup componentHandlersRem (coerce compId) >>= traverse_ (\hdlArr -> Arr.iterate_ hdlArr $ \f -> f eid)
-
     dstAty <- Archetype.getEdge aty compId >>= \case
       ArchetypeEdge _ (Just dstAty) -> pure dstAty
       ArchetypeEdge _ Nothing -> do
@@ -357,15 +343,18 @@ syncRemove ty WorldImpl{..} !eid !compId = do
                 then do
                   let (first, second) = unwrapRelation $ coerce compId
                       writeWildCard rel = do
-                        arr <- HT.lookup componentIndexRef rel >>= \case
+                        HT.lookup componentIndexRef rel >>= \case
                           Just arr -> do
-                            let i = Arr.size arr - 1
+                            i <- (\x -> x - 1) <$> Arr.size arr
                             ArchetypeRecord _ count aty' <- Arr.read arr i
                             if aty' == dstAty
-                              then Arr.write arr i (ArchetypeRecord col (count + 1) dstAty) >> pure arr
+                              then Arr.write arr i (ArchetypeRecord col (count + 1) dstAty)
                               else Arr.writeBack arr $ ArchetypeRecord col 1 dstAty
-                          Nothing -> Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty)
-                        HT.insert componentIndexRef rel arr
+                          Nothing -> do
+                            arr <- Arr.new 4
+                            Arr.writeBack arr $ ArchetypeRecord col 1 dstAty
+                            HT.insert componentIndexRef rel arr
+
 
                   -- add the wildcard parts to the index: Rel Type x and Rel x Type for both first and second
                   -- TODO Actually do I want Rel l r to register Rel x l and Rel r x?
@@ -377,10 +366,13 @@ syncRemove ty WorldImpl{..} !eid !compId = do
 
                 else pure ind'
 
-              arr <- HT.lookup componentIndexRef (coerce tyId) >>= \case
+              HT.lookup componentIndexRef (coerce tyId) >>= \case
                 Just arr -> Arr.writeBack arr $ ArchetypeRecord col 1 dstAty
-                Nothing -> Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty) -- TODO Check if count=1 is a safe aEntityIdumption?
-              HT.insert componentIndexRef (coerce tyId) arr) (pure ())
+                Nothing -> do
+                  arr <- Arr.new 4
+                  Arr.writeBack arr $ ArchetypeRecord col 1 dstAty -- TODO Check if count=1 is a safe assumption?
+                  HT.insert componentIndexRef (coerce tyId) arr
+              ) (pure ())
 
             pure dstAty
 
@@ -398,11 +390,6 @@ syncDestroyEntity WorldImpl{..} !eid = do
     -- we could just ignore this, but this is almost always a user bug!
     Nothing -> error "Tried to free an already freed entityId"
     Just (ArchetypeRecord row _ aty) -> do
-      -- TODO Get all components and run the remove handlers
-      Archetype.iterateComponentIds (Archetype.getTy aty) (\cid _ _ -> do
-        HT.lookup componentHandlersRem (coerce cid) >>= traverse_ (\hdlArr -> Arr.iterate_ hdlArr $ \f -> f eid)
-        ) (pure ())
-
       -- This eid might be a component, so remove them from the relevant structures
       HT.delete componentIndexRef (coerce $ ComponentId eid) >>= \case
         Nothing -> pure ()
@@ -410,25 +397,10 @@ syncDestroyEntity WorldImpl{..} !eid = do
           -- TODO This is a little annoying. Basically needs an archetype move for every member of every archetype in this list.
           --      This is reasonably fast as we can copy entire columns at once, its just really annoying to do...
           Arr.iterate_ arr $ \(ArchetypeRecord _col _ _aty) -> pure ()
-          void $ HT.delete componentHandlersAdd (coerce $ ComponentId eid)
-          void $ HT.delete componentHandlersRem (coerce $ ComponentId eid)
       
       movedEid <- Archetype.removeEntity aty row
 
       unless (movedEid == eid) $ EntityId.insert entitySparseSet movedEid (ArchetypeRecord row 1 aty)
-
-syncRegister :: WorldImpl n -> ActionType -> ComponentId Any -> (EntityId -> IO ()) -> IO ()
-syncRegister WorldImpl{..} OnAdd !cid hdl = do
-  -- add it to the global registry of handlers
-  HT.lookup componentHandlersAdd (coerce cid) >>= \case
-    Just arr -> Arr.writeBack arr hdl >>= HT.insert componentHandlersAdd (coerce cid)
-    Nothing -> Arr.new 2 >>= \arr -> Arr.writeBack arr hdl >>= HT.insert componentHandlersAdd (coerce cid)
-syncRegister WorldImpl{..} OnRemove !cid hdl = do
-  -- add it to the global registry of handlers
-  HT.lookup componentHandlersAdd (coerce cid) >>= \case
-    Just arr -> Arr.writeBack arr hdl >>= HT.insert componentHandlersAdd (coerce cid)
-    Nothing -> Arr.new 2 >>= \arr -> Arr.writeBack arr hdl >>= HT.insert componentHandlersAdd (coerce cid)
-
 
 -- | All behavior a World has to support. makeWorld creates a newtype around WorldImpl and derives this
 class WorldClass w where
@@ -444,13 +416,6 @@ class WorldClass w where
   filterI :: w -> Filter ty Filter.HasMainId -> (Filter.TypedArchetype ty -> b -> IO b) -> IO b -> IO b
   defer :: w -> (w -> IO a) -> IO a
   sync :: w -> IO ()
-  registerI :: w -> ActionType -> ComponentId c -> (EntityId -> IO ()) -> IO ()
-
--- | Actions which one can trigger callbacks for
---
--- 'OnAdd' triggers when a component is added to an entity
--- 'OnRemove' triggers when a component is removed from an entity or an entity with this component is destroyed
-data ActionType = OnAdd | OnRemove
 
 -- TODO Revisit inline/inlineable pragmas.
 --      - AggreEntityIdively optimize the fast path, always inline it, always keep the slow path out of line!

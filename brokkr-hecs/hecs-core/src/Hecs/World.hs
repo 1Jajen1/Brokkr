@@ -14,8 +14,6 @@ module Hecs.World (
 , runFilter, runFilter_
 , defer
 , sync
-, register
-, ActionType(..)
 ) where
 
 import Prelude hiding (filter)
@@ -27,7 +25,6 @@ import Hecs.World.Has
 import Hecs.World.Internal
 import Hecs.Filter
 
-import Control.Monad (void)
 import Control.Monad.Base
 import Control.Monad.Trans.Control
 
@@ -99,7 +96,3 @@ runFilter_ :: forall w ty m a b z
   => w -> Filter ty HasMainId -> FoldM m a b z -> m z
 runFilter_ w fi fo = toEntityFold @w fo $ \f z e -> runFilter w fi (flip f) z >>= e
 {-# INLINE runFilter_ #-}
-
-register :: (WorldClass w, MonadBaseControl IO m) => w -> ActionType -> ComponentId c -> (EntityId -> m ()) -> m ()
-register w ty cid hdl = liftBaseWith $ \runInBase -> registerI w ty cid (void . runInBase . hdl)
-{-# INLINE register #-}

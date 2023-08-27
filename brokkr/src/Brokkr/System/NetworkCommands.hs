@@ -24,26 +24,25 @@ import Data.Coerce
 import Data.Foldable
 
 networkCommands :: Server ()
-networkCommands = Server.system
-  (Server.filterDSL @'[Connection])
-  $ \aty -> do
-    connRef <- Server.getColumn @Connection aty
-    Server.iterateArchetype_ aty $ \n eid -> do
-      conn <- Server.readColumn connRef n
-      st <- liftBaseWith $ \runInBase -> flushCommands conn $ runInBase . traverse_ (handleCommand eid)
-      restoreM st
+networkCommands = Server.defer $
+  -- TODO query 
+  Server.runFilter_
+    (Server.filterDSL @'[Connection])
+    $ Server.cmapM_ $ \(eid, conn) -> do
+        st <- liftBaseWith $ \runInBase -> flushCommands conn $ runInBase . traverse_ (handleCommand eid)
+        restoreM st
 
 handleCommand :: Server.EntityId -> Command -> Server ()
 -- Movement
 handleCommand eid (Packet.SetPlayerPositionAndRotation (Packet.Position posX posY posZ) (Packet.Rotation yaw pitch) onGround)
   = do
-    currentPos <- Server.get @Position eid pure $ error "Client without a position" -- TODO errors
+    currentPos <- Server.get @Position eid pure $ error "Client without a rotation" -- TODO errors 
     currentRot <- Server.get @Rotation eid pure $ error "Client without a rotation" -- TODO errors
     -- currentFalling <- Server.get @Falling eid pure $ error "Client without falling" -- TODO errors
     Server.set @Position eid (Position posX posY posZ)
     Server.set @Rotation eid (Rotation yaw pitch)
     -- Server.set @Falling  eid onGround
-    -- set the old values -- TODO enable the components rather than setting and unsetting every time
+    -- set the old values -- TODO enable the components rather than setting and unsetting every time (avoid the table move!)
     Server.set @OldPosition eid $ coerce currentPos
     Server.set @OldRotation eid $ coerce currentRot
 handleCommand eid (Packet.SetPlayerPosition (Packet.Position posX posY posZ) onGround)

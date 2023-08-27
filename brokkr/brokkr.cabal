@@ -98,11 +98,12 @@ library
                       -- , IO.ChunkCache
                       , Brokkr.IO.ChunkCache
                       , Brokkr.IO.Chunkloading
-                      -- , Systems and listeners
-                      , Brokkr.Listeners.ClientUpdate
+                      -- Server and ecs setup
                       , Brokkr.Server
                       , Brokkr.Server.Config
                       , Brokkr.Server.Monad
+                      -- , Systems and listeners
+                      , Brokkr.System.JoinPlayers
                       , Brokkr.System.NetworkCommands
                       , Brokkr.System.PlayerMovement
                       -- , Network
@@ -132,21 +133,6 @@ executable Brokkr
                        -rtsopts
                        -with-rtsopts=-N
                        -O2
-test-suite Brokkr-test
-  import:              common-options
-  type:                exitcode-stdio-1.0
-  hs-source-dirs:      test
-  main-is:             Main.hs
-  other-modules:       LoginSpec
-                       JoinGameSpec
-                       MovementSpec
-                       Spec
-                       Utils.Setup
-                       Utils.Client
-                       Utils.Fault
-                       Utils.Handshake
-                       Utils.Login
-                       Utils.Play
   build-tool-depends:  sydtest-discover:sydtest-discover
   build-depends:       brokkr
                      , sydtest
@@ -157,14 +143,6 @@ test-suite Brokkr-test
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N
-benchmark Chunkloading
-  import:              common-options
-  type:                exitcode-stdio-1.0
-  hs-source-dirs:      benchmark
-  main-is:             Chunkloading.hs
-  build-depends:       tasty-bench
-                     , brokkr
-  ghc-options:         -O2
 benchmark GlobalBlockId
   import:              common-options
   type:                exitcode-stdio-1.0

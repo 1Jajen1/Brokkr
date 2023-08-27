@@ -4,17 +4,12 @@ module Brokkr.Server (
 , Server.runServerM
 ) where
 
-import Brokkr.Client (Client)
-
 import Brokkr.Debug.Monad
 
 import Brokkr.Dimension qualified as Dimension
 
 import Brokkr.IO.Chunkloading qualified as Chunkloading
 
-import Brokkr.Listeners.ClientUpdate
-
-import Brokkr.Network.Connection (Connection)
 import Brokkr.Network.Handler
 import Brokkr.Network.Monad hiding (getUniverse)
 
@@ -22,8 +17,9 @@ import Brokkr.Server.Config
 import Brokkr.Server.Monad (Server)
 import Brokkr.Server.Monad qualified as Server
 
-import Brokkr.System.PlayerMovement
-import Brokkr.System.NetworkCommands
+import Brokkr.System.JoinPlayers qualified as System
+import Brokkr.System.PlayerMovement qualified as System
+import Brokkr.System.NetworkCommands qualified as System
 
 import Chronos qualified
 
@@ -66,11 +62,6 @@ setupServer readyCallback = do
   --theEnd <- Server.newEntity
   --Dimension.new @Dimension.TheEnd "./server/world/region" theEnd
 
-  -- register handlers
-  -- TODO: Register the connection for more updates!
-  Server.register @Client Server.OnAdd    $ \eid -> addClient    eid
-  Server.register @Client Server.OnRemove $ \eid -> removeClient eid
-
   -- start network and then gameloop
   u <- Server.getUniverse
   liftBaseWith $ \runInBase -> Async.withAsync (do
@@ -105,9 +96,12 @@ gameLoop = go
 
         -- Sync all async changes to the world state
         Server.sync
-      
+
+        -- join players
+        System.joinPlayers
+
         -- process all the stuff the clients sent
-        networkCommands
+        System.networkCommands
 
         -- player block placing/breaking
 
@@ -116,9 +110,6 @@ gameLoop = go
         -- => What do we do for redstone or other listeners?
 
         -- create entities
-        --  - look for completely new entities and properly join them
-        --  - ie register them to the correct locations?
-        -- This really should not be a system but instead a listener for adding an entity
 
         -- world time
         -- tile events
@@ -128,7 +119,7 @@ gameLoop = go
         -- random events
 
         -- player movement -- collision?
-        playerMovement
+        System.playerMovement
 
         -- update villages
         -- block events
@@ -137,6 +128,8 @@ gameLoop = go
 
         -- TODO Figure out where this belongs
         -- Apply chunk updates 
+
+        System.removePlayers
 
         end <- liftBase $ fromIntegral . Chronos.getTime <$> Chronos.now
         let diff = (min 0 $ end - start) `div` 1000

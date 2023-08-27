@@ -21,6 +21,7 @@ common common-options
                      , transformers
                      , transformers-base
                      , monad-control
+                     , primitive
   
   ghc-options:         -Wall
                        -Wcompat

@@ -10,7 +10,6 @@ module Hecs.Monad.Class (
 , hasTag
 , removeTag
 , remove
-, register
 , runFilter_
 ) where
 
@@ -87,12 +86,6 @@ class Monad m => MonadHecs (w :: Type) (m :: Type -> Type) | m -> w where
   -- the argument to 'defer' diverges (runs in an infinite loop in some network thread for example)
   -- it is useful to manually sync changes.
   sync :: m ()
-  -- | Register a listener to some component with an explicit id
-  --
-  -- See 'ActionType' for when and how the callback is called
-  --
-  -- See 'register' if you have a statically known tag with a 'Has' instance
-  registerWithId :: Core.ActionType -> Core.ComponentId c -> (Core.EntityId -> m ()) -> m ()
 
 instance MonadHecs w m => MonadHecs w (ReaderT r m) where
   newEntity = lift newEntity
@@ -117,17 +110,6 @@ instance MonadHecs w m => MonadHecs w (ReaderT r m) where
   {-# INLINE defer #-}
   sync = lift sync
   {-# INLINE sync #-}
-  registerWithId actType cid hdl = ReaderT $ \r -> registerWithId actType cid (\eid -> runReaderT (hdl eid) r)
-  {-# INLINE registerWithId #-}
-
--- | Register a listener to some component
---
--- See 'ActionType' for when and how the callback is called
---
--- See 'registerWithId' if you need to pass a component id
-register  :: forall c w m . (MonadHecs w m, Core.Has w c) => Core.ActionType -> (Core.EntityId -> m ()) -> m ()
-register actionType = registerWithId actionType (Core.getComponentId @_ @_ @c (Proxy @w))
-{-# INLINE register #-}
 
 -- | Set a component value
 --

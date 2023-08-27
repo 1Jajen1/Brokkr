@@ -30,6 +30,8 @@ import Control.Monad.Base
 import Control.Monad.Trans.Control
 import Control.Monad.Trans.Reader
 
+import Control.Monad.Primitive
+
 import Data.Coerce
 
 import Hecs
@@ -52,6 +54,7 @@ import Brokkr.Util.Velocity (Velocity)
 import {-# SOURCE #-} Brokkr.Dimension (Dimension, DimensionType(..), DimensionName)
 import Brokkr.IO.ChunkCache (SomeChunkCache)
 -- Systems
+import {-# SOURCE #-} Brokkr.System.JoinPlayers
 import {-# SOURCE #-} Brokkr.System.PlayerMovement
 
 makeWorld "Universe"
@@ -75,6 +78,8 @@ makeWorld "Universe"
   , ''Land, ''Fly
   -- other player move states
   , ''Sneaking, ''Sprinting, ''Flying
+  -- Join player signal tag
+  , ''JoinPlayer, ''RemovePlayer
   -- client identifiers
   , ''Client, ''Username, ''ClientUUID
   ]
@@ -82,7 +87,7 @@ makeWorld "Universe"
 type Server a = ServerM IO a
 
 newtype ServerM m a = ServerM (TraceT Verbose (ReaderT Config (HecsM Universe m)) a)
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadBase b, MonadBaseControl b, MonadTrace)
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadBase b, MonadBaseControl b, MonadTrace, PrimMonad)
 
 instance MonadTrans ServerM where
   lift = ServerM . lift . lift . lift

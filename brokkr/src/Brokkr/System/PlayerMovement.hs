@@ -69,6 +69,8 @@ newtype ChunkYPosition = ChunkYPosition Int
 --  movement changes. In general table moves should be avoided
 
 -- TODO Is this overloaded? Should I instead do this in smaller steps?
+-- TODO This is a decent candidate for maybe columns?
+-- TODO I will soon need another system that handles all movement changes!
 
 -- | Run systems for managing player movement.
 -- Handles chunk loading and unloading, fall damage and sending

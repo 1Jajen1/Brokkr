@@ -14,6 +14,7 @@ import qualified Hecs.World as Core
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Control.Monad.Base
+import Control.Monad.Primitive
 import Hecs.Filter
 import Control.Monad.Trans.Class
 import GHC.Exts (oneShot)
@@ -63,6 +64,11 @@ instance MonadBaseControl b m => MonadBaseControl b (HecsM w m) where
   restoreM = defaultRestoreM
   {-# INLINE restoreM #-}
 
+instance PrimMonad m => PrimMonad (HecsM w m) where
+  type PrimState (HecsM w m) = PrimState m
+  primitive f = HecsM $ \_ -> primitive f
+  {-# INLINE primitive #-}
+
 pattern HecsM :: (w -> m a) -> HecsM w m a
 pattern HecsM f <- HecsM_ f
   where HecsM f = HecsM_ $ oneShot f
@@ -106,5 +112,3 @@ instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) w
   {-# INLINE defer #-}
   sync = getWorld >>= \w -> liftBase $ Core.sync w
   {-# INLINE sync #-}
-  registerWithId actionType cid hdl = getWorld >>= \w -> Core.register w actionType cid hdl
-  {-# INLINE registerWithId #-}

@@ -12,54 +12,74 @@ module Hecs.Array (
 
 import Prelude hiding (read)
 
+import Control.Monad.Primitive
+
+import Data.Primitive hiding (Array)
+import Data.Primitive.PrimVar
+
 import GHC.Exts
-import GHC.IO
 
 -- Growable array
-data Array a = Array# Int# (SmallMutableArray# RealWorld a)
+data Array s a = Array {-# UNPACK #-} !(PrimVar s Int) (MutVar# s (SmallMutableArray# s a))
 
-new :: forall a . Int -> IO (Array a)
-new (I# initSz) = IO $ \s ->
-  case newSmallArray# initSz (error "Hecs.Array.new:uninitlialized element") s of
-    (# s', arr #) -> (# s', Array# 0# arr #)
-{-# INLINE new #-}
+new :: PrimMonad m => Int -> m (Array (PrimState m) a)
+{-# INLINEABLE new #-}
+new initSz = do
+  szRef <- newPrimVar 0
+  SmallMutableArray arr <- newSmallArray initSz (error "arr:new:empty")
+  primitive $ \s -> case newMutVar# arr s of
+    (# s1, arrRef #) -> (# s1, Array szRef arrRef #)
 
-size :: Array a -> Int
-size (Array# sz _) = I# sz
+size :: PrimMonad m => Array (PrimState m) a -> m Int
 {-# INLINE size #-}
+size (Array sz _) = readPrimVar sz
 
-grow :: Array a -> IO (Array a)
-grow (Array# sz arr) = IO $ \s -> case newSmallArray# dCap (error "Hecs.Array.new:uninitlialized element") s of
-  (# s1, arr1 #) -> case copySmallMutableArray# arr 0# arr1 0# cap s1 of
-    s2 -> (# s2, Array# sz arr1 #)
-  where
-    cap = sizeofSmallMutableArray# arr
-    dCap = cap *# 2#
+grow :: PrimMonad m => Array (PrimState m) a -> m ()
+{-# INLINEABLE grow #-}
+grow (Array szRef arrRef) = do
+  arr <- primitive $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, SmallMutableArray arr #)
 
-read :: Array a -> Int -> IO a
-read (Array# _ arr) (I# n) = IO (readSmallArray# arr n)
+  let cap = sizeofSmallMutableArray arr
+  let newCap = cap * 2
+
+  newArr@(SmallMutableArray newArr#) <- newSmallArray newCap (error "arr:grow:empty")
+  copySmallMutableArray newArr 0 arr 0 cap
+  
+  primitive $ \s -> (# writeMutVar# arrRef newArr# s, () #)
+
+read :: PrimMonad m => Array (PrimState m) a -> Int -> m a
 {-# INLINE read #-}
+read (Array _ arrRef) !n = do
+  arr <- primitive $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, SmallMutableArray arr #)
+  readSmallArray arr n
 
-write :: Array a -> Int -> a -> IO ()
-write (Array# _ arr) (I# n) el = IO $ \s -> case writeSmallArray# arr n el s of s1 -> (# s1, () #)
+write :: PrimMonad m => Array (PrimState m) a -> Int -> a -> m ()
 {-# INLINE write #-}
+write (Array _ arrRef) !n el = do
+  arr <- primitive $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, SmallMutableArray arr #)
+  writeSmallArray arr n el
 
-writeBack :: Array a -> a -> IO (Array a)
-writeBack a@(Array# sz arr) el
-  | isTrue# (sz >=# cap) = do
-    Array# _ arr1 <- grow a
-    IO $ \s -> case writeSmallArray# arr1 sz el s of s1 -> (# s1, Array# (sz +# 1#) arr1 #)
-  | otherwise = IO $ \s -> case writeSmallArray# arr sz el s of s1 -> (# s1, Array# (sz +# 1#) arr #)
-  where
-    cap = sizeofSmallMutableArray# arr
--- {-# INLINE writeBack #-}
+writeBack :: PrimMonad m => Array (PrimState m) a -> a -> m ()
+{-# INLINEABLE writeBack #-}
+writeBack a@(Array szRef arrRef) el = do
+  arr <- primitive $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, SmallMutableArray arr #)
+  let cap = sizeofSmallMutableArray arr
+  sz <- readPrimVar szRef
 
-iterate_ :: Array a -> (a -> IO ()) -> IO ()
-iterate_ (Array# sz arr) hdl = IO $ \s -> (# go 0# s, () #)
-  where
-    go n s
-      | isTrue# (n >=# sz) = s
-      | otherwise = case readSmallArray# arr n s of
-        (# s', a #) -> case hdl a of
-          IO f -> case f s' of
-            (# s'', () #) -> go (n +# 1#) s''
+  if sz == cap
+    then grow a >> write a sz el
+    else writeSmallArray arr sz el
+  writePrimVar szRef (sz + 1)
+
+iterate_ :: PrimMonad m => Array (PrimState m) a -> (a -> m ()) -> m ()
+{-# INLINE iterate_ #-}
+iterate_ (Array szRef arrRef) hdl = do
+  arr <- primitive $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, SmallMutableArray arr #)
+  sz <- readPrimVar szRef
+  let go !n
+        | n >= sz = pure ()
+        | otherwise = do
+          el <- readSmallArray arr n
+          hdl el
+          go (n + 1)
+  go 0

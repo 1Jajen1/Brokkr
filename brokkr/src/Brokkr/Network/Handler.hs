@@ -2,7 +2,6 @@ module Brokkr.Network.Handler (
   handleConnection
 ) where
 
-import Brokkr.Client (Client)
 import Brokkr.Client.Username
 
 import Brokkr.Chunk.Internal (force)
@@ -37,6 +36,7 @@ import Brokkr.Registry.Dimension
 
 import Brokkr.Server.Config
 import Brokkr.Server.Monad qualified as Server
+import Brokkr.System.JoinPlayers (JoinPlayer, RemovePlayer)
 import Brokkr.System.PlayerMovement (ChunkYPosition(..))
 
 import Brokkr.Util.Position
@@ -159,7 +159,7 @@ handlePlay playerUUID playerName cs es = do
                 restoreM eidSt >>= Server.freeEntity
                 debug @Error "Failed to join player")
               (\eidSt -> runInBase $ restoreM eidSt >>= \eid -> joinPlayer conn playerName playerUUID eid >> pure eid)
-          ) (\(eid, _) -> void . runInBase $ Server.freeEntity eid) -- TODO The client joined, but crashed, so we must remove it
+          ) (\(eid, _) -> void . runInBase $ Server.addTag @RemovePlayer eid)
             $ \clientSt -> runInBase $ restoreM clientSt >>= \_client -> do
               debug @Debug "Player joined"
               -- packet loop
@@ -270,4 +270,4 @@ joinPlayer conn username clientUUID eid = do
 
   -- This write will trigger the server to fully join the new client, so make sure it is done last
   -- TODO How can I, or should I, enforce that the required components have been added
-  Server.addTag @Client eid
+  Server.addTag @JoinPlayer eid

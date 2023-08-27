@@ -14,6 +14,7 @@ import Control.Monad.Base (MonadBase)
 import Control.Monad.Trans
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Reader
+import Control.Monad.Primitive
 
 import Data.Proxy
 import Hecs.Monad.Class
@@ -35,7 +36,7 @@ instance KnownDebugLevel Error where
 
 
 newtype TraceT (level :: DebugLevel) m a = TraceT (ReaderT TraceSettings m a)
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadBase b, MonadBaseControl b, MonadTrans, MonadHecs u)
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadBase b, MonadBaseControl b, MonadTrans, MonadHecs u, PrimMonad)
 
 runTraceTStdOut :: TraceT lvl m a -> m a
 runTraceTStdOut (TraceT act) = runReaderT act $ TraceSettings putStrLn ""

@@ -24,6 +24,7 @@ List of all libraries currently living in the repository. The status has the fol
 | brokkr-nbt           | Utilities for dealing with NBT data                                   | Experimental             |
 | brokkr-anvil         | Utilities for loading chunk data from anvil files                     | Experimental             | 
 | brokkr-packed-vector | Datatype for variable sized packed vectors                            | Experimental             |
+| brokkr-hashtables    | Fast flexible hashtable                                               | Experimental             |
 | brokkr-block         | Template-haskell generated block states                               | Work in progress         |
 | brokkr-hecs          | Archetype entity component system based on flecs                      | Work in progress         |
 | brokkr-packet        | Datatypes and serialization for the Minecraft protocol                | Work in progress         |
