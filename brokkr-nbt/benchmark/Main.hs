@@ -77,33 +77,33 @@ benchFile name =
     [ bench "decode (brokkr)"  $ nf parseBsNBT envBs
     , bench "encode (brokkr)"  $ nf encodeNBT envNBT 
     ]
-      <> (if includeCmp then
-        [ bench "decode (named-binary-tag)"  $ nf (Serialize.decode @NBT2.Nbt') envBs
-        -- , bench "encode (named-binary-tag)"  $ nf (Serialize.runPut . Serialize.put) envNBT2 
-        ] else [])
+      -- <> (if includeCmp then
+      --   [ bench "decode (named-binary-tag)"  $ nf (Serialize.decode @NBT2.Nbt') envBs
+      --   -- , bench "encode (named-binary-tag)"  $ nf (Serialize.runPut . Serialize.put) envNBT2 
+      --   ] else [])
       <> (if name == "bigtest.nbt" then
         [ bench "decode (brokkr) (schema)" $ nf parseBigTest envBs
         , bench "encode (brokkr) (schema)" $ nf encodeBigTest envBigTest
         ]
       else [])
 
-instance NFData b => NFData (NBT2.Nbt b) where
-  rnf (NBT2.Nbt k v) = rnf k `seq` rnf v
-instance NFData b => NFData (NBT2.Tag b) where
-  rnf (NBT2.Byte b) = rnf b
-  rnf (NBT2.Short b) = rnf b
-  rnf (NBT2.Int b) = rnf b
-  rnf (NBT2.Long b) = rnf b
-  rnf (NBT2.Float b) = rnf b
-  rnf (NBT2.Double b) = rnf b
-  rnf (NBT2.String b) = rnf b
-  rnf (NBT2.ByteArray b) = rnf b
-  rnf (NBT2.IntArray b) = rnf b
-  rnf (NBT2.LongArray b) = rnf b
-  rnf (NBT2.List b) = rnf b
-  rnf (NBT2.Compound b) = rnf b
-instance NFData b => NFData (NBT2.Cmpnd b) where
-  rnf (NBT2.Cmpnd b v) = rnf v `seq` rnf b
+-- instance NFData b => NFData (NBT2.Nbt b) where
+--   rnf (NBT2.Nbt k v) = rnf k `seq` rnf v
+-- instance NFData b => NFData (NBT2.Tag b) where
+--   rnf (NBT2.Byte b) = rnf b
+--   rnf (NBT2.Short b) = rnf b
+--   rnf (NBT2.Int b) = rnf b
+--   rnf (NBT2.Long b) = rnf b
+--   rnf (NBT2.Float b) = rnf b
+--   rnf (NBT2.Double b) = rnf b
+--   rnf (NBT2.String b) = rnf b
+--   rnf (NBT2.ByteArray b) = rnf b
+--   rnf (NBT2.IntArray b) = rnf b
+--   rnf (NBT2.LongArray b) = rnf b
+--   rnf (NBT2.List b) = rnf b
+--   rnf (NBT2.Compound b) = rnf b
+-- instance NFData b => NFData (NBT2.Cmpnd b) where
+--   rnf (NBT2.Cmpnd b v) = rnf v `seq` rnf b
 
 benchByteSwap :: (Num a, S.Storable a) => String -> (S.Vector a -> S.Vector b) -> Benchmark
 benchByteSwap n f = bgroup n
