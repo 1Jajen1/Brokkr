@@ -1,16 +1,13 @@
 {-# LANGUAGE CPP, DerivingStrategies #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE MagicHash #-}
 -- Disables the warning for unsafeArrSwapBE. The 'Coercible' constraint is technically
 -- redundant, but it ensures the byte size is correct.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 module Brokkr.NBT.ByteOrder (
-  Int32BE(..)
-, Int64BE(..)
-, Swapped
-, arrSwapBE32
-, arrSwapBE64
-, unsafeArrSwapBE32
-, unsafeArrSwapBE64
+  BigEndian(..)
+, arrSwapBE
+, unsafeArrSwapBE
 ) where
 
 import Control.Monad.ST.Strict (runST)
@@ -18,7 +15,6 @@ import Control.Monad.ST.Strict (runST)
 import Data.Coerce
 import Data.Int
 import Data.Kind
-import Data.Primitive
 
 import Data.Vector.Generic.Mutable qualified as GV
 import Data.Vector.Storable qualified as S
@@ -29,126 +25,121 @@ import Foreign.C.Types (CSize(..))
 import Foreign.Storable
 
 import GHC.ForeignPtr
+import GHC.Exts
+import GHC.Word
+import GHC.Float
 
 import Unsafe.Coerce qualified as Unsafe
 
--- | Big-endian 32-bit integer type
---
--- Represented by a host order 32-bit integer. Only exists
--- for the 'Storable' instance to byteswap when reading or writing.
---
--- Main use-case is big-endian ordered storable vectors. Those are 
--- kept in big-endian order in memory and are only swapped on each
--- individual read or when explicitly converted.
-newtype Int32BE = Int32BE Int32
-  deriving newtype (Show, Eq, Ord, Num, Real, Enum, Integral)
+newtype BigEndian a = BE a
+  deriving newtype (Show, Eq, Ord, Num, Enum, Real, Integral)
 
-instance Storable Int32BE where
-  sizeOf _ = 4
+class ToWord a where
+  toWord :: a -> Word
+  fromWord :: Word -> a
+
+instance ToWord Int16 where
+  toWord = fromIntegral
+  {-# INLINE toWord #-}
+  fromWord = fromIntegral
+  {-# INLINE fromWord #-}
+instance ToWord Int32 where
+  toWord = fromIntegral
+  {-# INLINE toWord #-}
+  fromWord = fromIntegral
+  {-# INLINE fromWord #-}
+instance ToWord Int64 where
+  toWord = fromIntegral
+  {-# INLINE toWord #-}
+  fromWord = fromIntegral
+  {-# INLINE fromWord #-}
+instance ToWord Float where
+  toWord = fromIntegral . castFloatToWord32
+  {-# INLINE toWord #-}
+  fromWord = castWord32ToFloat . fromIntegral
+  {-# INLINE fromWord #-}
+instance ToWord Double where
+  toWord = fromIntegral . castDoubleToWord64
+  {-# INLINE toWord #-}
+  fromWord = castWord64ToDouble . fromIntegral
+  {-# INLINE fromWord #-}
+
+instance (ToWord a, Storable a) => Storable (BigEndian a) where
+  sizeOf _ = sizeOf (undefined :: a)
   {-# INLINE sizeOf #-}
-  alignment _ = 4
+  alignment _ = alignment (undefined :: a)
   {-# INLINE alignment #-}
-  poke ptr (Int32BE i) = poke (coerce ptr) $ swapBE32 i
-  {-# INLINE poke #-}
-  peek = fmap (Int32BE . swapBE32) . peek . coerce
+  peek ptr = case sizeOf (undefined :: a) of
+    1 -> BE <$> peek (coerce ptr)
+    2 -> peek @Word16 (coerce ptr) >>= \(W16# w) -> pure (BE . fromWord $ W# (byteSwap16# (word16ToWord# w)))
+    4 -> peek @Word32 (coerce ptr) >>= \(W32# w) -> pure (BE . fromWord $ W# (byteSwap32# (word32ToWord# w)))
+    8 -> peek @Word64 (coerce ptr) >>= \(W64# w) -> pure (BE . fromWord $ W# (word64ToWord# (byteSwap64# w)))
+    _ -> error "Unknown BigEndian word size!"
   {-# INLINE peek #-}
-
--- | Big-endian 64-bit integer type
---
--- Represented by a host order 64-bit integer. Only exists
--- for the 'Storable' instance to byteswap when reading or writing.
---
--- Main use-case is big-endian ordered storable vectors. Those are 
--- kept in big-endian order in memory and are only swapped on each
--- individual read or when explicitly converted.
-newtype Int64BE = Int64BE Int64
-  deriving newtype (Show, Eq, Ord, Num, Real, Enum, Integral)
-
-instance Storable Int64BE where
-  sizeOf _ = 8
-  {-# INLINE sizeOf #-}
-  alignment _ = 8
-  {-# INLINE alignment #-}
-  poke ptr (Int64BE i) = poke (coerce ptr) $ swapBE64 i
+  poke ptr (BE a) = case sizeOf (undefined :: a) of
+    1 -> poke (coerce ptr) a
+    2 -> poke (coerce ptr) $ W16# (wordToWord16# (byteSwap16# w))
+    4 -> poke (coerce ptr) $ W32# (wordToWord32# (byteSwap32# w))
+    8 -> poke (coerce ptr) $ W64# ((byteSwap64# (wordToWord64# w)))
+    _ -> error "Unknown BigEndian word size!"
+    where
+      !(W# w) = toWord a
   {-# INLINE poke #-}
-  peek = fmap (Int64BE . swapBE64) . peek . coerce
-  {-# INLINE peek #-}
 
--- | Swap byte order if and only if the native byte order is not big endian
-swapBE32 :: Int32 -> Int32
-{-# INLINE swapBE32 #-}
--- | Swap byte order if and only if the native byte order is not big endian
-swapBE64 :: Int64 -> Int64
-{-# INLINE swapBE64 #-}
+type family Swap a :: Type where
+  Swap (BigEndian a) = a
+  Swap a = BigEndian a
 
-type family Swapped (a :: Type) :: Type
-type instance Swapped Int32 = Int32BE
-type instance Swapped Int64 = Int64BE
-type instance Swapped Int32BE = Int32
-type instance Swapped Int64BE = Int64
-
--- | Copies the vector with all bytes swapped
+-- | Swap to and from big endian
 --
 -- Noop on big endian systems
-arrSwapBE32 :: (Coercible a Int32, Storable a, Storable (Swapped a)) => S.Vector a -> S.Vector (Swapped a)
-{-# INLINE arrSwapBE32 #-}
--- | Copies the vector with all bytes swapped
+arrSwapBE :: forall a b . Storable a => Storable b => Swap a ~ b => S.Vector a -> S.Vector b
+{-# INLINE arrSwapBE #-}
+-- | Swap to and from big endian **in place**
 --
 -- Noop on big endian systems
-arrSwapBE64 :: (Coercible a Int64, Storable a, Storable (Swapped a)) => S.Vector a -> S.Vector (Swapped a)
-{-# INLINE arrSwapBE64 #-}
--- | Swap bytes in place. Unsafe if the original vector is used again
---
--- Noop on big endian systems
---
--- More beneficial on small to medium sized vectors, on large vectors the additional allocation
--- is a fraction of the cost of byteswapping. This is because the cost of
--- allocation is almost constant after a given threshold whereas the byteswapping is linear.
-unsafeArrSwapBE32 :: (Coercible a Int32, Storable a) => S.Vector a -> S.Vector (Swapped a)
-{-# INLINE unsafeArrSwapBE32 #-}
--- | Swap bytes in place. Unsafe if the original vector is used again
---
--- Noop on big endian systems
---
--- More beneficial on small to medium sized vectors, on large vectors the additional allocation
--- is a fraction of the cost of byteswapping. This is because the cost of
--- allocation is almost constant after a given threshold whereas the byteswapping is linear.
-unsafeArrSwapBE64 :: (Coercible a Int64, Storable a) => S.Vector a -> S.Vector (Swapped a)
-{-# INLINE unsafeArrSwapBE64 #-}
+unsafeArrSwapBE :: forall a b . Storable a => Storable b => Swap a ~ b => S.Vector a -> S.Vector b
+{-# INLINE unsafeArrSwapBE #-}
 
 #ifdef WORDS_BIGENDIAN
 
-swapBE32 = id
-swapBE64 = id
+arrSwapBE = Unsafe.unsafeCoerce
 
-arrSwapBE32 = Unsafe.unsafeCoerce
-arrSwapBE64 = Unsafe.unsafeCoerce
-
-unsafeArrSwapBE32 = Unsafe.unsafeCoerce
-unsafeArrSwapBE64 = Unsafe.unsafeCoerce
+unsafeArrSwapBE = Unsafe.unsafeCoerce
 
 #else
 
-swapBE32 = fromIntegral . byteSwap32 . fromIntegral
-swapBE64 = fromIntegral . byteSwap64 . fromIntegral
+arrSwapBE v = case sizeOf (undefined :: a) of
+  1 -> Unsafe.unsafeCoerce v
+  2 -> runST $ do
+    to <- GV.unsafeNew sz >>= S.unsafeFreeze
+    let !(ForeignPtr toAddr _, _) = S.unsafeToForeignPtr0 to
+    seq (c_vec_bswap16 (Ptr fromAddr) (Ptr toAddr) (fromIntegral sz)) $ pure to
+    where !(ForeignPtr fromAddr _, sz) = S.unsafeToForeignPtr0 v
+  4 -> runST $ do
+    to <- GV.unsafeNew sz >>= S.unsafeFreeze
+    let !(ForeignPtr toAddr _, _) = S.unsafeToForeignPtr0 to
+    seq (c_vec_bswap32 (Ptr fromAddr) (Ptr toAddr) (fromIntegral sz)) $ pure to
+    where !(ForeignPtr fromAddr _, sz) = S.unsafeToForeignPtr0 v
+  8 -> runST $ do
+    to <- GV.unsafeNew sz >>= S.unsafeFreeze
+    let !(ForeignPtr toAddr _, _) = S.unsafeToForeignPtr0 to
+    seq (c_vec_bswap64 (Ptr fromAddr) (Ptr toAddr) (fromIntegral sz)) $ pure to
+    where !(ForeignPtr fromAddr _, sz) = S.unsafeToForeignPtr0 v
+  _ -> error "unknown size"
 
-arrSwapBE32 v = runST $ do
-  to <- GV.unsafeNew sz >>= S.unsafeFreeze
-  let !(ForeignPtr toAddr _, _) = S.unsafeToForeignPtr0 to
-  seq (c_vec_bswap32 (Ptr fromAddr) (Ptr toAddr) (fromIntegral sz)) $ pure to
-  where !(ForeignPtr fromAddr _, sz) = S.unsafeToForeignPtr0 v
-arrSwapBE64 v = runST $ do
-  to <- GV.unsafeNew sz >>= S.unsafeFreeze
-  let !(ForeignPtr toAddr _, _) = S.unsafeToForeignPtr0 to
-  seq (c_vec_bswap64 (Ptr fromAddr) (Ptr toAddr) (fromIntegral sz)) $ pure to
-  where !(ForeignPtr fromAddr _, sz) = S.unsafeToForeignPtr0 v
+unsafeArrSwapBE v = case sizeOf (undefined :: a) of
+  1 -> Unsafe.unsafeCoerce v
+  2 -> seq (c_vec_bswap16 (Ptr addr) (Ptr addr) (fromIntegral sz)) $ Unsafe.unsafeCoerce v
+    where !(ForeignPtr addr _, sz) = S.unsafeToForeignPtr0 v
+  4 -> seq (c_vec_bswap32 (Ptr addr) (Ptr addr) (fromIntegral sz)) $ Unsafe.unsafeCoerce v
+    where !(ForeignPtr addr _, sz) = S.unsafeToForeignPtr0 v
+  8 -> seq (c_vec_bswap64 (Ptr addr) (Ptr addr) (fromIntegral sz)) $ Unsafe.unsafeCoerce v
+    where !(ForeignPtr addr _, sz) = S.unsafeToForeignPtr0 v
+  _ -> error "unknown size"
 
-unsafeArrSwapBE32 v = seq (c_vec_bswap32 (Ptr addr) (Ptr addr) (fromIntegral sz)) $ Unsafe.unsafeCoerce v
-  where !(ForeignPtr addr _, sz) = S.unsafeToForeignPtr0 v
-unsafeArrSwapBE64 v = seq (c_vec_bswap64 (Ptr addr) (Ptr addr) (fromIntegral sz)) $ Unsafe.unsafeCoerce v
-  where !(ForeignPtr addr _, sz) = S.unsafeToForeignPtr0 v
-
-foreign import ccall unsafe "vec_bswap32" c_vec_bswap32 :: Ptr Int32BE -> Ptr Int32 -> CSize -> ()
-foreign import ccall unsafe "vec_bswap64" c_vec_bswap64 :: Ptr Int64BE -> Ptr Int64 -> CSize -> ()
+foreign import ccall unsafe "vec_bswap16" c_vec_bswap16 :: Ptr Int8 -> Ptr Int8 -> CSize -> ()
+foreign import ccall unsafe "vec_bswap32" c_vec_bswap32 :: Ptr Int8 -> Ptr Int8 -> CSize -> ()
+foreign import ccall unsafe "vec_bswap64" c_vec_bswap64 :: Ptr Int8 -> Ptr Int8 -> CSize -> ()
 
 #endif

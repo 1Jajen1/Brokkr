@@ -54,7 +54,7 @@ import Data.Primitive (Prim)
 type HashTable s k v = HT.HashTable' HT.Prim HT.Boxed s k v
 
 -- TODO This whole file needs a rework once done
--- TODO Add a custom allocator for the pinned aligned column arrays. This is to combat fragmentation
+-- TODO Add a custom allocator for the pinned aligned column arrays.
 
 data ArchetypeEdge = ArchetypeEdge !(Maybe Archetype) !(Maybe Archetype)
 
@@ -65,7 +65,6 @@ newtype IntIdHash = IntIdHash Int
 instance HT.Hash IntIdHash where
   hash (IntIdHash x) = HT.HashFn (const x)
   {-# INLINE hash #-}
-
 
 -- TODO Make sum type for tags and other non-storage affecting data? I could also just share the column structure as it is entirely mutable
 data Archetype = Archetype {

@@ -24,6 +24,7 @@ module Brokkr.NBT.Codec (
 -- class
 , HasCodec(..)
 , ViaSizedInt(..)
+, ViaList(..)
 -- combinators
 , compound
 , requiredField

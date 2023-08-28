@@ -22,6 +22,7 @@ common common-options
                      , vector
                      , mason
                      , text
+                     , deepseq
                      , template-haskell
   
   ghc-options:         -Wall
@@ -72,6 +73,7 @@ test-suite brokkr-nbt-test
                      , tasty-hedgehog
                      , hedgehog
   other-modules:       CodecSpec
+                       BigTest
 benchmark brokkr-nbt-benchmark
   import:              common-options
   type:                exitcode-stdio-1.0

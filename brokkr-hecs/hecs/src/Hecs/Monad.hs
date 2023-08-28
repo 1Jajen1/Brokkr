@@ -19,7 +19,7 @@ import Hecs.Filter
 import Control.Monad.Trans.Class
 import GHC.Exts (oneShot)
 
--- | Concrete monad which implements 'MonadHecs'
+-- | Concrete monad transfomer which implements 'MonadHecs'
 newtype HecsM w m a = HecsM_ { unHecsM :: w -> m a }
 
 instance Functor m => Functor (HecsM w m) where

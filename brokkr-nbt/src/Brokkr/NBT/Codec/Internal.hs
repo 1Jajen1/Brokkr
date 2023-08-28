@@ -2,6 +2,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DerivingStrategies #-}
 module Brokkr.NBT.Codec.Internal (
   NBTCodec(..)
 , CodecContext(..)
@@ -27,27 +29,28 @@ module Brokkr.NBT.Codec.Internal (
 , utf8String
 , unsafeIntArray
 , unsafeLongArray
+, ListFor
+, ViaList(..)
 -- simplify a codec
 , simplifyCodec
 ) where
 
 import Brokkr.NBT
 
-import Control.Monad.ST.Strict (runST)
+import Control.DeepSeq
 
 import Data.Bool
 
 import Data.ByteString (ByteString)
 
 import Data.Coerce
-import Data.Foldable
 import Data.Int
+import Data.Kind (Type)
 
 import Data.Text (Text)
 
-import Data.Primitive.SmallArray
+import Data.Primitive
 
-import Data.Vector          qualified as V
 import Data.Vector.Storable qualified as S
 
 import Language.Haskell.TH qualified as TH
@@ -73,13 +76,13 @@ data NBTCodec (c :: CodecContext) i o where
   
   StringCodec :: Maybe Text -> NBTCodec Value NBTString NBTString
 
-  ByteArrayCodec :: Maybe Text -> NBTCodec Value (S.Vector Int8)    (S.Vector Int8)
-  IntArrayCodec  :: Maybe Text -> NBTCodec Value (S.Vector Int32BE) (S.Vector Int32BE)
-  LongArrayCodec :: Maybe Text -> NBTCodec Value (S.Vector Int64BE) (S.Vector Int64BE)
+  ByteArrayCodec :: Maybe Text -> NBTCodec Value (S.Vector Int8) (S.Vector Int8)
+  IntArrayCodec  :: Maybe Text -> NBTCodec Value (S.Vector (BigEndian Int32)) (S.Vector (BigEndian Int32))
+  LongArrayCodec :: Maybe Text -> NBTCodec Value (S.Vector (BigEndian Int64)) (S.Vector (BigEndian Int64))
 
-  ListCodec :: Maybe Text -> NBTCodec Value i o -> NBTCodec Value (SmallArray i) (SmallArray o)
+  ListCodec :: ListFor (ListFor o) ~ SmallArray (ListFor o) => Maybe Text -> NBTCodec Value i o -> NBTCodec Value (ListFor i) (ListFor o)
   
-  CompoundCodec :: Maybe Text -> NBTCodec Compound i o -> NBTCodec Value i o
+  CompoundCodec :: ListFor o ~ SmallArray o => Maybe Text -> NBTCodec Compound i o -> NBTCodec Value i o
 
   RequiredKeyCodec :: NBTString -> NBTCodec Value i o -> Maybe Text -> NBTCodec Compound i o
   
@@ -92,6 +95,18 @@ data NBTCodec (c :: CodecContext) i o where
   LmapCodec :: Code (i' -> i) -> NBTCodec c i o -> NBTCodec c i' o
 
   RmapEitherCodec :: Code (o -> Either NBTError o') -> NBTCodec c i o -> NBTCodec c i o'
+
+type family ListFor i :: Type where
+  ListFor Int8 = S.Vector Int8
+  ListFor Int16 = S.Vector (BigEndian Int16)
+  ListFor Int32 = S.Vector (BigEndian Int32)
+  ListFor Int64 = S.Vector (BigEndian Int64)
+  ListFor Float = S.Vector (BigEndian Float)
+  ListFor Double = S.Vector (BigEndian Double)
+  ListFor a = SmallArray a
+
+newtype ViaList a = ViaList a
+  deriving newtype (Show, Eq, NFData)
 
 -- Api
 
@@ -154,44 +169,32 @@ instance HasCodec Text where
 instance HasCodec (S.Vector Int8) where
   codec = ByteArrayCodec Nothing
 
-instance HasCodec (S.Vector Int32BE) where
+instance HasCodec (S.Vector (BigEndian Int32)) where
   codec = IntArrayCodec Nothing
 instance HasCodec (S.Vector Int32) where
-  codec = dimapCodec [|| arrSwapBE32 @Int32BE ||] [|| arrSwapBE32 @Int32 ||] codec
+  codec = dimapCodec [|| arrSwapBE @_ @Int32 ||] [|| arrSwapBE @Int32 ||] codec
 
-instance HasCodec (S.Vector Int64BE) where
+instance HasCodec (S.Vector (BigEndian Int64)) where
   codec = LongArrayCodec Nothing
 instance HasCodec (S.Vector Int64) where
-  codec = dimapCodec [|| arrSwapBE64 @Int64BE ||] [|| arrSwapBE64 @Int64 ||] codec
-
-instance HasCodec a => HasCodec [a] where
-  codec = dimapCodec [|| toList ||] [|| smallArrFromList ||] $ ListCodec Nothing codec
-
--- TODO Fuse
-smallArrFromList :: [a] -> SmallArray a
-{-# INLINE smallArrFromList #-}
-smallArrFromList [] = emptySmallArray
-smallArrFromList xs =
-  let len = length xs
-  in runST $ do
-    mar <- newSmallArray len (error "SmallArray fromList init")
-    let go !_ [] = pure ()
-        go !n (y:ys) = writeSmallArray mar n y >> go (n + 1) ys
-    go 0 xs
-    unsafeFreezeSmallArray mar
-
-instance HasCodec a => HasCodec (SmallArray a) where
-  codec = ListCodec Nothing codec
-
-instance HasCodec a => HasCodec (V.Vector a) where
-  -- In the future just unsafe coerce this... SmallArray# == Array# on the heap?
-  codec = dimapCodec
-    [|| \xs -> V.fromListN (sizeofSmallArray xs) $ toList xs ||]
-    [|| \v -> smallArrayFromListN (V.length v) $ V.toList v ||] $ ListCodec Nothing codec
-  -- codecDef = Just [|| V.empty ||]
+  codec = dimapCodec [|| arrSwapBE @_ @Int64 ||] [|| arrSwapBE @Int64 ||] codec
 
 instance HasCodec Tag where
   codec = TagCodec
+
+instance HasCodec (ViaList (S.Vector Int8)) where
+  codec = dimapCodec [|| ViaList ||] [|| \(ViaList v) -> v ||] $ ListCodec Nothing (codec @Int8)
+instance HasCodec (ViaList (S.Vector (BigEndian Int16))) where
+  codec = dimapCodec [|| ViaList ||] [|| \(ViaList v) -> v ||] $ ListCodec Nothing (codec @Int16)
+instance HasCodec (ViaList (S.Vector (BigEndian Int32))) where
+  codec = dimapCodec [|| ViaList ||] [|| \(ViaList v) -> v ||] $ ListCodec Nothing (codec @Int32)
+instance HasCodec (ViaList (S.Vector (BigEndian Int64))) where
+  codec = dimapCodec [|| ViaList ||] [|| \(ViaList v) -> v ||] $ ListCodec Nothing (codec @Int64)
+
+-- TODO ViaList instances for byteswapped
+
+instance (ListFor a ~ SmallArray a, HasCodec a) => HasCodec (ViaList (SmallArray a)) where
+  codec = dimapCodec [|| ViaList ||] [|| \(ViaList v) -> v ||] $ ListCodec Nothing (codec @a)
 
 newtype ViaSizedInt a = ViaSizedInt Int
 
@@ -207,7 +210,7 @@ instance (HasCodec a, Integral a) => HasCodec (ViaSizedInt a) where
 -- Combinators
 
 -- | Shorthand for creating a value codec from a compound codec
-compound :: Text -> NBTCodec Compound i o -> NBTCodec Value i o
+compound :: ListFor o ~ SmallArray o => Text -> NBTCodec Compound i o -> NBTCodec Value i o
 compound = CompoundCodec . Just
 
 -- | Parse a required field given a 'NBTString' key
@@ -273,13 +276,13 @@ utf8String = dimapCodec [|| toUtf8 ||] [|| fromUtf8 ||] . StringCodec
 --
 -- Warning: This will modify the input bytestring!
 unsafeIntArray :: Maybe Text -> NBTCodec Value (S.Vector Int32) (S.Vector Int32)
-unsafeIntArray = dimapCodec [|| unsafeArrSwapBE32 ||] [|| unsafeArrSwapBE32 ||] . IntArrayCodec
+unsafeIntArray = dimapCodec [|| unsafeArrSwapBE @_ @Int32 ||] [|| unsafeArrSwapBE @Int32 ||] . IntArrayCodec
 
 -- | Read 'LongArray' and byteswap in place
 --
 -- Warning: This will modify the input bytestring!
 unsafeLongArray :: Maybe Text -> NBTCodec Value (S.Vector Int64) (S.Vector Int64)
-unsafeLongArray = dimapCodec [|| unsafeArrSwapBE64 ||] [|| unsafeArrSwapBE64 ||] . LongArrayCodec
+unsafeLongArray = dimapCodec [|| unsafeArrSwapBE @_ @Int64 ||] [|| unsafeArrSwapBE @Int64 ||] . LongArrayCodec
 
 type Code a = TH.Code TH.Q a
 

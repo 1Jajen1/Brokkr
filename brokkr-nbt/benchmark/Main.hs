@@ -37,12 +37,6 @@ import BigTest
 includeCmp :: Bool
 includeCmp = True
 
-instance NFData NBT where
-  -- Both arguments to NBT are strict
-  -- _key is a newtype around a ByteString which is also fully strict
-  -- _tag is also completely strict
-  rnf (NBT _key _tag) = ()
-
 data Env = Env {
     envBs      :: !BS.ByteString
   , envNBT     :: !NBT
@@ -132,7 +126,7 @@ mkRecList =
       smallArrEmpty = runST $ newSmallArray 0 (error "SmallArr empty") >>= unsafeFreezeSmallArray
       smallArrSingleton x = runST $ newSmallArray 1 x >>= unsafeFreezeSmallArray
       nestedList :: Int -> Tag
-      nestedList 0 = TagList smallArrEmpty
+      nestedList 0 = TagList emptySmallArray
       nestedList !n = TagList $ smallArrSingleton $ nestedList (n - 1)
       encodedBs = encodeNBT hugeNbt
   in (hugeNbt, encodedBs)
@@ -157,17 +151,17 @@ main = defaultMain [
     ]
   , bgroup "Byteswapping" [
       -- Benchmark byteswap in place
-      benchByteSwap @Int32 "bswap32 (unsafe)" unsafeArrSwapBE32
+      benchByteSwap @Int32 "bswap32 (unsafe)" unsafeArrSwapBE
       -- Benchmark copying and byteswapping
       -- First just the copy. This allocates a new vector and copies it
     , benchByteSwap @Int32 @Int32 "memcopy32" (\v -> runST $ S.thaw v >>= S.unsafeFreeze)
       -- Next benchmark copy and byteswap fused. This allocates a new vector
       -- and then copies and byteswaps at the same time
-    , benchByteSwap @Int32 "bswap32" arrSwapBE32
+    , benchByteSwap @Int32 "bswap32" arrSwapBE
       -- Same for 64 bit numbers
-    , benchByteSwap @Int64 "bswap64 (unsafe)" unsafeArrSwapBE64
+    , benchByteSwap @Int64 "bswap64 (unsafe)" unsafeArrSwapBE
     , benchByteSwap @Int64 @Int64 "memcopy64" (\v -> runST $ S.thaw v >>= S.unsafeFreeze)
-    , benchByteSwap @Int64 "bswap64" arrSwapBE64
+    , benchByteSwap @Int64 "bswap64" arrSwapBE
     ]
   , benchRecList
   -- TODO Add modified-utf-8 validation and conversion benchmarks

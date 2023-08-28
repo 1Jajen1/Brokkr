@@ -34,6 +34,7 @@ import Data.Maybe
 import Data.Text (Text)
 
 import Data.Vector.Storable qualified as S
+import Foreign.Storable qualified as S
 
 import Data.Primitive.SmallArray
 
@@ -63,13 +64,22 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
     go path (DoubleCodec name) = [|| \t -> if t == 6 then castWord64ToDouble <$> FP.anyWord64be else FP.err $ invalidType path "double" name ||]
 
     go path (ByteArrayCodec name) = [|| \t -> if t == 7  then takeArray @Int8    else FP.err $ invalidType path "byte array" name ||]
-    go path (IntArrayCodec name)  = [|| \t -> if t == 11 then takeArray @Int32BE else FP.err $ invalidType path "int array"  name ||]
-    go path (LongArrayCodec name) = [|| \t -> if t == 12 then takeArray @Int64BE else FP.err $ invalidType path "long array" name ||]
+    go path (IntArrayCodec name)  = [|| \t -> if t == 11 then takeArray @(BigEndian Int32) else FP.err $ invalidType path "int array"  name ||]
+    go path (LongArrayCodec name) = [|| \t -> if t == 12 then takeArray @(BigEndian Int64) else FP.err $ invalidType path "long array" name ||]
 
     go path (StringCodec name) = [|| \t -> if t == 8 then parseNBTString else FP.err $ invalidType path "string" name ||]
 
     go path (ListCodec name inner) = [|| \t -> if t == 9
-      then do
+      then $$(goList ("<list" <> maybe "" ("#"<>) name <> ">" : path) inner)
+      else FP.err $ invalidType path "list" name ||]
+    
+    go path (CompoundCodec name inner) = [|| \t -> if t == 10
+      then $$(goCompound ("<compound" <> maybe "" ("#"<>) name <> ">" : path) inner)
+      else FP.err $ invalidType path "compound" name
+      ||]
+    {-
+    
+          then do
         innerT <- FP.anyWord8
         len@(I# len#) <- fromIntegral <$> FP.anyInt32be
         localST $ do
@@ -84,13 +94,8 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
 
           goList 0# len#
           FP.liftST $ unsafeFreezeSmallArray (SmallMutableArray mut)
-      else FP.err $ invalidType path "list" name ||]
-    
-    go path (CompoundCodec name inner) = [|| \t -> if t == 10
-      then $$(goCompound ("<compound" <> maybe "" ("#"<>) name <> ">" : path) inner)
-      else FP.err $ invalidType path "compound" name
-      ||]
-    
+
+    -}
     go path (RmapCodec f inner) = [|| fmap $$(f) . $$(go path inner) ||]
 
     go path (RmapEitherCodec f inner) = [|| $$(go path inner) >=> (\case
@@ -99,6 +104,105 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
       ||]
 
     go path (LmapCodec _ inner) = go path inner
+
+    -- This wasn't worth it for the intermediate structure, but here it is, likely because of code size
+    goList :: forall i1 x0 st . [Text] -> NBTCodec Value i1 x0 -> Code (FP.ParserT st NBTError (ListFor x0))
+    goList path inner = [|| do
+      listTag <- FP.anyWord8
+      FP.withAnyWord32 $ \w -> do
+        let len = fromIntegral $ byteSwap32 w
+        if len == 0
+          then pure $ $$(goEmpty inner)
+          else $$(goInner inner) len listTag
+      ||]
+      where
+        goEmpty :: NBTCodec Value i2 x0 -> Code (ListFor x0)
+        goEmpty (ByteCodec _) = [|| S.empty ||]
+        goEmpty (ShortCodec _) = [|| S.empty ||]
+        goEmpty (IntCodec _) = [|| S.empty ||]
+        goEmpty (LongCodec _) = [|| S.empty ||]
+        goEmpty (FloatCodec _) = [|| S.empty ||]
+        goEmpty (DoubleCodec _) = [|| S.empty ||]
+        goEmpty (RmapCodec _ _) = error "ListCodec rmap inner"
+        goEmpty (RmapEitherCodec _ _) = error "ListCodec rmap either inner"
+        goEmpty (LmapCodec _ i) = goEmpty i
+        goEmpty TagCodec = [|| emptySmallArray ||]
+        goEmpty (ByteArrayCodec _) = [|| emptySmallArray ||]
+        goEmpty (IntArrayCodec _) = [|| emptySmallArray ||]
+        goEmpty (LongArrayCodec _) = [|| emptySmallArray ||]
+        goEmpty (StringCodec _) = [|| emptySmallArray ||]
+        goEmpty (ListCodec _ _) = [|| emptySmallArray ||]
+        goEmpty (CompoundCodec _ _) = [|| emptySmallArray ||]
+
+        goInner :: NBTCodec Value i2 x1 -> Code (Int -> Word8 -> FP.ParserT st NBTError (ListFor x1))
+        goInner (ByteCodec name) = [|| \sz -> \case
+          1 -> parseArray @Int8 sz
+          _ -> FP.err $ invalidType path "byte" name
+          ||]
+        goInner (ShortCodec name) = [|| \sz -> \case
+          2 -> parseArray @(BigEndian Int16) sz
+          _ -> FP.err $ invalidType path "short" name
+          ||]
+        goInner (IntCodec name) = [|| \sz -> \case
+          3 -> parseArray @(BigEndian Int32) sz
+          _ -> FP.err $ invalidType path "int" name
+          ||]
+        goInner (LongCodec name) = [|| \sz -> \case
+          4 -> parseArray @(BigEndian Int64) sz
+          _ -> FP.err $ invalidType path "long" name
+          ||]
+        goInner (FloatCodec name) = [|| \sz -> \case
+          5 -> parseArray @(BigEndian Float) sz
+          _ -> FP.err $ invalidType path "float" name
+          ||]
+        goInner (DoubleCodec name) = [|| \sz -> \case
+          6 -> parseArray @(BigEndian Double) sz
+          _ -> FP.err $ invalidType path "double" name
+          ||]
+        goInner (ByteArrayCodec name) = [|| \sz -> \case
+          7 -> $$(parseSmallArray [|| takeArray @Int8 ||]) sz
+          _ -> FP.err $ invalidType path "byte array" name
+          ||]
+        goInner (IntArrayCodec name) = [|| \sz -> \case
+          11 -> $$(parseSmallArray [|| takeArray @(BigEndian Int32) ||]) sz
+          _  -> FP.err $ invalidType path "int array" name
+          ||]
+        goInner (LongArrayCodec name) = [|| \sz -> \case
+          12 -> $$(parseSmallArray [|| takeArray @(BigEndian Int64) ||]) sz
+          _  -> FP.err $ invalidType path "long array" name
+          ||]
+        goInner (StringCodec name) = [|| \sz -> \case
+          8 -> $$(parseSmallArray [|| parseNBTString ||]) sz
+          _  -> FP.err $ invalidType path "string" name
+          ||]
+        goInner TagCodec = [|| \sz t -> $$(parseSmallArray [|| parseTag t ||]) sz ||]
+        goInner (ListCodec name i) = [|| \sz -> \case
+          9  -> $$(parseSmallArray (goList ("<list" <> maybe "" ("#"<>) name <> ">" : path) i)) sz
+          _  -> FP.err $ invalidType path "list" name
+          ||]
+        goInner (CompoundCodec name i) = [|| \sz -> \case
+          10 -> $$(parseSmallArray (goCompound ("<compound" <> maybe "" ("#"<>) name <> ">" : path) i)) sz
+          _  -> FP.err $ invalidType path "list" name
+          ||]
+        goInner (RmapCodec _ _) = error "ListCodec rmap inner"
+        goInner (RmapEitherCodec _ _) = error "ListCodec rmap either inner"
+        goInner (LmapCodec _ i) = goInner i
+
+        parseSmallArray inner = [|| \sz@(I# sz#) -> do
+          localST $ do
+            -- TODO Check against stupidly large lists
+            SmallMutableArray mut <- FP.liftST $ newSmallArray sz (error "parse nbt list")
+
+            let goListI i
+                  | isTrue# (i >=# sz#) = pure ()
+                  | otherwise = do
+                      el <- $$(inner)
+                      FP.liftST $ writeSmallArray (SmallMutableArray mut) (I# i) el
+                      goListI (i +# 1#)
+
+            goListI 0#
+            FP.liftST $ unsafeFreezeSmallArray (SmallMutableArray mut)
+          ||]
 
     goCompound :: forall i1 x0 st . [Text] -> NBTCodec Compound i1 x0 -> Code (FP.ParserT st NBTError x0)
     goCompound path inner'
@@ -299,8 +403,8 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
         defValue DoubleCodec{} = Just [| 0 :: Double |]
         defValue StringCodec{} = Just [| NBTString mempty |]
         defValue ByteArrayCodec{} = Just [| mempty :: S.Vector Int8    |]
-        defValue IntArrayCodec{}  = Just [| mempty :: S.Vector Int32BE |]
-        defValue LongArrayCodec{} = Just [| mempty :: S.Vector Int64BE |]
+        defValue IntArrayCodec{}  = Just [| mempty :: S.Vector (BigEndian Int32) |]
+        defValue LongArrayCodec{} = Just [| mempty :: S.Vector (BigEndian Int64) |]
 
         defValue TagCodec        = Nothing
         defValue ListCodec{}     = Nothing
@@ -386,6 +490,13 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
           let (ys, preTail) = chunked xs
           in (foldr (\x acc -> fromIntegral x .|. (acc `unsafeShiftL` 8)) 0 [a,b,c,d,e,f,g,h] : ys, preTail)
         chunked xs = ([],xs)
+
+parseArray :: forall x1 st . S.Storable x1 => Int -> FP.ParserT st NBTError (S.Vector x1)
+{-# INLINE parseArray #-}
+parseArray len = do
+  let szEl = S.sizeOf (undefined :: x1)
+  BS.BS fp _ <- FP.take (len * szEl)
+  pure $ S.unsafeFromForeignPtr0 (coerce fp) len
 
 data Trie a = All !Word8 !(Trie a) | Branch [(Word8, Trie a)] | Leaf a | Empty
   deriving stock (Show, Functor)

@@ -32,7 +32,7 @@ import Control.Monad.Base
 -- the manual construction of component ids. Non-tag components will still need
 -- a 'Component' instance!
 newtype ComponentId (c :: k) = ComponentId EntityId
-  deriving newtype (Eq, Show)
+  deriving newtype (Eq, Show, Storable)
 
 -- | Hecs supports 3 component types
 --
@@ -153,3 +153,5 @@ deriving via (ViaFlat Word64) instance Component Word64
 
 deriving via (ViaFlat Float ) instance Component Float
 deriving via (ViaFlat Double) instance Component Double
+deriving via (ViaFlat EntityId) instance Component EntityId
+deriving via (ViaFlat (ComponentId a)) instance Component (ComponentId a)

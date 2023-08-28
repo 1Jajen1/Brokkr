@@ -14,9 +14,11 @@ import Brokkr.NBT.Codec.Internal
 import Data.ByteString.Internal qualified as BS
 
 import Data.Coerce
+import Data.Int
 import Data.Primitive.SmallArray
 
 import Data.Vector.Storable qualified as S
+import Foreign.Storable qualified as S
 
 import Language.Haskell.TH qualified as TH
 
@@ -35,20 +37,33 @@ genBuilder c = [| \a -> Mason.int8 ($(extractTag c) a) <> putNBTString (NBTStrin
     go FloatCodec{}  = [| Mason.floatBE  |]
     go DoubleCodec{} = [| Mason.doubleBE |]
     go StringCodec{} = [| putNBTString   |]
-    go ByteArrayCodec{} = [| \v -> case S.unsafeToForeignPtr0 v of (fp, sz) -> Mason.int32BE (fromIntegral sz) <> Mason.byteString (BS.BS (coerce fp) sz      ) |]
-    go IntArrayCodec{}  = [| \v -> case S.unsafeToForeignPtr0 v of (fp, sz) -> Mason.int32BE (fromIntegral sz) <> Mason.byteString (BS.BS (coerce fp) $ sz * 4) |]
-    go LongArrayCodec{} = [| \v -> case S.unsafeToForeignPtr0 v of (fp, sz) -> Mason.int32BE (fromIntegral sz) <> Mason.byteString (BS.BS (coerce fp) $ sz * 8) |]
+    go ByteArrayCodec{} = [| \v -> putArray v |]
+    go IntArrayCodec{}  = [| \v -> putArray v |]
+    go LongArrayCodec{} = [| \v -> putArray v |]
     go (RmapCodec _ i)       = go i
     go (RmapEitherCodec _ i) = go i
     go (LmapCodec f i)       = [| \x -> $(go i) ($(TH.unTypeCode f) x) |]
-    go (ListCodec _ inner)   = [| \arr ->
-      let sz = sizeofSmallArray arr
-      in if sz == 0
-        then Mason.int8 0 <> Mason.int32BE 0
-        else
-          let fstTag = indexSmallArray arr 0
-          in Mason.int8 ($(extractTag inner) fstTag) <> Mason.int32BE (fromIntegral sz) <> foldMap (\a -> $(go inner) a) arr
-      |]
+    
+    go (ListCodec _ inner)   = goInner inner
+      where
+        goInner :: NBTCodec Value i o -> TH.Q TH.Exp
+        goInner i = case i of
+          ByteCodec _   -> [| \v -> Mason.int8 1 <> putArray v |]
+          ShortCodec _  -> [| \v -> Mason.int8 2 <> putArray v |]
+          IntCodec _    -> [| \v -> Mason.int8 3 <> putArray v |]
+          LongCodec _   -> [| \v -> Mason.int8 4 <> putArray v |]
+          FloatCodec _  -> [| \v -> Mason.int8 5 <> putArray v |]
+          DoubleCodec _ -> [| \v -> Mason.int8 6 <> putArray v |]
+          StringCodec _ -> [| \v -> Mason.int8 8 <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\x -> putNBTString x) v |]
+          ByteArrayCodec _ -> [| \v -> Mason.int8 7  <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\x -> putArray x) v |]
+          IntArrayCodec _  -> [| \v -> Mason.int8 11 <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\x -> putArray x) v |]
+          LongArrayCodec _ -> [| \v -> Mason.int8 12 <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\x -> putArray x) v |]
+          ListCodec _ i' -> [| \v -> Mason.int8 9 <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\x -> $(goInner i')) v |]
+          CompoundCodec _ i' -> [| \v -> Mason.int8 10 <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\a -> $(go i') a <> Mason.int8 0) v |]
+          RmapCodec _ i' -> goInner i'
+          RmapEitherCodec _ i' -> goInner i'
+          LmapCodec f i' -> error "TODO Lmap list"
+
     go (CompoundCodec _ inner) = [| \a -> $(go inner) a <> Mason.int8 0 |]
 
     go (PureCodec _)   = [| const mempty |]
@@ -77,3 +92,9 @@ genBuilder c = [| \a -> Mason.int8 ($(extractTag c) a) <> putNBTString (NBTStrin
     extractTag (RmapEitherCodec _ i)
                                 = extractTag i
     extractTag (LmapCodec _ i)  = extractTag i
+
+putArray :: forall a . S.Storable a => S.Vector a -> Mason.Builder
+{-# INLINE putArray #-}
+putArray v = Mason.int32BE (fromIntegral sz) <> Mason.byteString (BS.BS (coerce fp) $ sz * S.sizeOf (undefined :: a))
+  where (fp, sz) = S.unsafeToForeignPtr0 v
+

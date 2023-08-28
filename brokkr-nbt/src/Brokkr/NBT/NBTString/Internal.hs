@@ -13,6 +13,7 @@ module Brokkr.NBT.NBTString.Internal (
 
 import Brokkr.NBT.NBTError
 
+import Control.DeepSeq
 import Control.Monad
 
 import Data.Char (ord)
@@ -50,10 +51,20 @@ import Mason.Builder qualified as B
 --
 -- https://docs.oracle.com/javase/8/docs/api/java/io/DataInput.html#modified-utf-8
 newtype NBTString = NBTString ByteString
-  -- TODO When I have lookup benchmarks:
-  -- ByteString checks bytes first, length after. I think specifically for
-  -- lookups length first might be faster as we don't load the string
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, NFData)
+
+-- This is strictly faster than Ord ByteString, but is no longer compatible with
+-- lazy bytestrings order
+instance Ord NBTString where
+  compare (NBTString (BS.BS f1 l1)) (NBTString (BS.BS f2 l2)) =
+    case compare l1 l2 of
+      EQ -> BS.accursedUnutterablePerformIO $ do
+        BS.unsafeWithForeignPtr f1 $ \p1 ->
+          BS.unsafeWithForeignPtr f2 $ \p2 -> do
+            i <- c_memcmp p1 p2 $ fromIntegral l1
+            pure $! compare i 0
+      x -> x
+  {-# INLINE compare #-}
 
 instance IsString NBTString where
   fromString [] = NBTString BS.empty
@@ -226,3 +237,4 @@ encodeChar onOne onTwo onThree onPair c
 -- TODO Also return if this is valid utf-8. A bytestring is both valid modified-utf-8 and utf-8 if it has no surrogates
 -- Maybe rewrite is_valid_modified_utf8 in cmm, to make the c-call basically free
 foreign import ccall unsafe "is_valid_modified_utf8" c_is_valid_modified_utf8 :: Ptr Word8 -> CSize -> IO CInt
+foreign import ccall unsafe "memcmp" c_memcmp :: Ptr Word8 -> Ptr Word8 -> CSize -> IO CInt

@@ -65,7 +65,7 @@ testRecursiveNBT = testCaseSteps "recursive" $ \out -> do
       smallArrEmpty = runST $ newSmallArray 0 (error "SmallArr empty") >>= unsafeFreezeSmallArray
       smallArrSingleton x = runST $ newSmallArray 1 x >>= unsafeFreezeSmallArray
       nestedList :: Int -> Tag
-      nestedList 0 = TagList smallArrEmpty
+      nestedList 0 = TagList emptySmallArray
       nestedList !n = TagList $ smallArrSingleton $ nestedList (n - 1)
       encodedBs = encodeNBT hugeNbt
   
@@ -119,6 +119,8 @@ testFile name = testCaseSteps name $ \out ->do
       Nothing -> assertFailure "Invalid nbt (parse from schema encoded)"
       Just x -> pure x
     assertEqual "schema == normal" t1 t2
+
+  -- when (name == "simple_player.dat") $ error $ show nbt0
 
   assertEqual "Roundtrip: NBT -> Bytestring -> NBT" nbt0 nbt1
 

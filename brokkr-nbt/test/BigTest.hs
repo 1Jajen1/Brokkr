@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds, TemplateHaskellQuotes, DerivingStrategies, DeriveAnyClass, OverloadedStrings #-}
 module BigTest where
 
+import Brokkr.NBT
 import Brokkr.NBT.Codec
 import Brokkr.NBT.NBTString.Internal
 
@@ -23,7 +24,7 @@ data BigTest = BigTest {
 , floatTest  :: {-# UNPACK #-} !Float
 , doubleTest :: {-# UNPACK #-} !Double
 , byteArrayTest :: {-# UNPACK #-} !(S.Vector Int8)
-, listTestLong     :: {-# UNPACK #-} !(SmallArray Int64)
+, listTestLong     :: {-# UNPACK #-} !(S.Vector (BigEndian Int64))
 , listTestCompound :: {-# UNPACK #-} !(SmallArray ListComp)
 , stringTest :: {-# UNPACK #-} !NBTString
 }
@@ -66,9 +67,6 @@ instance HasCodec ListComp where
     <$#> requiredField "created-on" .= [|| createdOn ||]
     <*#> requiredField "name" .= [|| nameL ||]
 
-instance NFData NBTString where
-  rnf (NBTString bs) = rnf bs
-
 bigTestCodec :: NBTCodec Value BigTest BigTest
 bigTestCodec = compound "level" $ [|| BigTest ||]
   <$#> requiredField "nested compound test" .= [|| nested ||]
@@ -79,6 +77,6 @@ bigTestCodec = compound "level" $ [|| BigTest ||]
   <*#> requiredField "floatTest"  .= [|| floatTest ||]
   <*#> requiredField "doubleTest" .= [|| doubleTest ||]
   <*#> requiredField "byteArrayTest (the first 1000 values of (n*n*255+n*7)%100, starting with n=0 (0, 62, 34, 16, 8, ...))" .= [|| byteArrayTest ||]
-  <*#> requiredField "listTest (long)" .= [|| listTestLong ||]
-  <*#> requiredField "listTest (compound)" .= [|| listTestCompound ||]
+  <*#> requiredFieldVia @(ViaList (S.Vector (BigEndian Int64))) "listTest (long)" .= [|| listTestLong ||]
+  <*#> requiredFieldVia @(ViaList (SmallArray ListComp)) "listTest (compound)" .= [|| listTestCompound ||]
   <*#> requiredField "stringTest" .= [|| stringTest ||]

@@ -1,4 +1,4 @@
-{-# LANGUAGE DerivingStrategies, MagicHash, UnboxedTuples, UnliftedFFITypes #-}
+{-# LANGUAGE DerivingStrategies, MagicHash, UnboxedTuples, UnliftedFFITypes, LambdaCase, DeriveAnyClass #-}
 -- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all -fforce-recomp #-}
 module Brokkr.NBT.Internal (
   NBT(..)
@@ -22,9 +22,12 @@ import Brokkr.NBT.NBTString
 import Brokkr.NBT.Slice
 import Brokkr.NBT.NBTError
 
+import Control.DeepSeq
+
 import GHC.Exts
 import GHC.Float
 import GHC.Word
+import GHC.Generics (Generic)
 
 import FlatParse.Basic qualified as FP
 
@@ -39,7 +42,8 @@ import Mason.Builder qualified as B
 -- The original NBT specification can be found here: https://web.archive.org/web/20110723210920/http://www.minecraft.net/docs/NBT.txt
 -- An updated version with documentation can be seen here: https://wiki.vg/NBT
 data NBT = NBT {-# UNPACK #-} !NBTString !Tag
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NFData
 
 -- | The "Tag" portion of Named-Binary-Tag (NBT)
 -- 
@@ -51,19 +55,21 @@ data NBT = NBT {-# UNPACK #-} !NBTString !Tag
 --
 -- Important: The constructor order matters. See 'getTagId'
 data Tag where
-  TagByte      :: {-# UNPACK #-} !Int8               -> Tag
-  TagShort     :: {-# UNPACK #-} !Int16              -> Tag
-  TagInt       :: {-# UNPACK #-} !Int32              -> Tag
-  TagLong      :: {-# UNPACK #-} !Int64              -> Tag
-  TagFloat     :: {-# UNPACK #-} !Float              -> Tag
-  TagDouble    :: {-# UNPACK #-} !Double             -> Tag
-  TagByteArray :: {-# UNPACK #-} !(S.Vector Int8)    -> Tag
-  TagString    :: {-# UNPACK #-} !NBTString          -> Tag
-  TagList      :: {-# UNPACK #-} !(SmallArray Tag)   -> Tag
-  TagCompound  :: {-# UNPACK #-} !(Slice NBT)        -> Tag
-  TagIntArray  :: {-# UNPACK #-} !(S.Vector Int32BE) -> Tag
-  TagLongArray :: {-# UNPACK #-} !(S.Vector Int64BE) -> Tag
-  deriving stock (Eq, Show)
+  TagByte      :: {-# UNPACK #-} !Int8                         -> Tag
+  TagShort     :: {-# UNPACK #-} !Int16                        -> Tag
+  TagInt       :: {-# UNPACK #-} !Int32                        -> Tag
+  TagLong      :: {-# UNPACK #-} !Int64                        -> Tag
+  TagFloat     :: {-# UNPACK #-} !Float                        -> Tag
+  TagDouble    :: {-# UNPACK #-} !Double                       -> Tag
+  TagByteArray :: {-# UNPACK #-} !(S.Vector Int8)              -> Tag
+  TagString    :: {-# UNPACK #-} !NBTString                    -> Tag
+  -- It turns out that using a special list type for each kind is a waste
+  TagList      :: {-# UNPACK #-} !(SmallArray Tag)             -> Tag
+  TagCompound  :: {-# UNPACK #-} !(Slice NBT)                  -> Tag
+  TagIntArray  :: {-# UNPACK #-} !(S.Vector (BigEndian Int32)) -> Tag
+  TagLongArray :: {-# UNPACK #-} !(S.Vector (BigEndian Int64)) -> Tag
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NFData
 
 -- Decode
 
@@ -87,6 +93,10 @@ parseNBT = do
   name <- parseNBTString
   tag <- parseTag tagId
   pure $ NBT name tag
+
+-- TODO Take advantage of the fact that the foreign pointer contents are always the same!
+-- This means we can store all arrays as straight up pointers instead and store the
+-- foreign pointer once top level.
 
 -- | Parse a single nbt tag given a tag type
 parseTag :: Word8 -> FP.ParserT st NBTError Tag
@@ -127,12 +137,14 @@ parseTag  9 = parseList
 -- compounds
 parseTag 10 = parseCompound
   where
+    parseCompound :: FP.ParserT st NBTError Tag
+    {-# INLINE parseCompound #-}
     parseCompound = localST $ do
       let initCap = 4#
       SmallMutableArray mut <- FP.liftST $ newSmallArray (I# initCap) (error "parse nbt comp init")
       go mut initCap 0# $ \mut' sz -> do
         (SmallArray arr) <- FP.liftST $ unsafeFreezeSmallArray (SmallMutableArray mut')
-        pure . TagCompound $ Slice arr sz
+        pure $ TagCompound $ Slice arr sz
       where
         go :: SmallMutableArray# s NBT -> Int# -> Int# -> (SmallMutableArray# s NBT -> Int# -> FP.ParserST s NBTError r) -> FP.ParserST s NBTError r
         go mut cap sz f = do
@@ -146,31 +158,43 @@ parseTag 10 = parseCompound
                 -- insert sorted
                 FP.liftST $ insertSorted (SmallMutableArray mut') (I# sz) name tag
                 go mut' cap' (sz +# 1#) f
-    {-# INLINE parseCompound #-}
-    ensure mut cap sz f
-      | isTrue# (cap <=# sz) =
-        let newCap = cap *# 2#
-        in FP.ParserT $ \fp curr end s ->
-          case newSmallArray# newCap (error "parse nbt comp grow") s of
-            (# s', mut' #) -> case copySmallMutableArray# mut 0# mut' 0# sz s' of
-              s'' -> case f mut' newCap of
-                FP.ParserT g -> g fp curr end s''
-      | otherwise = f mut cap
-    {-# INLINE ensure #-}
-    insertSorted !mut !sz !name !tag = go 0
-      where
-        -- TODO Benchmark against binary search. 
-        go !n
-          | n == sz   = writeSmallArray mut n $! NBT name tag
-          | otherwise = do
-            NBT k' _ <- readSmallArray mut n
-            case compare name k' of
-              EQ -> pure ()
-              GT -> go (n + 1)
-              LT -> do
-                copySmallMutableArray mut (n + 1) mut n (sz - n)
-                writeSmallArray mut n $! NBT name tag
-    {-# INLINE insertSorted #-}
+        ensure mut cap sz f
+          | isTrue# (cap <=# sz) =
+            let newCap = cap *# 2#
+            in FP.ParserT $ \fp curr end s ->
+              case newSmallArray# newCap (error "parse nbt comp grow") s of
+                (# s', mut' #) -> case copySmallMutableArray# mut 0# mut' 0# sz s' of
+                  s'' -> case f mut' newCap of
+                    FP.ParserT g -> g fp curr end s''
+          | otherwise = f mut cap
+        {-# INLINE ensure #-}
+        -- insertSorted !mut !sz !name !tag = go 0 sz $ \n -> do
+        --   copySmallMutableArray mut (n + 1) mut n (sz - n)
+        --   writeSmallArray mut n $! NBT name tag
+        --   where
+        --     go l u f
+        --       | l >= u = f u
+        --       | otherwise = do
+        --         let mid = (u + l) `quot` 2
+        --         NBT k' _ <- readSmallArray mut mid
+        --         case compare name k' of
+        --           EQ -> pure ()
+        --           LT -> go l mid f
+        --           GT -> go (mid + 1) u f
+        -- Linear insertion wins the benchmark games. Still I might want a hybrid instead
+        insertSorted !mut !sz !name !tag = go 0
+          where
+            go !n
+              | n >= sz   = writeSmallArray mut n $! NBT name tag
+              | otherwise = do
+                NBT k' _ <- readSmallArray mut n
+                case compare name k' of
+                  EQ -> pure ()
+                  GT -> go (n + 1)
+                  LT -> do
+                    copySmallMutableArray mut (n + 1) mut n (sz - n)
+                    writeSmallArray mut n $! NBT name tag
+        {-# INLINE insertSorted #-}
 -- anything else fails
 -- Note: We don't parse TagEnd, parseCompound and parseList
 -- parse it separately, so a TagEnd here would be invalid nbt
@@ -232,21 +256,24 @@ putTag (TagLong i)   = B.int64BE i
 putTag (TagFloat i)  = B.floatBE i
 putTag (TagDouble i) = B.doubleBE i
 
-putTag (TagByteArray arr) = B.int32BE (fromIntegral sz) <> B.byteString (BS.BS (coerce fp) sz)
-  where (fp, sz) = S.unsafeToForeignPtr0 arr
-
-putTag (TagIntArray arr) = B.int32BE (fromIntegral sz) <> B.byteString (BS.BS (coerce fp) (sz * 4))
-  where !(fp, sz) = S.unsafeToForeignPtr0 arr
-putTag (TagLongArray arr) = B.int32BE (fromIntegral sz) <> B.byteString (BS.BS (coerce fp) (sz * 8))
-  where !(fp, sz) = S.unsafeToForeignPtr0 arr
+putTag (TagByteArray arr) = putArr arr
+putTag (TagIntArray arr) = putArr arr
+putTag (TagLongArray arr) = putArr arr 
 
 putTag (TagString str) = putNBTString str
 
 putTag (TagList arr)
-  | len == 0 = B.int8 0 <> B.int32BE 0
-  | otherwise = B.int8 tagId <> B.int32BE (fromIntegral len) <> foldMap (\t -> putTag t) arr
+  | sz == 0   = B.int8 0 <> B.int32BE 0
+  | otherwise = B.int8 (fromIntegral $ getTagId t1) <> B.int32BE (fromIntegral sz) <> foldMap (\x -> putTag x) arr
   where
-    len = sizeofSmallArray arr
-    tagId = fromIntegral . getTagId $ indexSmallArray arr 0
+    sz = sizeofSmallArray arr
+    t1 = indexSmallArray arr 0
 
 putTag (TagCompound arr) = foldMap (\nbt -> putNBT nbt) arr <> B.int8 0
+
+putArr :: forall a . S.Storable a => S.Vector a -> B.Builder
+{-# INLINE putArr #-}
+putArr v = B.int32BE (fromIntegral sz) <> B.byteString (BS.BS (coerce fp) (sz * szEl))
+  where
+    szEl = S.sizeOf (undefined :: a)
+    !(fp, sz) = S.unsafeToForeignPtr0 v

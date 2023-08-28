@@ -1,6 +1,6 @@
 module Brokkr.NBT (
-  NBT
-, Tag
+  NBT(..)
+, Tag(..)
 , parseNBT
 , putNBT
 , module Brokkr.NBT.ByteOrder

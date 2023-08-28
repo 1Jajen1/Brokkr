@@ -60,19 +60,19 @@ instance ToNBT NBTString where
 instance ToNBT (S.Vector Int8) where
   toNBT = TagByteArray
 
-instance ToNBT (S.Vector Int32BE) where
+instance ToNBT (S.Vector (BigEndian Int32)) where
   toNBT = TagIntArray
 
-instance ToNBT (S.Vector Int64BE) where
+instance ToNBT (S.Vector (BigEndian Int64)) where
   toNBT = TagLongArray
 
 -- | Copies and byteswaps the vector
 instance ToNBT (S.Vector Int32) where
-  toNBT = toNBT . arrSwapBE32
+  toNBT = toNBT . arrSwapBE
 
 -- | Copies and byteswaps the vector
 instance ToNBT (S.Vector Int64) where
-  toNBT = toNBT . arrSwapBE64
+  toNBT = toNBT . arrSwapBE
 
 instance ToNBT (SmallArray Tag) where
   toNBT = TagList
@@ -169,12 +169,12 @@ instance FromNBT (S.Vector Int8) where
     TagByteArray v -> pure v
     _ -> err $ InvalidType name
 
-instance FromNBT (S.Vector Int32BE) where
+instance FromNBT (S.Vector (BigEndian Int32)) where
   fromNBT name = \case
     TagIntArray v -> pure v
     _ -> err $ InvalidType name
 
-instance FromNBT (S.Vector Int64BE) where
+instance FromNBT (S.Vector (BigEndian Int64)) where
   fromNBT name = \case
     TagLongArray v -> pure v
     _ -> err $ InvalidType name
@@ -182,12 +182,12 @@ instance FromNBT (S.Vector Int64BE) where
 
 -- | Copies and byteswaps the vector
 instance FromNBT (S.Vector Int32) where
-  fromNBT name t = arrSwapBE32 <$> fromNBT @(S.Vector Int32BE) name t
+  fromNBT name t = arrSwapBE <$> fromNBT @(S.Vector (BigEndian Int32)) name t
 
 
 -- | Copies and byteswaps the vector
 instance FromNBT (S.Vector Int64) where
-  fromNBT name t = arrSwapBE64 <$> fromNBT @(S.Vector Int64BE) name t
+  fromNBT name t = arrSwapBE <$> fromNBT @(S.Vector (BigEndian Int64)) name t
 
 instance FromNBT (SmallArray Tag) where
   fromNBT name = \case

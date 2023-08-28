@@ -9,6 +9,8 @@ module Brokkr.NBT.Slice (
 import GHC.Exts hiding (fromList)
 import GHC.ST
 
+import Control.DeepSeq
+
 -- | An empty slice
 emptySlice :: Slice a
 emptySlice = runST $ ST $ \s ->
@@ -23,6 +25,9 @@ emptySlice = runST $ ST $ \s ->
 -- 
 -- Used for compounds where the content is always sorted
 data Slice a = Slice (SmallArray# a) Int#
+
+instance NFData a => NFData (Slice a) where
+  rnf = foldr (\el () -> rnf el) ()  
 
 -- | O(n^2) Create a slice from a list
 fromList :: [a] -> Slice a

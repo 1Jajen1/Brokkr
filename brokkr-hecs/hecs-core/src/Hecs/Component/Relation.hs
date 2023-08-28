@@ -21,6 +21,8 @@ import Data.Coerce
 import Data.Kind
 import Data.Bitfield
 import Data.String (IsString(..))
+import Data.Int
+import Data.Word
 
 -- Type voodoo ahead, continue at your own risk
 
@@ -61,6 +63,22 @@ type family CaseTag a b c
 
 type instance CaseTag (Rel l r) a b = CaseTag l (CaseTag r a b) b
 type instance CaseTag (Tag x) a _ = a
+
+-- Instances for things we provide Component instances for
+type instance CaseTag EntityId _ b = b
+type instance CaseTag (ComponentId _) _ b = b
+type instance CaseTag Int _ b = b
+type instance CaseTag Int8 _ b = b
+type instance CaseTag Int16 _ b = b
+type instance CaseTag Int32 _ b = b
+type instance CaseTag Int64 _ b = b
+type instance CaseTag Word _ b = b
+type instance CaseTag Word8 _ b = b
+type instance CaseTag Word16 _ b = b
+type instance CaseTag Word32 _ b = b
+type instance CaseTag Word64 _ b = b
+type instance CaseTag Float _ b = b
+type instance CaseTag Double _ b = b
 
 type ClassContext ctx l r =
   Switch (CaseTag l True False) (CaseTag r True False)

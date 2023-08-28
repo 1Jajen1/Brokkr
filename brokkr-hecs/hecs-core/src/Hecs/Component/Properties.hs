@@ -45,7 +45,7 @@ isComponent = ComponentId . EntityId $ Bitfield 1
 newtype EntityName = EntityName Text
   deriving newtype (Eq, Show, IsString)
   deriving Component via ViaBox EntityName
-type instance CaseTag IsComponent _ b = b
+type instance CaseTag EntityName _ b = b
 
 instance Has w EntityName where
   getComponentId _ = entityName
@@ -90,4 +90,4 @@ wildcard = ComponentId . EntityId $ Bitfield 4
 
 -- | List of 'Name' for TH to generate correct setup code
 internalTypes :: [Name]
-internalTypes = [''IsComponent, ''EntityName, ''IsA, ''WildCard]
+internalTypes = [''IsComponent, ''EntityName, ''IsA, ''WildCard, ''EntityId]
