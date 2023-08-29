@@ -142,22 +142,22 @@ parseTag 10 = parseCompound
     parseCompound = localST $ do
       let initCap = 4#
       SmallMutableArray mut <- FP.liftST $ newSmallArray (I# initCap) (error "parse nbt comp init")
-      go mut initCap 0# $ \mut' sz -> do
-        (SmallArray arr) <- FP.liftST $ unsafeFreezeSmallArray (SmallMutableArray mut')
-        pure $ TagCompound $ Slice arr sz
+      go mut initCap 0#
       where
-        go :: SmallMutableArray# s NBT -> Int# -> Int# -> (SmallMutableArray# s NBT -> Int# -> FP.ParserST s NBTError r) -> FP.ParserST s NBTError r
-        go mut cap sz f = do
+        go :: SmallMutableArray# s NBT -> Int# -> Int# -> FP.ParserST s NBTError Tag
+        go mut cap sz = do
           tagId <- FP.anyWord8
           if tagId == 0
-            then f mut sz
+            then do
+              (SmallArray arr) <- FP.liftST $ unsafeFreezeSmallArray (SmallMutableArray mut)
+              pure $ TagCompound $ Slice arr sz
             else withNBTString $ \name -> do
               tag <- parseTag tagId
               -- grow
               ensure mut cap sz $ \mut' cap' -> do
                 -- insert sorted
                 FP.liftST $ insertSorted (SmallMutableArray mut') (I# sz) name tag
-                go mut' cap' (sz +# 1#) f
+                go mut' cap' (sz +# 1#)
         ensure mut cap sz f
           | isTrue# (cap <=# sz) =
             let newCap = cap *# 2#
@@ -168,33 +168,31 @@ parseTag 10 = parseCompound
                     FP.ParserT g -> g fp curr end s''
           | otherwise = f mut cap
         {-# INLINE ensure #-}
-        -- insertSorted !mut !sz !name !tag = go 0 sz $ \n -> do
-        --   copySmallMutableArray mut (n + 1) mut n (sz - n)
-        --   writeSmallArray mut n $! NBT name tag
-        --   where
-        --     go l u f
-        --       | l >= u = f u
-        --       | otherwise = do
-        --         let mid = (u + l) `quot` 2
-        --         NBT k' _ <- readSmallArray mut mid
-        --         case compare name k' of
-        --           EQ -> pure ()
-        --           LT -> go l mid f
-        --           GT -> go (mid + 1) u f
-        -- Linear insertion wins the benchmark games. Still I might want a hybrid instead
-        insertSorted !mut !sz !name !tag = go 0
+        insertSorted !mut !sz !name !tag = go 0 sz
           where
-            go !n
-              | n >= sz   = writeSmallArray mut n $! NBT name tag
+            go l u
+              | l >= u = do
+                copySmallMutableArray mut (u + 1) mut u (sz - u)
+                writeSmallArray mut u $! NBT name tag
               | otherwise = do
-                NBT k' _ <- readSmallArray mut n
+                let mid = (u + l) `quot` 2
+                NBT k' _ <- readSmallArray mut mid
                 case compare name k' of
                   EQ -> pure ()
-                  GT -> go (n + 1)
-                  LT -> do
-                    copySmallMutableArray mut (n + 1) mut n (sz - n)
-                    writeSmallArray mut n $! NBT name tag
-        {-# INLINE insertSorted #-}
+                  LT -> go l mid
+                  GT -> go (mid + 1) u
+        -- insertSorted !mut !sz !name !tag = go 0
+        --   where
+        --     go !n
+        --       | n >= sz   = writeSmallArray mut n $! NBT name tag
+        --       | otherwise = do
+        --         NBT k' _ <- readSmallArray mut n
+        --         case compare name k' of
+        --           EQ -> pure ()
+        --           GT -> go (n + 1)
+        --           LT -> do
+        --             copySmallMutableArray mut (n + 1) mut n (sz - n)
+        --             writeSmallArray mut n $! NBT name tag
 -- anything else fails
 -- Note: We don't parse TagEnd, parseCompound and parseList
 -- parse it separately, so a TagEnd here would be invalid nbt
