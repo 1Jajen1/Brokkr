@@ -169,6 +169,7 @@ parseTag 10 = parseCompound
                     FP.ParserT g -> g fp curr end s''
           | otherwise = f mut cap
         {-# INLINE ensure #-}
+        -- TODO Try sorting after inserting
         insertSorted !mut !sz !name !tag = go 0 sz
           where
             go l u

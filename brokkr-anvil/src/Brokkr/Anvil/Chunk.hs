@@ -132,7 +132,7 @@ instance HasCodec HeightMap where
           nrOfWords = (sz + elsPerWord - 1) `quotInt` elsPerWord
       in S.unsafeFromForeignPtr0 (coerce $ PV.unsafeBacking pv) nrOfWords
       ||]
-    $ codec @(S.Vector Int64BE)
+    $ codec @(S.Vector (BigEndian Int64))
 
 instance HasCodec TileTick where
   codec = compound "TileTick" $ [|| TileTick ||]
@@ -192,11 +192,11 @@ instance Class.ToNBT HeightMap where
         bitSz = PV.bitSize pv
         elsPerWord = 64 `quotInt` bitSz
         nrOfWords = (sz + elsPerWord - 1) `quotInt` elsPerWord
-    in Class.toNBT $ S.unsafeFromForeignPtr0 @Int64BE (coerce $ PV.unsafeBacking pv) nrOfWords
+    in Class.toNBT $ S.unsafeFromForeignPtr0 @(BigEndian Int64) (coerce $ PV.unsafeBacking pv) nrOfWords
 
 instance Class.FromNBT HeightMap where
   fromNBT name t = Class.fromNBT name t <&> \v ->
-    let (fp, nrWords) = S.unsafeToForeignPtr0 @Int64BE v
+    let (fp, nrWords) = S.unsafeToForeignPtr0 @(BigEndian Int64) v
         sz = fromIntegral $ natVal (Proxy @256)
         elsPerWord = (sz + nrWords - 1) `quotInt` nrWords
         bitSz = 64 `quotInt` elsPerWord

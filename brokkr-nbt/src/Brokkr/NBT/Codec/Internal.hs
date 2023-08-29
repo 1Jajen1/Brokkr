@@ -38,6 +38,7 @@ module Brokkr.NBT.Codec.Internal (
 import Brokkr.NBT
 
 import Control.DeepSeq
+import Control.Monad.ST.Strict (runST)
 
 import Data.Bool
 
@@ -51,6 +52,7 @@ import Data.Text (Text)
 
 import Data.Primitive
 
+import Data.Vector qualified as V
 import Data.Vector.Storable qualified as S
 
 import Language.Haskell.TH qualified as TH
@@ -193,8 +195,16 @@ instance HasCodec (ViaList (S.Vector (BigEndian Int64))) where
 
 -- TODO ViaList instances for byteswapped
 
-instance (ListFor a ~ SmallArray a, HasCodec a) => HasCodec (ViaList (SmallArray a)) where
-  codec = dimapCodec [|| ViaList ||] [|| \(ViaList v) -> v ||] $ ListCodec Nothing (codec @a)
+instance (ListFor a ~ SmallArray a, HasCodec a) => HasCodec (SmallArray a) where
+  codec = ListCodec Nothing (codec @a)
+
+instance (ListFor a ~ SmallArray a, HasCodec a) => HasCodec (V.Vector a) where
+  codec = dimapCodec [|| \sm -> V.generate (sizeofSmallArray sm) $ indexSmallArray sm ||] [|| \v ->
+      runST $ do
+        sm <- newSmallArray (V.length v) (error "smallArr:fromVec:empty" :: a)
+        V.ifoldl' (\m i x -> m >> writeSmallArray sm i x) (pure ()) v
+        unsafeFreezeSmallArray sm
+    ||] $ ListCodec Nothing (codec @a)
 
 newtype ViaSizedInt a = ViaSizedInt Int
 

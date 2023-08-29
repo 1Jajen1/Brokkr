@@ -34,9 +34,6 @@ import GHC.IO (unsafePerformIO)
 
 import Mason.Builder qualified as Mason
 
-instance NFData NBT where
-  rnf NBT{} = ()
-  {-# INLINE rnf #-}
 instance NFData RegionFile where
   rnf RegionFile{} = ()
 instance NFData ChunkPosition where

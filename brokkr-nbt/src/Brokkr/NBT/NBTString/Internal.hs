@@ -53,8 +53,7 @@ import Mason.Builder qualified as B
 newtype NBTString = NBTString ByteString
   deriving newtype (Eq, NFData)
 
--- This is strictly faster than Ord ByteString, but is no longer compatible with
--- lazy bytestrings order
+-- This is strictly faster than Ord ByteString
 instance Ord NBTString where
   compare (NBTString (BS.BS f1 l1)) (NBTString (BS.BS f2 l2)) =
     case compare l1 l2 of
