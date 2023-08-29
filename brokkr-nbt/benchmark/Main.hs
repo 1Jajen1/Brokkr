@@ -1,5 +1,5 @@
 {-# LANGUAGE DerivingStrategies, DeriveAnyClass, RecordWildCards, OverloadedStrings, DataKinds, TemplateHaskell #-}
--- {-# OPTIONS_GHC -ddump-splices -dsuppress-all -ddump-simpl #-}
+-- {-# OPTIONS_GHC -dsuppress-all -ddump-simpl #-}
 module Main (main) where
 
 import Test.Tasty.Bench

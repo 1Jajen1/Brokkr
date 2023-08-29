@@ -6,6 +6,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
+-- {-# OPTIONS_GHC -dsuppress-all -ddump-simpl #-}
 module Brokkr.NBT.Codec.DecodeBinary (
   genParser
 ) where
@@ -48,72 +49,59 @@ import GHC.Word
 
 import Language.Haskell.TH qualified as TH
 
+newtype ContParserT st e a = ContParserT { runContParserT :: forall r . (a -> FP.ParserT st e r) -> FP.ParserT st e r }
+instance Functor (ContParserT st e) where
+  fmap f (ContParserT g) = ContParserT $ \h -> g (h . f)
+
 -- | Generate a parser which reads binary 'NBT'
 genParser :: forall i0 o st0 . NBTCodec Value i0 o -> Code (FP.ParserT st0 NBTError o)
-genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
+genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> runContParserT ($$(go [] c0) t) pure ||]
   where
-    go :: forall i x st . [Text] -> NBTCodec Value i x -> Code (Word8 -> FP.ParserT st NBTError x)
-    go _ TagCodec = [|| parseTag ||]
+    go :: forall i x st . [Text] -> NBTCodec Value i x -> Code (Word8 -> ContParserT st NBTError x)
+    go _ TagCodec = [|| \t -> ContParserT $ \f -> parseTag t >>= f ||]
 
-    go path (ByteCodec  name) = [|| \t -> if t == 1 then FP.anyInt8    else FP.err $ invalidType path "byte"  name ||]
-    go path (ShortCodec name) = [|| \t -> if t == 2 then FP.anyInt16be else FP.err $ invalidType path "short" name ||]
-    go path (IntCodec   name) = [|| \t -> if t == 3 then FP.anyInt32be else FP.err $ invalidType path "int"   name ||]
-    go path (LongCodec  name) = [|| \t -> if t == 4 then FP.anyInt64be else FP.err $ invalidType path "long"  name ||]
+    go path (ByteCodec  name) = [|| \t -> ContParserT $ \f -> if t == 1 then FP.anyInt8    >>= f else FP.err $ invalidType path "byte"  name ||]
+    go path (ShortCodec name) = [|| \t -> ContParserT $ \f -> if t == 2 then FP.anyInt16be >>= f else FP.err $ invalidType path "short" name ||]
+    go path (IntCodec   name) = [|| \t -> ContParserT $ \f -> if t == 3 then FP.anyInt32be >>= f else FP.err $ invalidType path "int"   name ||]
+    go path (LongCodec  name) = [|| \t -> ContParserT $ \f -> if t == 4 then FP.anyInt64be >>= f else FP.err $ invalidType path "long"  name ||]
 
-    go path (FloatCodec  name) = [|| \t -> if t == 5 then castWord32ToFloat  <$> FP.anyWord32be else FP.err $ invalidType path "float"  name ||]
-    go path (DoubleCodec name) = [|| \t -> if t == 6 then castWord64ToDouble <$> FP.anyWord64be else FP.err $ invalidType path "double" name ||]
+    go path (FloatCodec  name) = [|| \t -> ContParserT $ \f -> if t == 5 then castWord32ToFloat  <$> FP.anyWord32be >>= f else FP.err $ invalidType path "float"  name ||]
+    go path (DoubleCodec name) = [|| \t -> ContParserT $ \f -> if t == 6 then castWord64ToDouble <$> FP.anyWord64be >>= f else FP.err $ invalidType path "double" name ||]
 
-    go path (ByteArrayCodec name) = [|| \t -> if t == 7  then takeArray @Int8    else FP.err $ invalidType path "byte array" name ||]
-    go path (IntArrayCodec name)  = [|| \t -> if t == 11 then takeArray @(BigEndian Int32) else FP.err $ invalidType path "int array"  name ||]
-    go path (LongArrayCodec name) = [|| \t -> if t == 12 then takeArray @(BigEndian Int64) else FP.err $ invalidType path "long array" name ||]
+    go path (ByteArrayCodec name) = [|| \t -> ContParserT $ \f -> if t == 7  then withArray @Int8              f else FP.err $ invalidType path "byte array" name ||]
+    go path (IntArrayCodec name)  = [|| \t -> ContParserT $ \f -> if t == 11 then withArray @(BigEndian Int32) f else FP.err $ invalidType path "int array"  name ||]
+    go path (LongArrayCodec name) = [|| \t -> ContParserT $ \f -> if t == 12 then withArray @(BigEndian Int64) f else FP.err $ invalidType path "long array" name ||]
 
-    go path (StringCodec name) = [|| \t -> if t == 8 then parseNBTString else FP.err $ invalidType path "string" name ||]
+    go path (StringCodec name) = [|| \t -> ContParserT $ \f -> if t == 8 then withNBTString f else FP.err $ invalidType path "string" name ||]
 
     go path (ListCodec name inner) = [|| \t -> if t == 9
       then $$(goList ("<list" <> maybe "" ("#"<>) name <> ">" : path) inner)
-      else FP.err $ invalidType path "list" name ||]
+      else ContParserT $ \_ -> FP.err $ invalidType path "list" name ||]
     
-    go path (CompoundCodec name inner) = [|| \t -> if t == 10
-      then $$(goCompound ("<compound" <> maybe "" ("#"<>) name <> ">" : path) inner)
+    go path (CompoundCodec name inner) = [|| \t -> ContParserT $ \f -> if t == 10
+      then $$(goCompound ("<compound" <> maybe "" ("#"<>) name <> ">" : path) inner) >>= f
       else FP.err $ invalidType path "compound" name
       ||]
-    {-
-    
-          then do
-        innerT <- FP.anyWord8
-        len@(I# len#) <- fromIntegral <$> FP.anyInt32be
-        localST $ do
-          -- TODO Check against stupidly large lists
-          SmallMutableArray mut <- FP.liftST $ newSmallArray len (error "parse nbt list")
 
-          let goList   _ 0# = pure ()
-              goList i n  = do
-                el <- $$(go ("<list" <> maybe "" ("#"<>) name <> ">" : path) inner) innerT
-                FP.liftST $ writeSmallArray (SmallMutableArray mut) (I# i) el
-                goList (i +# 1#) (n -# 1#)
-
-          goList 0# len#
-          FP.liftST $ unsafeFreezeSmallArray (SmallMutableArray mut)
-
-    -}
     go path (RmapCodec f inner) = [|| fmap $$(f) . $$(go path inner) ||]
 
-    go path (RmapEitherCodec f inner) = [|| $$(go path inner) >=> (\case
-      Left e -> FP.err e
-      Right a -> pure a) . $$(f)
+    go path (RmapEitherCodec f inner) = [|| \t -> ContParserT $ \fi -> runContParserT ($$(go path inner) t) $ \x ->
+      case $$(f) x of
+        Left e -> FP.err e
+        Right a -> fi a
       ||]
 
     go path (LmapCodec _ inner) = go path inner
 
     -- This wasn't worth it for the intermediate structure, but here it is, likely because of code size
-    goList :: forall i1 x0 st . [Text] -> NBTCodec Value i1 x0 -> Code (FP.ParserT st NBTError (ListFor x0))
-    goList path inner = [|| do
+    goList :: forall i1 x0 st . [Text] -> NBTCodec Value i1 x0 -> Code (ContParserT st NBTError (ListFor x0))
+    goList path inner = [|| ContParserT $ \f -> do
       listTag <- FP.anyWord8
       FP.withAnyWord32 $ \w -> do
         let len = fromIntegral $ byteSwap32 w
         if len == 0
-          then pure $ $$(goEmpty inner)
-          else $$(goInner inner) len listTag
+          then f $$(goEmpty inner)
+          else runContParserT ($$(goInner inner) len listTag) f
       ||]
       where
         goEmpty :: NBTCodec Value i2 x0 -> Code (ListFor x0)
@@ -134,55 +122,55 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
         goEmpty (ListCodec _ _) = [|| emptySmallArray ||]
         goEmpty (CompoundCodec _ _) = [|| emptySmallArray ||]
 
-        goInner :: NBTCodec Value i2 x1 -> Code (Int -> Word8 -> FP.ParserT st NBTError (ListFor x1))
+        goInner :: NBTCodec Value i2 x1 -> Code (Int -> Word8 -> ContParserT st NBTError (ListFor x1))
         goInner (ByteCodec name) = [|| \sz -> \case
-          1 -> parseArray @Int8 sz
-          _ -> FP.err $ invalidType path "byte" name
+          1 -> ContParserT $ \f -> parseArray @Int8 sz f
+          _ -> ContParserT $ \_ -> FP.err $ invalidType path "byte" name
           ||]
         goInner (ShortCodec name) = [|| \sz -> \case
-          2 -> parseArray @(BigEndian Int16) sz
-          _ -> FP.err $ invalidType path "short" name
+          2 -> ContParserT $ \f -> parseArray @(BigEndian Int16) sz f
+          _ -> ContParserT $ \_ -> FP.err $ invalidType path "short" name
           ||]
         goInner (IntCodec name) = [|| \sz -> \case
-          3 -> parseArray @(BigEndian Int32) sz
-          _ -> FP.err $ invalidType path "int" name
+          3 -> ContParserT $ \f -> parseArray @(BigEndian Int32) sz f
+          _ -> ContParserT $ \_ -> FP.err $ invalidType path "int" name
           ||]
         goInner (LongCodec name) = [|| \sz -> \case
-          4 -> parseArray @(BigEndian Int64) sz
-          _ -> FP.err $ invalidType path "long" name
+          4 -> ContParserT $ \f -> parseArray @(BigEndian Int64) sz f
+          _ -> ContParserT $ \_ -> FP.err $ invalidType path "long" name
           ||]
         goInner (FloatCodec name) = [|| \sz -> \case
-          5 -> parseArray @(BigEndian Float) sz
-          _ -> FP.err $ invalidType path "float" name
+          5 -> ContParserT $ \f -> parseArray @(BigEndian Float) sz f
+          _ -> ContParserT $ \_ -> FP.err $ invalidType path "float" name
           ||]
         goInner (DoubleCodec name) = [|| \sz -> \case
-          6 -> parseArray @(BigEndian Double) sz
-          _ -> FP.err $ invalidType path "double" name
+          6 -> ContParserT $ \f -> parseArray @(BigEndian Double) sz f
+          _ -> ContParserT $ \_ -> FP.err $ invalidType path "double" name
           ||]
         goInner (ByteArrayCodec name) = [|| \sz -> \case
-          7 -> $$(parseSmallArray [|| takeArray @Int8 ||]) sz
-          _ -> FP.err $ invalidType path "byte array" name
+          7 -> ContParserT $ \f -> $$(parseSmallArray [|| takeArray @Int8 ||]) sz >>= f
+          _ -> ContParserT $ \_ -> FP.err $ invalidType path "byte array" name
           ||]
         goInner (IntArrayCodec name) = [|| \sz -> \case
-          11 -> $$(parseSmallArray [|| takeArray @(BigEndian Int32) ||]) sz
-          _  -> FP.err $ invalidType path "int array" name
+          11 -> ContParserT $ \f -> ($$(parseSmallArray [|| takeArray @(BigEndian Int32) ||]) sz) >>= f
+          _  -> ContParserT $ \_ -> FP.err $ invalidType path "int array" name
           ||]
         goInner (LongArrayCodec name) = [|| \sz -> \case
-          12 -> $$(parseSmallArray [|| takeArray @(BigEndian Int64) ||]) sz
-          _  -> FP.err $ invalidType path "long array" name
+          12 -> ContParserT $ \f -> ($$(parseSmallArray [|| takeArray @(BigEndian Int64) ||]) sz) >>= f
+          _  -> ContParserT $ \_ -> FP.err $ invalidType path "long array" name
           ||]
         goInner (StringCodec name) = [|| \sz -> \case
-          8 -> $$(parseSmallArray [|| parseNBTString ||]) sz
-          _  -> FP.err $ invalidType path "string" name
+          8 -> ContParserT $ \f -> ($$(parseSmallArray [|| parseNBTString ||]) sz) >>= f
+          _  -> ContParserT $ \_ -> FP.err $ invalidType path "string" name
           ||]
-        goInner TagCodec = [|| \sz t -> $$(parseSmallArray [|| parseTag t ||]) sz ||]
+        goInner TagCodec = [|| \sz t -> ContParserT $ \f -> ($$(parseSmallArray [|| parseTag t ||]) sz) >>= f ||]
         goInner (ListCodec name i) = [|| \sz -> \case
-          9  -> $$(parseSmallArray (goList ("<list" <> maybe "" ("#"<>) name <> ">" : path) i)) sz
-          _  -> FP.err $ invalidType path "list" name
+          9  -> ContParserT $ \f -> ($$(parseSmallArray [|| runContParserT ($$(goList ("<list" <> maybe "" ("#"<>) name <> ">" : path) i)) pure ||]) sz) >>= f
+          _  -> ContParserT $ \_ -> FP.err $ invalidType path "list" name
           ||]
         goInner (CompoundCodec name i) = [|| \sz -> \case
-          10 -> $$(parseSmallArray (goCompound ("<compound" <> maybe "" ("#"<>) name <> ">" : path) i)) sz
-          _  -> FP.err $ invalidType path "list" name
+          10 -> ContParserT $ \f -> ($$(parseSmallArray (goCompound ("<compound" <> maybe "" ("#"<>) name <> ">" : path) i)) sz) >>= f
+          _  -> ContParserT $ \_ -> FP.err $ invalidType path "list" name
           ||]
         goInner (RmapCodec _ _) = error "ListCodec rmap inner"
         goInner (RmapEitherCodec _ _) = error "ListCodec rmap either inner"
@@ -254,81 +242,53 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
               initBM :: Int = (1 `unsafeShiftL` length keysToParsers) - 1
               -- 0 for all keys that are optional, 1 for all others
               reqBM :: Int = foldr (\(n, (_,opt,_,_)) b -> if opt then b else setBit b n) 0 $ zip [0..] keysToParsers
-              -- TODO For trie matching:
-              --   When we have
-              -- a -> b -> c -> (d,e) don't generate
-              -- abc -> (d | e)
-              -- but instead generate
-              -- abcd | abce
-              -- Has one less branch, and one less memory read
-              -- 
-              -- Maybe even go for max size reads all the time and let ghc create
-              -- the lookup then? (Actually the below is impossible because I have a eq size guarantee)
-              -- a -> (b -> d | c -> e | f -> j -> l)
-              -- abd | ace | (afj -> l) 
-              genBranch validKey tagId trie0 =
-                let go64 [] cont = cont
-                    go64 (x:xs) cont
-                      = [| withAnyWord64Unsafe $ \w ->
-                          if w == x then $(go64 xs cont)
-                          else $(validKey)
-                          |]
-                    goTail [] cont = cont
-                    goTail (a:b:c:d:e:f:g:h:xs) cont
-                      = [| withAnyWord64Unsafe $ \w ->
-                          if w == w64 then $(goTail xs cont)
-                          else $(validKey)
-                          |]
-                      where w64 :: Word64 = foldr (\x acc -> fromIntegral x .|. (acc `unsafeShiftL` 8)) 0 [a,b,c,d,e,f,g,h]
-                    goTail (a:b:c:d:xs) cont
-                      = [| withAnyWord32Unsafe $ \w ->
-                          if w == w32 then $(goTail xs cont)
-                          else $(validKey)
-                          |]
-                      where w32 :: Word32 = foldr (\x acc -> fromIntegral x .|. (acc `unsafeShiftL` 8)) 0 [a,b,c,d]
-                    goTail (a:b:xs) cont
-                      = [| withAnyWord16Unsafe $ \w ->
-                          if w == w16 then $(goTail xs cont)
-                          else $(validKey)
-                          |]
-                      where w16 :: Word16 = foldr (\x acc -> fromIntegral x .|. (acc `unsafeShiftL` 8)) 0 [a,b]
-                    goTail (a:xs) cont
-                      = [| withAnyWord8Unsafe $ \w ->
-                          if w == a then $(goTail xs cont)
-                          else $(validKey)
-                          |]
-                    goTrie trie =
-                      let (pre,post) = extractPrefix trie
-                          (pre64, preTail) = chunked pre
-                      in go64 pre64 [|
-                         $(case post of
-                           -- These two are filtered out by extractPrefix
-                           Empty   -> error "Empty"
-                           All _ _ -> error "All"
-                           -- A trie with a single element only
-                           Leaf (ind,(_,_,_,withCont)) -> goTail preTail [| $(withCont [|
-                             \el -> $(TH.appE (snd $ foldl' (\(i, acc) x ->
-                               if i == ind then
-                                 (i + 1, TH.appE acc [| el |])
-                               else (i + 1, TH.appE acc (TH.varE x))) (0, TH.varE funcN) $ fmap snd varNames') [| clearBit @Int $(TH.varE bm) ind |])
-                               |]) $(tagId) |]
-                           -- Or a branch...
-                           Branch branches ->
-                             let (preTail', scrutF, branches') = case preTail of
-                                   [a] ->             ([], [| withAnyWord16Unsafe |], (\(w, t) -> ([a,w],t)) <$> branches)
-                                   [a,b,c] ->         ([], [| withAnyWord32Unsafe |], (\(w, t) -> ([a,b,c,w],t)) <$> branches)
-                                   [a,b,c,d,e,f,g] -> ([], [| withAnyWord64Unsafe |], (\(w, t) -> ([a,b,c,d,e,f,g,w],t)) <$> branches)
-                                   _ ->               (preTail, [| withAnyWord8Unsafe |], (\(w,t) -> ([w],t)) <$> branches)
-                             in goTail preTail' [|
-                               $(scrutF) $ \scrut ->
-                                 $(let mkMatch bs t = TH.match
-                                         (TH.litP $ TH.IntegerL $ foldr (\a acc -> fromIntegral a .|. (acc `unsafeShiftL` 8)) 0 bs)
-                                         (TH.normalB $ goTrie t) []
-                                       fb = TH.match TH.wildP (TH.normalB [| $(validKey) |]) []
-                                   in TH.caseE [| scrut |] $ foldr (\(bs, t) acc -> mkMatch bs t : acc) [fb] branches')
-                               |])
-                         |]
-                  in goTrie trie0
+              genBranch validKey tagId d0 trie0 = go d0 trie0
+                where
+                  go d t
+                    | d >= 8
+                    , matches <- extractWord64Match t
+                      = [| withAnyWord64Unsafe $ \w -> $(TH.caseE [| w |] $ (do
+                            (w64, t') <- matches
+                            pure $ TH.match
+                              (TH.litP $ TH.IntegerL (fromIntegral w64))
+                              (TH.normalB $ go (d - 8) t')
+                              []) <> [TH.match TH.wildP (TH.normalB validKey) []]
+                          ) |]
+                    | d >= 4
+                    , matches <- extractWord32Match t
+                      = [| withAnyWord32Unsafe $ \w -> $(TH.caseE [| w |] $ (do
+                            (w32, t') <- matches
+                            pure $ TH.match
+                              (TH.litP $ TH.IntegerL (fromIntegral w32))
+                              (TH.normalB $ go (d - 4) t')
+                              []) <> [TH.match TH.wildP (TH.normalB validKey) []]
+                          ) |]
+                    | d >= 2
+                    , matches <- extractWord16Match t
+                      = [| withAnyWord16Unsafe $ \w -> $(TH.caseE [| w |] $ (do
+                            (w16, t') <- matches
+                            pure $ TH.match
+                              (TH.litP $ TH.IntegerL (fromIntegral w16))
+                              (TH.normalB $ go (d - 2) t')
+                              []) <> [TH.match TH.wildP (TH.normalB validKey) []]
+                          ) |]
+                    | d >= 1
+                    , matches <- extractWord8Match t
+                      = [| withAnyWord8Unsafe $ \w -> $(TH.caseE [| w |] $ (do
+                            (w8, t') <- matches
+                            pure $ TH.match
+                              (TH.litP $ TH.IntegerL (fromIntegral w8))
+                              (TH.normalB $ go (d - 1) t')
+                              []) <> [TH.match TH.wildP (TH.normalB validKey) []]
+                          ) |]
+                    | d == 0 = case t of
+                      Leaf (ind, (_,_,_, withCont)) -> [| $(withCont [|
+                          \el -> $(TH.appE (snd $ foldl' (\(i, acc) x ->
+                              if i == ind then
+                                (i + 1, TH.appE acc [| el |])
+                              else (i + 1, TH.appE acc (TH.varE x))) (0, TH.varE funcN) $ fmap snd varNames') [| clearBit @Int $(TH.varE bm) ind |])
+                        |]) $tagId |]
+                      _ -> error "Weird ass trie!"
           TH.letE [
             let bod = [|
                   FP.withAnyWord8 $ \tag -> do
@@ -356,7 +316,7 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
                                 skipTag tag
                                 $(foldl' (\acc x -> TH.appE acc (TH.varE x)) (TH.varE funcN) $ fmap snd varNames)
                         $(let fb = TH.match TH.wildP (TH.normalB [| validateKey |]) []
-                              buildMatch (sz, trie) = TH.match (TH.litP $ TH.IntegerL (fromIntegral sz)) (TH.normalB $ genBranch [| validateKey |] [| tag |] trie) []
+                              buildMatch (sz, trie) = TH.match (TH.litP $ TH.IntegerL (fromIntegral sz)) (TH.normalB $ genBranch [| validateKey |] [| tag |] sz trie) []
                           in TH.caseE [| w' |] $ foldr (\x acc -> buildMatch x : acc) [fb] tries)
                   |]
                 doneBod = [| skipCompound >> $(TH.unTypeCode . fst $ mkFinishFun inner (fmap snd varNames')) |]
@@ -378,11 +338,11 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
                                     = collectKeys i
         collectKeys (LmapCodec _ i) = collectKeys i
         collectKeys (RequiredKeyCodec key i _descr) =
-          [(key, False, defValue i, \cont -> [| $(TH.unTypeCode $ go (toText key : path) i) >=> $(cont) |])]
+          [(key, False, defValue i, \cont -> [| \t -> runContParserT ($(TH.unTypeCode $ go (toText key : path) i) t) $(cont) |])]
         collectKeys (OptionalKeyCodec key i _descr) =
           [(key, True, Just [| Nothing |], \cont -> [|
             \t -> do
-              let onMatch = $(TH.unTypeCode $ go (toText key : path) i) t >>= $(cont) . Just
+              let onMatch = runContParserT ($(TH.unTypeCode $ go (toText key : path) i) t) ($(cont) . Just)
                   -- onFail = skipTag t >> pure Nothing
               -- TODO Decide what to do here:
               -- Is the entire inner codec optional or just the key?
@@ -407,7 +367,14 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
         defValue LongArrayCodec{} = Just [| mempty :: S.Vector (BigEndian Int64) |]
 
         defValue TagCodec        = Nothing
-        defValue ListCodec{}     = Nothing
+        defValue (ListCodec _ i) = case i of
+          ByteCodec{}  -> Just [| mempty :: S.Vector Int8 |]
+          ShortCodec{} -> Just [| mempty :: S.Vector (BigEndian Int16) |]
+          IntCodec{}   -> Just [| mempty :: S.Vector (BigEndian Int32) |]
+          LongCodec{}  -> Just [| mempty :: S.Vector (BigEndian Int64) |]
+          FloatCodec{}  -> Just [| mempty :: S.Vector (BigEndian Float ) |]
+          DoubleCodec{} -> Just [| mempty :: S.Vector (BigEndian Double) |]
+          _ -> Nothing
         defValue CompoundCodec{} = Nothing
 
         defValue (RmapCodec f i)       = (\e -> [| $(TH.unTypeCode f) $e |]) <$> defValue i
@@ -455,6 +422,54 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
           |]
         mkValFun _ = [| pure |]
 
+        extractWord64Match :: Trie a -> [(Word64, Trie a)]
+        extractWord64Match t0 = go 0 t0
+          where
+            go n t
+              | n >= 8 = pure (0, t)
+              | All w8 t' <- t = do
+                (acc, cont) <- go (n + 1) t'
+                pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
+              | Branch xs <- t = do
+                (w8, t') <- xs
+                (acc, cont) <- go (n + 1) t'
+                pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
+              | otherwise = error "extractWord64Match but not 8 bytes worth of stuff!"
+        
+        extractWord32Match :: Trie a -> [(Word32, Trie a)]
+        extractWord32Match t0 = go 0 t0
+          where
+            go n t
+              | n >= 4 = pure (0, t)
+              | All w8 t' <- t = do
+                (acc, cont) <- go (n + 1) t'
+                pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
+              | Branch xs <- t = do
+                (w8, t') <- xs
+                (acc, cont) <- go (n + 1) t'
+                pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
+              | otherwise = error "extractWord64Match but not 4 bytes worth of stuff!"
+
+        extractWord16Match :: Trie a -> [(Word16, Trie a)]
+        extractWord16Match t0 = go 0 t0
+          where
+            go n t
+              | n >= 2 = pure (0, t)
+              | All w8 t' <- t = do
+                (acc, cont) <- go (n + 1) t'
+                pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
+              | Branch xs <- t = do
+                (w8, t') <- xs
+                (acc, cont) <- go (n + 1) t'
+                pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
+              | otherwise = error "extractWord64Match but not 2 bytes worth of stuff!"
+
+        extractWord8Match :: Trie a -> [(Word8, Trie a)]
+        extractWord8Match = \case
+          All w8 t -> pure (w8, t)
+          Branch xs -> xs
+          _ -> error "extractWord8Match but not 1 byte worth of stuff"
+
         tries = buildTries (\(key,_,_,_) -> coerce key) keysToParsers
 
         buildTries :: (b -> BS.ByteString) -> [b] -> [(Int, Trie (Int, b))]
@@ -478,25 +493,13 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> $$(go [] c0) t ||]
                 | Just e@(_,t) <- find (\(k,_) -> k == x) ys -> Branch $ (x,insert xs v t) : deleteBy (\a b -> fst a == fst b) e ys
                 | otherwise -> Branch $ (x,insert xs v Empty) : ys
               Leaf _ -> error "Two elements have the exact same key."
-        
-        extractPrefix :: Trie a -> ([Word8], Trie a)
-        extractPrefix (All x t) = first (x :) $ extractPrefix t
-        extractPrefix b@Branch{} = ([],b)
-        extractPrefix l@Leaf{} = ([], l)
-        extractPrefix Empty = ([], Empty)
 
-        chunked :: [Word8] -> ([Word64], [Word8])
-        chunked (a:b:c:d:e:f:g:h:xs) =
-          let (ys, preTail) = chunked xs
-          in (foldr (\x acc -> fromIntegral x .|. (acc `unsafeShiftL` 8)) 0 [a,b,c,d,e,f,g,h] : ys, preTail)
-        chunked xs = ([],xs)
-
-parseArray :: forall x1 st . S.Storable x1 => Int -> FP.ParserT st NBTError (S.Vector x1)
+parseArray :: forall x1 st r . S.Storable x1 => Int -> (S.Vector x1 -> FP.ParserT st NBTError r) -> FP.ParserT st NBTError r
 {-# INLINE parseArray #-}
-parseArray len = do
+parseArray len f = do
   let szEl = S.sizeOf (undefined :: x1)
   BS.BS fp _ <- FP.take (len * szEl)
-  pure $ S.unsafeFromForeignPtr0 (coerce fp) len
+  f $ S.unsafeFromForeignPtr0 (coerce fp) len
 
 data Trie a = All !Word8 !(Trie a) | Branch [(Word8, Trie a)] | Leaf a | Empty
   deriving stock (Show, Functor)
@@ -505,11 +508,13 @@ skipCompound :: FP.ParserT st NBTError ()
 {-# INLINE skipCompound #-}
 skipCompound = do
   t <- FP.anyWord8
-  if t == 0 then pure () else skipKey >> skipTag t >> skipCompound
+  if t == 0 then pure () else skipKey $ skipTag t >> skipCompound
 
-skipKey :: FP.ParserT st NBTError ()
+-- Yes, taking the extra parser as a continuation does improve both code gen
+--  and the performance
+skipKey :: FP.ParserT st NBTError () -> FP.ParserT st NBTError ()
 {-# INLINE skipKey #-}
-skipKey = withNBTString $ \_ -> pure ()
+skipKey f = withNBTString $ \_ -> f
 
 -- Invariant: We have at least sz bytes available
 -- Invariant: addr points to right after the size prefix
@@ -547,7 +552,7 @@ skipTag 7  = FP.anyInt32be >>= void . FP.skip . fromIntegral
 skipTag 11 = FP.anyInt32be >>= \sz -> void . FP.skip $ fromIntegral sz * 4
 skipTag 12 = FP.anyInt32be >>= \sz -> void . FP.skip $ fromIntegral sz * 8
 -- strings
-skipTag 8 = skipKey
+skipTag 8 = skipKey (pure ())
 -- lists
 skipTag 9 = do
   t <- FP.anyWord8

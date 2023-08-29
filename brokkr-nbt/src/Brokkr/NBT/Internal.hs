@@ -8,6 +8,7 @@ module Brokkr.NBT.Internal (
 , putNBT
 , putTag
 , takeArray
+, withArray
 , getTagId
 ) where
 
@@ -210,6 +211,16 @@ takeArray = FP.withAnyWord32 $ \w -> do
       !sz = S.sizeOf (undefined :: a)
   BS.BS fp _ <- FP.take (len * sz)
   pure $ S.unsafeFromForeignPtr0 (coerce fp) len
+
+withArray :: forall a e st r . S.Storable a => (S.Vector a -> FP.ParserT st e r) -> FP.ParserT st e r
+{-# INLINE withArray #-}
+withArray f = FP.withAnyWord32 $ \w -> do
+  -- TODO Define this somewhere with cpp so that we
+  -- skip this on big endian systems
+  let !len = fromIntegral $ byteSwap32 w 
+      !sz = S.sizeOf (undefined :: a)
+  BS.BS fp _ <- FP.take (len * sz)
+  f $ S.unsafeFromForeignPtr0 (coerce fp) len
 
 -- TODO PR to flatparse
 localST :: forall st e a . (forall s . FP.ParserST s e a) -> FP.ParserT st e a
