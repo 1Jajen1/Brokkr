@@ -16,11 +16,10 @@ import Brokkr.VarInt.Decode
 
 import Control.Exception (Exception)
 
-import qualified Codec.Compression.Zlib as ZLib
+import Brokkr.Compression.Zlib qualified as Zlib
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Internal qualified as BS
-import Data.ByteString.Lazy qualified as LBS
 
 import Data.Proxy
 
@@ -37,12 +36,14 @@ import GHC.IO
 -- TODO Double check that touch# works fine here
 --  It should be fine because the different continuations are not diverging and touch# will always be evaluated before
 --  code that throws or continues with the user continuation 
+-- TODO It is very important for touch# to work that cont never diverges! Or better, ghc should never think it does
 readPacket :: forall compression a r .
   (Show a, FromBinary a, KnownCompression compression)
-  => Proxy compression -> CompressionSettings -> EncryptionSettings -> IO ByteString -> ByteString -> (a -> ByteString -> IO r) -> IO r
-readPacket cs compressionSettings0 _encryptionSettings more leftover0 cont = do
+  => Proxy compression -> Zlib.Decompressor -> CompressionSettings -> EncryptionSettings -> IO ByteString -> ByteString -> (a -> ByteString -> IO r) -> IO r
+readPacket cs decomp compressionSettings0 _encryptionSettings more leftover0 cont = do
   let compressionSettings = compressionVal cs compressionSettings0
-      -- Use the low level varint decoding primitives to avoid allocating
+      -- Use the low level varint decoding primitives to avoid allocating the tuple
+      -- TODO I should probably try this with cps again, but this works for now
       headerParser eob s st =
         case compressionSettings of
           NoCompression -> case withVarInt# @5 eob s st of
@@ -65,6 +66,7 @@ readPacket cs compressionSettings0 _encryptionSettings more leftover0 cont = do
             -- Rerun the parser with more input
             (# s', (# | _ | #) #) ->
               -- TODO (<>) allocates the BS constructor. Copy manually?
+              -- TODO Allocator support here could make this nicer
               case more >>= \bs -> goStreaming (inputBs <> bs) of IO f -> f (touch# fp s')
             -- Run the packet parser
             (# s', (# (# sz#, packSz#, ptr' #) | | #) #) ->
@@ -78,11 +80,17 @@ readPacket cs compressionSettings0 _encryptionSettings more leftover0 cont = do
                      -- If we have compressed data but it should have been uncompressed, fail!
                      then case throwIO (InvalidCompressedPacketThreshold (I# packSz#) (fromIntegral threshold)) of IO f -> f (touch# fp s')
                      else
-                       let !(BS.BS (ForeignPtr startPtr fp') (I# len#)) = LBS.toStrict . ZLib.decompress $ LBS.fromStrict (BS.BS (ForeignPtr ptr' fp) (I# sz#))
-                       in if isTrue# (packSz# /=# len)
-                         then case throwIO (InvalidCompressedPacketSize (I# packSz#) (I# len)) of IO f -> f (touch# fp s')
-                         else let leftoverPtr = plusAddr# ptr' sz#
-                              in  parsePacket (BS.BS (ForeignPtr leftoverPtr fp) (I# (minusAddr# endPtr leftoverPtr))) fp' startPtr len# s'
+                      case Zlib.decompress decomp (I# packSz#) $ BS.BS (ForeignPtr ptr' fp) (I# sz#) of
+                              Left _ -> case throwIO (InvalidCompressedPacketSize (I# packSz#) (I# len)) of IO f -> f (touch# fp s')
+                              Right (BS.BS (ForeignPtr startPtr fp') (I# len#)) ->
+                                let leftoverPtr = plusAddr# ptr' sz#
+                                in  parsePacket (BS.BS (ForeignPtr leftoverPtr fp) (I# (minusAddr# endPtr leftoverPtr))) fp' startPtr len# s'
+                       -- let !(BS.BS (ForeignPtr startPtr fp') (I# len#)) = 
+                       --    -- LBS.toStrict . ZLib.decompress $ LBS.fromStrict (BS.BS (ForeignPtr ptr' fp) (I# sz#))
+                       -- in if isTrue# (packSz# /=# len)
+                       --   then case throwIO (InvalidCompressedPacketSize (I# packSz#) (I# len)) of IO f -> f (touch# fp s')
+                       --   else let leftoverPtr = plusAddr# ptr' sz#
+                       --        in  parsePacket (BS.BS (ForeignPtr leftoverPtr fp) (I# (minusAddr# endPtr leftoverPtr))) fp' startPtr len# s'
                  -- No compression
                  -- No need for touch# here as the leftover and fp are pointing to the same object and
                  -- parsePacket will keep fp alive
@@ -103,13 +111,13 @@ readPacket cs compressionSettings0 _encryptionSettings more leftover0 cont = do
   goStreaming leftover0
 {-# SPECIALIZE INLINE readPacket ::
   forall a r . (Show a, FromBinary a)
-    => Proxy NoCompression -> CompressionSettings -> EncryptionSettings -> IO ByteString -> ByteString -> (a -> ByteString -> IO r) -> IO r #-}
+    => Proxy NoCompression -> Zlib.Decompressor -> CompressionSettings -> EncryptionSettings -> IO ByteString -> ByteString -> (a -> ByteString -> IO r) -> IO r #-}
 {-# SPECIALIZE INLINE readPacket ::
   forall threshold a r . (Show a, FromBinary a, KnownNat threshold)
-    => Proxy (UseCompression threshold) -> CompressionSettings -> EncryptionSettings -> IO ByteString -> ByteString -> (a -> ByteString -> IO r) -> IO r #-}
+    => Proxy (UseCompression threshold) -> Zlib.Decompressor -> CompressionSettings -> EncryptionSettings -> IO ByteString -> ByteString -> (a -> ByteString -> IO r) -> IO r #-}
 {-# SPECIALIZE INLINE readPacket ::
   forall a r . (Show a, FromBinary a)
-    => Proxy SomeCompression -> CompressionSettings -> EncryptionSettings -> IO ByteString -> ByteString -> (a -> ByteString -> IO r) -> IO r #-}
+    => Proxy SomeCompression -> Zlib.Decompressor -> CompressionSettings -> EncryptionSettings -> IO ByteString -> ByteString -> (a -> ByteString -> IO r) -> IO r #-}
 
 throwReadError :: PacketParseError -> ByteString -> IO a
 throwReadError e bs = throwIO $ ReadPacketError e (HexBS bs) 

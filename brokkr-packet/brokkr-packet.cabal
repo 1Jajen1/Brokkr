@@ -20,6 +20,7 @@ common common-options
                      , brokkr-nbt
                      , brokkr-registry
                      , brokkr-packed-vector
+                     , brokkr-libdeflate
                      , text
                      , bytestring
                      , template-haskell
@@ -27,7 +28,6 @@ common common-options
                      , mason
                      , uuid
                      , vector
-                     , zlib
   
   ghc-options:         -Wall
                        -Wcompat

@@ -23,6 +23,7 @@ common common-options
                      , brokkr-nbt
                      , brokkr-packet
                      , brokkr-packed-vector
+                     , brokkr-libdeflate
                      , async
                      , stm
                      , stm-containers

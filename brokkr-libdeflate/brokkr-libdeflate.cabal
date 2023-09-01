@@ -1,0 +1,86 @@
+cabal-version:       2.4
+name:                brokkr-libdeflate
+version:             0.0.0.0
+synopsis:            Bindings to libdeflate
+description:         Bindings to libdeflate
+license:             MIT
+license-file:        LICENSE
+author:              Jannis
+maintainer:          Jannis <overesch.jannis@gmail.com>
+copyright:           2022 Jannis
+category:            Data
+build-type:          Simple
+extra-doc-files:     README.md
+                     CHANGELOG.md
+tested-with:         GHC == 9.4.3
+
+extra-source-files:  libdeflate/libdeflate.h
+                     libdeflate/lib/adler32_vec_template.h
+                     libdeflate/lib/bt_matchfinder.h
+                     libdeflate/lib/cpu_features_common.h
+                     libdeflate/lib/crc32_multipliers.h
+                     libdeflate/lib/crc32_tables.h
+                     libdeflate/lib/decompress_template.h
+                     libdeflate/lib/deflate_compress.h
+                     libdeflate/lib/deflate_constants.h
+                     libdeflate/lib/gzip_constants.h
+                     libdeflate/lib/hc_matchfinder.h
+                     libdeflate/lib/ht_matchfinder.h
+                     libdeflate/lib/lib_common.h
+                     libdeflate/lib/matchfinder_common.h
+                     libdeflate/lib/zlib_constants.h
+                     libdeflate/lib/x86/adler32_impl.h
+                     libdeflate/lib/x86/cpu_features.h
+                     libdeflate/lib/x86/crc32_impl.h
+                     libdeflate/lib/x86/crc32_pclmul_template.h
+                     libdeflate/lib/x86/decompress_impl.h
+                     libdeflate/lib/x86/matchfinder_impl.h
+
+common common-options
+  build-depends:       base >= 4.17 && < 5
+                     , bytestring
+  
+  ghc-options:         -Wall
+                       -Wcompat
+                       -Widentities
+                       -Wincomplete-uni-patterns
+                       -Wincomplete-record-updates
+                       -Wredundant-constraints
+                       -Wunused-packages
+                       -fhide-source-paths
+                       -Wmissing-export-lists
+                       -Wpartial-fields
+                       -Wmissing-deriving-strategies
+                       -O2
+  default-extensions:  DerivingVia
+                       LambdaCase
+                       StrictData
+                       OverloadedStrings
+  default-language:    GHC2021
+library
+  import:              common-options
+  hs-source-dirs:      src
+  exposed-modules:     Brokkr.Zlib
+                       Brokkr.Compression.Internal
+                       Brokkr.Compression.Zlib
+  cc-options:          -O2
+  c-sources:           libdeflate/lib/adler32.c
+                       libdeflate/lib/crc32.c
+                       
+                       libdeflate/lib/deflate_compress.c
+                       libdeflate/lib/deflate_decompress.c
+
+                       libdeflate/lib/gzip_compress.c
+                       libdeflate/lib/gzip_decompress.c
+                       
+                       libdeflate/lib/utils.c
+                       
+                       libdeflate/lib/zlib_compress.c
+                       libdeflate/lib/zlib_decompress.c
+                       
+                       libdeflate/lib/x86/cpu_features.c
+                       libdeflate/lib/arm/cpu_features.c
+  include-dirs:        libdeflate
+  install-includes:    libdeflate.h
+  includes:            libdeflate.h 
+

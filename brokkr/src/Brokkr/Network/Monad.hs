@@ -4,6 +4,8 @@ module Brokkr.Network.Monad (
   Network
 , runNetwork
 , getSocket -- Internals?
+, getDecompressor -- Internals?
+, getCompressor -- Internals?
 , getConfig
 , getUniverse
 , readPacket
@@ -17,6 +19,8 @@ module Brokkr.Network.Monad (
 , ClientTimedOut(..)
 , InvalidKeepAlive(..)
 ) where
+
+import Brokkr.Compression.Zlib qualified as Zlib
 
 import Brokkr.Debug.Monad
 import Brokkr.Network.Exception
@@ -45,7 +49,9 @@ import GHC.TypeLits
 
 import Network.Simple.TCP as Network
 
-newtype Network a = Network { _unNetwork :: ServerM (ReaderT Socket (StateT ByteString IO)) a }
+data NetworkState = NetworkState !Socket !Zlib.Decompressor !Zlib.Compressor
+
+newtype Network a = Network { _unNetwork :: ServerM (ReaderT NetworkState (StateT ByteString IO)) a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadBase IO, MonadBaseControl IO, MonadTrace)
 
 deriving newtype instance Server.MonadHecs Universe Network
@@ -55,12 +61,16 @@ runNetwork :: Config -> Universe -> Socket -> Network a -> IO a
 -- This does not affect reads, and packets are not written as components, but put into a queue
 -- This would technically sync after f finishes, but the network threads are designed to diverge. This means no thread running Network should
 -- finish without an exception
-runNetwork conf universe sock (Network f) = catch
-  (evalStateT (runReaderT (Server.runServerM conf universe (Server.defer f)) sock) mempty)
-  (\(e :: SomeException) -> do
-    -- print e
-    throwIO e
-    )
+runNetwork conf universe sock (Network f) =
+  Zlib.withDecompressor $ \decomp ->
+    -- TODO Tune compression level
+    Zlib.withCompressor (Zlib.CompressionLevel 6) $ \comp ->
+      catch
+        (evalStateT (runReaderT (Server.runServerM conf universe (Server.defer f)) (NetworkState sock decomp comp)) mempty)
+        (\(e :: SomeException) -> do
+          -- print e
+          throwIO e
+          )
 {-# INLINE runNetwork #-}
 
 getConfig :: Network Config
@@ -71,8 +81,16 @@ getUniverse = Network Server.getUniverse
 {-# INLINE getUniverse #-}
 
 getSocket :: Network Socket
-getSocket = Network $ lift ask
+getSocket = Network $ lift ask >>= \(NetworkState sock _ _) -> pure sock
 {-# INLINE getSocket #-}
+
+getDecompressor :: Network Zlib.Decompressor
+getDecompressor = Network $ lift ask >>= \(NetworkState _ decomp _) -> pure decomp
+{-# INLINE getDecompressor #-}
+
+getCompressor :: Network Zlib.Compressor
+getCompressor = Network $ lift ask >>= \(NetworkState _ _ comp) -> pure comp
+{-# INLINE getCompressor #-}
 
 -- Test code would like just the network part not wrapped in 'ServerM', so rewrap it here
 readPacket :: forall compression a . (Show a, Decode.FromBinary a, Decode.KnownCompression compression)
@@ -84,10 +102,11 @@ readPacket :: forall compression a . (Show a, Decode.FromBinary a, Decode.KnownC
 {-# SPECIALIZE readPacket :: forall a . (Show a, Decode.FromBinary a)
   => Proxy Decode.SomeCompression -> Decode.CompressionSettings -> Decode.EncryptionSettings -> Network a #-}
 readPacket p cs es = do
-  sock <- Network $ lift ask
+  sock <- getSocket
+  decomp <- getDecompressor
   leftover <- Network . lift $ lift get
   st <- liftBaseWith $ \runInBase -> 
-    Decode.readPacket @_ @a p cs es
+    Decode.readPacket @_ @a p decomp cs es
       (Network.recv sock 1024 >>= \case Nothing -> throwIO ConnectionClosed; Just x -> pure x)
       leftover
       $ \a leftover' -> do
@@ -146,8 +165,8 @@ receiveBytes test = do
 -}
 
 sendBytes :: LBS.ByteString -> Network ()
-sendBytes bs = Network $ do
-  sock <- lift ask
+sendBytes bs = do
+  sock <- getSocket
   liftIO $ Network.sendLazy sock bs
 {-# INLINE sendBytes #-}
 
@@ -159,8 +178,9 @@ sendBytes bs = Network $ do
 -- sendLazy alone will always expect a lazy bytestring so probably not worth it?
 -- TODO This needs work!
 sendPackets :: (Encode.ToBinary a, Encode.KnownCompression compression) => Proxy compression -> Encode.CompressionSettings -> Encode.EncryptionSettings -> [Encode.Packet a] -> Network ()
-sendPackets p cs es as = sendBytes
-  (LBS.fromChunks $ fmap (Encode.toStrictByteString p cs es) as)
+sendPackets p cs es as = do
+  comp <- getCompressor
+  sendBytes (LBS.fromChunks $ fmap (Encode.toStrictByteString p comp cs es) as)
 {-# INLINE sendPackets #-}
 
 closeConnection :: Network a

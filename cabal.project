@@ -29,6 +29,7 @@ packages: ./brokkr-packet/brokkr-packet.cabal
 packages: ./brokkr-varint/brokkr-varint.cabal
 packages: ./brokkr-hashtables/brokkr-hashtables.cabal
 packages: ./brokkr-zlib-ng/brokkr-zlib-ng.cabal
+packages: ./brokkr-libdeflate/brokkr-libdeflate.cabal
 packages: ./brokkr-anvil/brokkr-anvil.cabal
 packages: ./brokkr-registry/brokkr-registry.cabal
 packages: ./brokkr-packed-vector/brokkr-packed-vector.cabal

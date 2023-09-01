@@ -15,6 +15,7 @@ import Control.DeepSeq
 
 import Data.Coerce (coerce)
 import Data.Functor
+import Data.Int
 
 import qualified Data.Vector.Storable as S
 
@@ -53,7 +54,7 @@ deriving stock instance KnownNat (ToHeightMapSize dimHeight) => Show (HeightMap 
 
 instance KnownNat (ToHeightMapSize dimHeight) => FromNBT (HeightMap dimHeight) where
   fromNBT name tag = fromNBT name tag <&>
-    HeightMap . unsafeFromForeignPtr @('Static 256) @('Static (ToHeightMapSize dimHeight)) . coerce . fst . S.unsafeToForeignPtr0 @Int64BE
+    HeightMap . unsafeFromForeignPtr @('Static 256) @('Static (ToHeightMapSize dimHeight)) . coerce . fst . S.unsafeToForeignPtr0 @(BigEndian Int64)
 
 instance KnownNat (ToHeightMapSize dimHeight) => ToNBT (HeightMap dimHeight) where
   toNBT (HeightMap (PVec_SS fp)) =
@@ -61,4 +62,4 @@ instance KnownNat (ToHeightMapSize dimHeight) => ToNBT (HeightMap dimHeight) whe
         elsPerWord = 64 `quotInt` bitSz
         sz = fromIntegral $ natVal (Proxy @256)
         nrOfWords = (sz + elsPerWord - 1) `quotInt` elsPerWord
-    in toNBT @(S.Vector Int64BE) $ S.unsafeFromForeignPtr0 (coerce fp) nrOfWords
+    in toNBT @(S.Vector (BigEndian Int64)) $ S.unsafeFromForeignPtr0 (coerce fp) nrOfWords

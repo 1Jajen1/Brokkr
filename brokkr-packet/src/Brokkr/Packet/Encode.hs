@@ -14,7 +14,7 @@ import Brokkr.Packet.Binary
 import Brokkr.Packet.Settings
 import Brokkr.VarInt.Encode
 
-import qualified Codec.Compression.Zlib as ZLib
+import Brokkr.Compression.Zlib qualified as Zlib
 
 import Data.Bits
 import Data.ByteString (ByteString)
@@ -40,8 +40,8 @@ newtype SizeEstimate = EstimateMin Int
 
 toStrictByteString :: forall compression a .
   ( KnownCompression compression, ToBinary a )
-  => Proxy compression -> CompressionSettings -> EncryptionSettings -> Packet a -> ByteString
-toStrictByteString cs compressionSettings0 _encryptionSettings (Packet (EstimateMin szEstimate) el) = unsafePerformIO $ do
+  => Proxy compression -> Zlib.Compressor -> CompressionSettings -> EncryptionSettings -> Packet a -> ByteString
+toStrictByteString cs comp compressionSettings0 _encryptionSettings (Packet (EstimateMin szEstimate) el) = unsafePerformIO $ do
   let compressionSettings  = compressionVal cs compressionSettings0
   -- This is almost an exact copy of toStrictByteString from mason, but handles prefixing the length, later on will deal with compression as well
   let prefixSz = case compressionSettings of
@@ -106,9 +106,12 @@ toStrictByteString cs compressionSettings0 _encryptionSettings (Packet (Estimate
      | otherwise -> do
       -- TODO can we do this over strict bytestrings directly and over buffers I control?
       -- That'd enable the prefix operation to be more efficient
-        let (BS.BS fptrCompressed compressedSz) =
-              LBS.toStrict . ZLib.compressWith (ZLib.defaultCompressParams { ZLib.compressLevel = ZLib.bestSpeed })
-                $ LBS.fromStrict (BS.BS (plusForeignPtr fptr prefixSz) sz)
+        let inBytes = BS.BS (plusForeignPtr fptr prefixSz) sz
+            -- TODO Handle error case. Although impossible here because of compressBound
+            Just (BS.BS fptrCompressed compressedSz) =
+              Zlib.compress comp (Zlib.compressBound comp sz) inBytes
+              -- LBS.toStrict . ZLib.compressWith (ZLib.defaultCompressParams { ZLib.compressLevel = ZLib.bestSpeed })
+              --   $ LBS.fromStrict (BS.BS (plusForeignPtr fptr prefixSz) sz)
             pCompressedSize = varIntSize compressedSz
             pSize = pCompressedSize + varIntSize sz
             finSize = pSize + compressedSz
@@ -129,10 +132,10 @@ toStrictByteString cs compressionSettings0 _encryptionSettings (Packet (Estimate
         pure $! BS.BS withPrefix finSize
 {-# SPECIALISE INLINE toStrictByteString
   :: forall thresh a . (KnownNat thresh, ToBinary a)
-      => Proxy (UseCompression thresh) -> CompressionSettings -> EncryptionSettings -> Packet a -> ByteString  #-}
+      => Proxy (UseCompression thresh) -> Zlib.Compressor -> CompressionSettings -> EncryptionSettings -> Packet a -> ByteString  #-}
 {-# SPECIALISE INLINE toStrictByteString
   :: forall a . ToBinary a
-      => Proxy NoCompression -> CompressionSettings -> EncryptionSettings -> Packet a -> ByteString  #-}
+      => Proxy NoCompression -> Zlib.Compressor -> CompressionSettings -> EncryptionSettings -> Packet a -> ByteString  #-}
 
 varIntSize :: Int -> Int
 varIntSize i

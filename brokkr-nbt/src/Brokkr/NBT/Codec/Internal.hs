@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE MagicHash #-}
 module Brokkr.NBT.Codec.Internal (
   NBTCodec(..)
 , CodecContext(..)
@@ -56,6 +57,8 @@ import Data.Vector qualified as V
 import Data.Vector.Storable qualified as S
 
 import Language.Haskell.TH qualified as TH
+
+-- import GHC.Exts (unsafeCoerce#)
 
 data CodecContext = Compound | Value
 
@@ -198,7 +201,17 @@ instance HasCodec (ViaList (S.Vector (BigEndian Int64))) where
 instance (ListFor a ~ SmallArray a, HasCodec a) => HasCodec (SmallArray a) where
   codec = ListCodec Nothing (codec @a)
 
+-- TODO: I have this really evil idea to optimize this:
+-- data Vector a = Vector (Array# a) Int# Int#
+-- data SmallArray a = SmallArray (SmallArray# a)
+--
+-- Now at runtime Array# ~ SmallArray# and the offset and size is also fixed
+-- I wrote an initial version of that below, but this needs tests and benchmarks first
 instance (ListFor a ~ SmallArray a, HasCodec a) => HasCodec (V.Vector a) where
+  -- codec = dimapCodec
+  --   [|| \(sm@(SmallArray sm#) :: SmallArray x) -> V.unsafeFromArraySlice @x (Array (unsafeCoerce# sm#)) 0 (sizeofSmallArray sm) ||]
+  --   [|| \(v :: V.Vector x) -> case V.toArray v of (Array a) -> SmallArray @x (unsafeCoerce# a) ||]
+  --   $ ListCodec Nothing (codec @a)
   codec = dimapCodec [|| \sm -> V.generate (sizeofSmallArray sm) $ indexSmallArray sm ||] [|| \v ->
       runST $ do
         sm <- newSmallArray (V.length v) (error "smallArr:fromVec:empty" :: a)

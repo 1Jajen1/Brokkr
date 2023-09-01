@@ -70,6 +70,6 @@ benchmark Chunkloading
   main-is:             Chunkloading.hs
   build-depends:       tasty-bench
                      , brokkr-anvil
-                     , brokkr-zlib-ng
+                     , brokkr-libdeflate
                      , deepseq
   ghc-options:         -O2

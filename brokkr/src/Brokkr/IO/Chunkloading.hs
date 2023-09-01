@@ -9,10 +9,11 @@ import Brokkr.Anvil.Chunk
 import Brokkr.Anvil.Chunk.Parser
 import Brokkr.Anvil.RegionFile qualified as RegionFile
 
+import Brokkr.Compression.Zlib qualified as Zlib
+
 import Brokkr.Util.Queue (Queue)
 import Brokkr.Util.Queue qualified as Queue
 
-import Codec.Compression.Zlib qualified as ZLib
 import Codec.Compression.GZip qualified as GZip
 
 import Control.DeepSeq
@@ -42,6 +43,8 @@ import FlatParse.Basic qualified as FP
 import GHC.Conc (myThreadId, labelThread)
 
 import Hecs
+
+import Debug.Trace
 
 data Chunkloading = Chunkloading
   ![Async.Async ()] -- Worker threads
@@ -111,7 +114,7 @@ new workers = do
       -- does more harm than good if left running
       Async.link a
       spawnWorkers workQ ref (n - 1) (a:xs)
-    chunkWorker ref liveRef n = do
+    chunkWorker ref liveRef n = Zlib.withDecompressor $ \decomp -> do
       myThreadId >>= flip labelThread ("Chunk worker " <> show n)
       fix $ \goWorker -> Chan.readChan ref >>= \(WorkRequest rId rPath q) -> do
         let (rX, rZ) = (fromIntegral . fromIntegral @_ @Int32 $ (rId `unsafeShiftR` 32) .&. 0xFFFFFFFF, fromIntegral . fromIntegral @_ @Int32 $ rId .&. 0xFFFFFFFF)
@@ -147,24 +150,26 @@ new workers = do
                           - Each request has to take a lock on the regionfile, so requests would wait for each other until
                             the file read is done. This is exactly what we have here, except we only take the lock once for the requests
                           - Ideally we'd submit requests to the file and don't block until we get the response
+                        
+                        TODO: This is no longer the case. Is this still worth running async?
                       -}
                       $ \compType compressedBs -> do
-                        as <- Async.async $ do
-                          -- TODO I don't actually like this too much. Maybe this should be done in the region file part
-                          bs <- case compType of
-                            1 -> pure $! LBS.toStrict . GZip.decompress $ LBS.fromStrict compressedBs
-                            2 -> pure $! LBS.toStrict . ZLib.decompress $ LBS.fromStrict compressedBs
-                            3 -> pure $! compressedBs
-                            _ -> throwIO (UnknownDecompressionFlag pos)
+                        -- TODO I don't actually like this too much. Maybe this should be done in the region file part
+                        bs <- case compType of
+                          1 -> pure $! LBS.toStrict . GZip.decompress $ LBS.fromStrict compressedBs
+                          2 -> pure $! (fix $ \retry sz -> case Zlib.decompress_ decomp sz compressedBs of
+                            Left e -> traceShow (e, sz) $ retry (sz * 2)
+                            Right c -> c) (65_536 * 2) -- TODO Tweak
+                          3 -> pure $! compressedBs
+                          _ -> throwIO (UnknownDecompressionFlag pos)
 
-                          !res <- catch (evaluate $ FP.runParser parseChunkNBT bs) $ \(e :: SomeException) -> do
-                            throwIO (ChunkParseFail pos $ Just e)
+                        !res <- catch (evaluate $ FP.runParser parseChunkNBT bs) $ \(e :: SomeException) -> do
+                          throwIO (ChunkParseFail pos $ Just e)
 
-                          case res of
-                            FP.OK !c remBs | BS.null remBs -> putMVar ret c
-                            FP.Err e -> throwIO (ChunkParseFail pos (Just $ SomeException e))
-                            _ -> throwIO (ChunkParseFail pos Nothing)
-                        Async.link as
+                        case res of
+                          FP.OK !c remBs | BS.null remBs -> putMVar ret c
+                          FP.Err e -> throwIO (ChunkParseFail pos (Just $ SomeException e))
+                          _ -> throwIO (ChunkParseFail pos Nothing)
                   -- Try to read more requests from the queue
                   goQueue
         goWorker

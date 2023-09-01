@@ -522,6 +522,10 @@ skipKeyWithSizeWithBack :: Int -> Addr# -> FP.ParserT st e r -> FP.ParserT st e 
 {-# INLINE skipKeyWithSizeWithBack #-}
 skipKeyWithSizeWithBack (I# sz) addr cont
   = FP.ParserT (\fp eob _ st ->
+    -- TODO This works, and generates good code just fine,
+    -- but since we already deconstruct the parser anyway,
+    -- I should just take the bytestring directly instead
+    -- of going through takeExtraUnsafe#
     case takeExtraUnsafe# sz >>= \bs ->
       if isValidModifiedUtf8 bs then cont
       else FP.empty of

@@ -14,6 +14,8 @@ import Brokkr.NBT qualified as NBT
 import Brokkr.NBT.Class qualified as NBT.Class
 import Brokkr.NBT.Internal (NBT(..))
 
+import Brokkr.Zlib qualified as BZlib
+
 import Control.DeepSeq
 import Control.Exception (evaluate)
 
@@ -62,6 +64,27 @@ So how do we improve decompression?
 - Then zlib itself: try zlib-ng? First test was not that convincing, saved like 8μs at most, probably need
   to do a proper setup and test again
 
+29.08.23
+
+Managed to improve NBT parsing and schema parsing:
+- 1μs io
+- 54μs decompression
+- 6.5μs nbt (28μs without schema)
+
+The nbt side is now truly nearing the limits, and even if not, this is starting to show diminishing returns
+
+30.08.23
+
+Wrote libdeflate bindings:
+- 1μs io
+- 13μs decompression
+- 6.5μs nbt (28μs without schema)
+
+I think I am somewhat happy with chunks now.
+Actually no, I still gotta fix up the palette lookups.
+=> Use my new hashtable? I do the conversion to network ids when parsing into domain objects later
+   so this doesn't actually belong here
+=> TODO I now need to integrate this properly, write decent low level bindings and handle the too small buffer case
 -}
 
 main :: IO ()
@@ -72,7 +95,7 @@ main = defaultMain [
       , bench "Decompress ByteString" $ nf (\(s, bs) ->
             let decompress :: Int8 -> ByteString -> ByteString
                 decompress 1 bs = LBS.toStrict . GZip.decompress $ LBS.fromStrict bs
-                decompress 2 bs = LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
+                decompress 2 bs = unsafePerformIO $ BZlib.decompressIO 64000 bs -- LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
                 decompress 3 bs = bs
                 decompress _ _ = error "Decompresion failed"
             in decompress s bs
@@ -129,7 +152,7 @@ loadChunkData :: RegionFile -> ChunkPosition -> IO ByteString
 loadChunkData rFile = loadCData
   where
     decompress 1 bs = pure $! LBS.toStrict . GZip.decompress $ LBS.fromStrict bs
-    decompress 2 bs = pure $! LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
+    decompress 2 bs = pure $! unsafePerformIO $ BZlib.decompressIO 64000 bs -- LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
     decompress 3 bs = pure $! bs
     decompress _ _ = error "Decompresion failed"
     loadCData cp = readChunkData cp rFile decompress (error "Failed to read")
@@ -139,7 +162,7 @@ parseChunkIODirect :: RegionFile -> ChunkPosition -> IO Chunk
 parseChunkIODirect rFile = loadCData
   where
     decompress 1 bs = pure $! LBS.toStrict . GZip.decompress $ LBS.fromStrict bs
-    decompress 2 bs = pure $! LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
+    decompress 2 bs = pure $! unsafePerformIO $ BZlib.decompressIO 64000 bs -- LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
     decompress 3 bs = pure $! bs
     decompress _ _ = error "Decompresion failed"
     loadCData cp = do
@@ -153,7 +176,7 @@ parseChunkIODirectSchema :: RegionFile -> ChunkPosition -> IO Chunk
 parseChunkIODirectSchema rFile = loadCData
   where
     decompress 1 bs = pure $! LBS.toStrict . GZip.decompress $ LBS.fromStrict bs
-    decompress 2 bs = pure $! LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
+    decompress 2 bs = pure $! unsafePerformIO $ BZlib.decompressIO 64000 bs -- LBS.toStrict . ZLib.decompress $ LBS.fromStrict bs
     decompress 3 bs = pure $! bs
     decompress _ _ = error "Decompresion failed"
     loadCData cp = do

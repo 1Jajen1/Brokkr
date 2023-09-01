@@ -50,6 +50,7 @@ data BlockStates =
   | FullBlockStates  !BlockPalette !(PackedVector ('Static SectionSize) 'Dynamic Int)
   deriving stock (Eq, Show)
 
+-- TODO Use SmallArray to avoid copy? (Or do the ugly hack of coercing the underlying Array# and SmallArray#)
 newtype BlockPalette = BlockPalette (V.Vector BlockPaletteEntry)
   deriving stock (Eq, Show)
   deriving newtype (Class.FromNBT, Class.ToNBT)

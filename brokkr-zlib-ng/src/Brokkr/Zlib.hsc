@@ -18,6 +18,10 @@ import Foreign.Storable (peek, poke)
 import GHC.ForeignPtr
 import GHC.Ptr
 
+-- TODO Write bindings to libdeflate. Should be easier, no streaming, which I don't need anyway
+--      Then bench chunk stuff again, and only if that is still unacceptable, try zlib-ng or even
+--      intels zlib stuff 
+
 #include "zlib-ng.h"
 
 decompressIO :: Int -> ByteString -> IO ByteString

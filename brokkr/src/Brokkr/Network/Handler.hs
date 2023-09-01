@@ -120,13 +120,15 @@ handlePlay playerUUID playerName cs es = do
 
   liftIO $ myThreadId >>= flip labelThread ("Network thread for: " <> T.unpack (coerce playerName))
 
+  comp <- getCompressor
+
   let send = do
         liftIO $ myThreadId >>= flip labelThread ("Network send for: " <> T.unpack (coerce playerName))
         go
         where
           go = do
             _ <- liftBaseWith $ \runInBase -> Conn.flushPackets conn $ \ps -> do
-              bs <- evaluate . LBS.fromChunks . fmap (\(Conn.SendPacket p) -> let !bs = Encode.toStrictByteString (Proxy @SomeCompression) cs es p in bs) $ V.toList ps
+              bs <- evaluate . LBS.fromChunks . fmap (\(Conn.SendPacket p) -> let !bs = Encode.toStrictByteString (Proxy @SomeCompression) comp cs es p in bs) $ V.toList ps
               runInBase $ sendBytes bs
               -- TODO Is this enough strictness? Does this even work?!
             go
