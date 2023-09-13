@@ -60,8 +60,7 @@ common common-options
 library
   import:              common-options
   hs-source-dirs:      src
-  exposed-modules:     Brokkr.Zlib
-                       Brokkr.Compression.Internal
+  exposed-modules:     Brokkr.Compression.Internal
                        Brokkr.Compression.Zlib
   cc-options:          -O2
   c-sources:           libdeflate/lib/adler32.c

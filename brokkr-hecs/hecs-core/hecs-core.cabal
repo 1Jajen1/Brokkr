@@ -39,6 +39,9 @@ common common-options
                        -Wpartial-fields
                        -Wmissing-deriving-strategies
                        -O2
+                       --O0
+                       -debug
+                       -g2
   default-extensions:  DerivingVia
                        LambdaCase
                        StrictData
@@ -48,19 +51,48 @@ common common-options
 library
   import:              common-options
   hs-source-dirs:      src
-  exposed-modules:      Hecs.Array
-                      , Hecs.Archetype
-                      , Hecs.Archetype.Internal
-                      , Hecs.Entity.Internal
-                      , Hecs.Fold
-                      , Hecs.World
-                      , Hecs.World.Has
-                      , Hecs.World.Internal
-                      , Hecs.World.TH
-                      , Hecs.Component
-                      , Hecs.Component.Generic
-                      , Hecs.Component.Internal
-                      , Hecs.Component.Relation
-                      , Hecs.Component.Properties
-                      , Hecs.Filter
-                      , Hecs.Filter.Internal
+  exposed-modules:     Hecs.Archetype
+                       Hecs.Archetype.Internal
+                       Hecs.Archetype.Storage
+                       Hecs.Archetype.Type
+                       Hecs.Array
+                       Hecs.Component
+                       Hecs.Component.Column
+                       Hecs.Component.Generic
+                       Hecs.Component.Internal
+                       Hecs.Component.Preset
+                       Hecs.Component.Relation
+                       Hecs.Entity
+                       Hecs.Entity.Internal
+                       Hecs.Filter
+                       Hecs.Filter.Column
+                       Hecs.Filter.DSL
+                       Hecs.Filter.Internal
+                       Hecs.Fold
+                       Hecs.Query
+                       Hecs.Query.Internal
+                       Hecs.System
+                       Hecs.System.Internal
+                       Hecs.World
+                       Hecs.World.Class
+                       Hecs.World.Has
+                       Hecs.World.Internal
+                       Hecs.World.TH
+-- Hecs.Array
+--                       , Hecs.Archetype
+--                       , Hecs.Archetype.ComponentType
+--                       , Hecs.Archetype.Internal
+--                       , Hecs.Archetype.Storage
+--                       , Hecs.Entity.Internal
+--                       , Hecs.Fold
+--                       , Hecs.World
+--                       , Hecs.World.Has
+--                       , Hecs.World.Internal
+--                       , Hecs.World.TH
+--                       , Hecs.Component
+--                       , Hecs.Component.Generic
+--                       , Hecs.Component.Internal
+--                       , Hecs.Component.Relation
+--                       , Hecs.Component.Properties
+--                       , Hecs.Filter
+--                       , Hecs.Filter.Internal

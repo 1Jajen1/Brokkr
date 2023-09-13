@@ -225,18 +225,18 @@ benchHashTable name ifInt foldVec traverse_ sz keys others = bgroup name
         , bgroup "lookup"
           [ env (new @kS @vS @key @key 32 0 0.75 >>= \t -> traverse_ (\k -> insert t k k) keys >> evaluate valid >>= \valid' -> pure (t, valid'))
               $ \ ~(t, xs) -> bench "lookup (success)" $ whnfIO $ do
-                traverse_ (\k -> lookup t k >>= \case Nothing -> error (show k); Just _ -> pure ()) xs
+                traverse_ (\k -> lookup t k (\_ -> pure ()) $ error (show k)) xs
           , env (new @kS @vS @key @key 32 0 0.75 >>= \t -> traverse_ (\k -> insert t k k) keys >> evaluate others >>= \others' -> pure (t, others'))
               $ \ ~(t, xs) -> bench "lookup (fail)" $ whnfIO $ do
-                traverse_ (\k -> lookup t k >>= \case Nothing -> pure (); Just _ -> error (show k)) xs
+                traverse_ (\k -> lookup t k (\_ -> error (show k)) (pure ())) xs
           ]
         , bgroup "lookup (maxLoadFactor = 0.9)"
           [ env (new @kS @vS @key @key 32 0 0.9 >>= \t -> traverse_ (\k -> insert t k k) keys >> evaluate valid >>= \valid' -> pure (t, valid'))
               $ \ ~(t, xs) -> bench "lookup (success)" $ whnfIO $ do
-                traverse_ (\k -> lookup t k >>= \case Nothing -> error (show k); Just _ -> pure ()) xs
+                traverse_ (\k -> lookup t k (\_ -> pure ()) $ error (show k)) xs
           , env (new @kS @vS @key @key 32 0 0.9 >>= \t -> traverse_ (\k -> insert t k k) keys >> evaluate others >>= \others' -> pure (t, others'))
               $ \ ~(t, xs) -> bench "lookup (fail)" $ whnfIO $ do
-                traverse_ (\k -> lookup t k >>= \case Nothing -> pure (); Just _ -> error (show k)) xs
+                traverse_ (\k -> lookup t k (\_ -> error (show k)) (pure ())) xs
           ]
         ]
     {-# INLINE benchHashTables #-}

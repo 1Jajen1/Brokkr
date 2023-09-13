@@ -8,16 +8,18 @@ module Hecs.Monad (
 , getWorld
 ) where
 
-import Hecs.Monad.Class
-import qualified Hecs.World as Core
 
-import Control.Monad.IO.Class
-import Control.Monad.Trans.Control
 import Control.Monad.Base
+import Control.Monad.IO.Class
 import Control.Monad.Primitive
-import Hecs.Filter
 import Control.Monad.Trans.Class
+import Control.Monad.Trans.Control
+
 import GHC.Exts (oneShot)
+
+import Hecs.Filter
+import Hecs.Monad.Class
+import Hecs.World qualified as Core
 
 -- | Concrete monad transfomer which implements 'MonadHecs'
 newtype HecsM w m a = HecsM_ { unHecsM :: w -> m a }
@@ -85,30 +87,33 @@ getWorld :: Monad m => HecsM w m w
 getWorld = HecsM pure
 {-# INLINE getWorld #-}
 
-instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) where
-  newEntity = getWorld >>= liftBase . Core.allocateEntity
+instance (MonadBaseControl IO m, Core.WorldOps w) => MonadHecs w (HecsM w m) where
+  newEntity = getWorld >>= liftBase . Core.newEntity
   {-# INLINE newEntity #-}
-  freeEntity eid = getWorld >>= liftBase . flip Core.deAllocateEntity eid
+  freeEntity eid = getWorld >>= liftBase . flip Core.freeEntity eid
   {-# INLINE freeEntity #-}
-  addTagWithId eid compId = getWorld >>= \w -> Core.addTagWithId w eid compId
-  {-# INLINE addTagWithId #-}
+  addWithId eid compId = getWorld >>= \w -> Core.addWithId w eid compId
+  {-# INLINE addWithId #-}
   setWithId eid compId comp = getWorld >>= \w -> liftBase $ Core.setWithId w eid compId comp
   {-# INLINE setWithId #-}
   getWithId eid compId s f = getWorld >>= \w -> Core.getWithId w eid compId s f
   {-# INLINE getWithId #-}
-  hasTagWithId eid compId = getWorld >>= \w -> Core.hasTagWithId w eid compId
-  {-# INLINE hasTagWithId #-}
-  removeTagWithId eid compId = getWorld >>= \w -> Core.removeTagWithId w eid compId
-  {-# INLINE removeTagWithId #-}
+  hasWithId eid compId = getWorld >>= \w -> Core.hasWithId w eid compId
+  {-# INLINE hasWithId #-}
   removeWithId eid compId = getWorld >>= \w -> Core.removeWithId w eid compId
   {-# INLINE removeWithId #-}
-  runFilter :: forall b ty . Filter ty HasMainId -> (TypedArchetype ty -> b -> HecsM w m b) -> HecsM w m b -> HecsM w m b
+  isEnabledWithId eid compId = getWorld >>= \w -> Core.isEnabledWithId w eid compId
+  {-# INLINE isEnabledWithId #-}
+  enableWithId eid compId = getWorld >>= \w -> Core.enableWithId w eid compId
+  {-# INLINE enableWithId #-}
+  disableWithId eid compId = getWorld >>= \w -> Core.disableWithId w eid compId
+  {-# INLINE disableWithId #-}
+  runFilter :: forall b ty . Filter 'True ty -> (TypedArchetype ty -> b -> HecsM w m b) -> HecsM w m b -> HecsM w m b
   runFilter fi f z = getWorld >>= \w -> Core.runFilter w fi f z
   {-# INLINE runFilter #-}
-  defer act = do
-    a <- HecsM $ \w -> restoreM =<< liftBaseWith (\runInBase -> Core.defer w $ \w' -> runInBase $ runHecsM w' act)
-    sync
-    pure a
-  {-# INLINE defer #-}
-  sync = getWorld >>= \w -> liftBase $ Core.sync w
-  {-# INLINE sync #-}
+  query fi = getWorld >>= \w -> Core.query w fi
+  {-# INLINE query #-}
+  system ins outs fi f z e = getWorld >>= \w -> Core.system ins outs w fi f z e
+  {-# INLINE system #-}
+  progress dt = getWorld >>= \w -> Core.progress w dt
+  {-# INLINE progress #-}

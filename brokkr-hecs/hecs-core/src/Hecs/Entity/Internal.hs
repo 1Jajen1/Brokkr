@@ -5,6 +5,7 @@
 -- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
 module Hecs.Entity.Internal (
   EntityId(..)
+, Bitfield(..)
 , EntitySparseSet(..)
 , new
 , allocateEntityId
@@ -189,8 +190,8 @@ insert (EntitySparseSet szRef _ arrRef indArrRef dataArrRef) (EntityId eid) v = 
           dataArr <- IO $ \s -> case readMutVar# dataArrRef s of (# s1, dataArr #) -> (# s1, MutableArray dataArr #)
           writeArray dataArr (fromIntegral eidInd) v
 
-lookup :: EntitySparseSet a -> EntityId -> IO (Maybe a)
-lookup (EntitySparseSet szRef _ arrRef indArrRef dataArrRef) (EntityId eid) = do
+lookup :: EntitySparseSet a -> EntityId -> (a -> IO r) -> IO r -> IO r
+lookup (EntitySparseSet szRef _ arrRef indArrRef dataArrRef) (EntityId eid) onSucc onFail = do
   sz <- readByteArray @Int szRef 0
 
   indArr <- IO $ \s -> case readMutVar# indArrRef s of (# s1, indArr #) -> (# s1, MutableByteArray indArr #)
@@ -198,15 +199,15 @@ lookup (EntitySparseSet szRef _ arrRef indArrRef dataArrRef) (EntityId eid) = do
   eidInd <- readByteArray @Word32 indArr (fromIntegral $ get @"eid" eid)
   -- check if the entity is alive first
   if fromIntegral eidInd >= sz
-    then pure Nothing
+    then onFail
     else do
       arr <- IO $ \s -> case readMutVar# arrRef s of (# s1, arr #) -> (# s1, MutableByteArray arr #)
       mEid <- readByteArray @Int arr (fromIntegral eidInd)
       if mEid /= coerce eid
-        then pure Nothing
+        then onFail
         else do
           dataArr <- IO $ \s -> case readMutVar# dataArrRef s of (# s1, dataArr #) -> (# s1, MutableArray dataArr #)
-          Just <$> readArray dataArr (fromIntegral eidInd)
+          readArray dataArr (fromIntegral eidInd) >>= onSucc
 
 {- Note: Reusing entity ids
 
@@ -238,7 +239,7 @@ data EntitySparseSet a where
     -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- Int - highest ever allocated id
     -> (MutVar# RealWorld (MutableByteArray# RealWorld)) -- 64 bits. array containing all allocated and freed ids
     -> (MutVar# RealWorld (MutableByteArray# RealWorld)) -- 32 bits. maps where in the above array an id is
-    -> (MutVar# RealWorld (MutableArray# RealWorld a))
+    -> (MutVar# RealWorld (MutableArray#     RealWorld a))
     -> EntitySparseSet a
 
 -- | Unique identifier for entities
@@ -277,10 +278,10 @@ data Relation = Relation {
 , second :: {-# UNPACK #-} !Word24 -- TODO Isn't this quite unsafe if the second is a dynamic tag and needs more bits?!
 , tag    :: {-# UNPACK #-} !(Bitfield Word8 EntityTag) 
 }
-  deriving stock Generic
+  deriving stock (Show, Generic)
 
 newtype Word24 = Word24 Word
-  deriving newtype (Eq, Ord, Num, Enum, Real, Integral)
+  deriving newtype (Show, Eq, Ord, Num, Enum, Real, Integral)
   deriving (HasFixedBitSize, AsRep r) via ViaIntegral 24 Word
 
 data EntityTag = EntityTag {

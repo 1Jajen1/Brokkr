@@ -30,9 +30,9 @@ import Hecs.Component.Internal
 newtype GenericFlat a = GenericFlat a
 
 instance (Generic a, GSizeOf (Rep a), GAlignment (Rep a), GPoke (Rep a), GPeek (Rep a)) => Component (GenericFlat a) where
-  type ComponentKind (GenericFlat a) = Flat
-  type Value (GenericFlat a) = GenericFlat a
-  backing _ _ f = f
+  type ComponentKindFor (GenericFlat a) = Flat
+  type ComponentValueFor (GenericFlat a) = GenericFlat a
+  backing _ f _ = f
   {-# INLINE backing #-}
 
 instance (Generic a, GSizeOf (Rep a), GAlignment (Rep a), GPoke (Rep a), GPeek (Rep a)) => Storable (GenericFlat a) where

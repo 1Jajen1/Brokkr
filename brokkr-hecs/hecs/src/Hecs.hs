@@ -1,7 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 module Hecs (
   makeWorld
-, WorldClass
+, WorldOps
 , WorldImpl
 , runHecsM
 , HecsM
@@ -9,17 +9,25 @@ module Hecs (
 , module Hecs.Monad.Class
 , module Hecs.Filter
 , module Hecs.Fold
+, module Hecs.Query
 , EntityId
 , Has
 ) where
 
+import Hecs.Component
+
+import Hecs.Entity
+
+import Hecs.Filter hiding (filterDSL)
+import Hecs.Fold
+
 import Hecs.Monad
 import Hecs.Monad.Class
 
-import Hecs.Entity.Internal
-import Hecs.Component
-import Hecs.World.TH
+import Hecs.World.Class
 import Hecs.World.Has
 import Hecs.World.Internal
-import Hecs.Filter hiding (filterDSL, getColumn, getColumnM, component)
-import Hecs.Fold hiding (toEntityFold, HasColumns(..), ReadColumns(..), WriteColumns(..))
+import Hecs.World.TH
+
+import Hecs.Query
+

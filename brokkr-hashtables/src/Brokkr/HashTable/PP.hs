@@ -87,13 +87,13 @@ needsAlignment = alWord `rem` alEl /= 0
 size :: PrimMonad m => HashTable (PrimState m) key value -> m Int
 size HashTable_PP{..} = fromIntegral <$> readPrimVar sizeRef
 
-lookup :: (PrimMonad m, Eq key, Hash key, Prim key, Prim value) => HashTable (PrimState m) key value -> key -> m (Maybe value)
+lookup :: (PrimMonad m, Eq key, Hash key, Prim key, Prim value) => HashTable (PrimState m) key value -> key -> (value -> m r) -> m r -> m r
 {-# INLINE lookup #-}
-lookup ht key = lookupWithHash ht key (coerce (hash key) (hashSalt ht))
+lookup ht key onSucc onFail = lookupWithHash ht key (coerce (hash key) (hashSalt ht)) onSucc onFail
 
-lookupWithHash :: forall key value m . (PrimMonad m, Eq key, Prim key, Prim value) => HashTable (PrimState m) key value -> key -> Int -> m (Maybe value)
+lookupWithHash :: forall key value m r . (PrimMonad m, Eq key, Prim key, Prim value) => HashTable (PrimState m) key value -> key -> Int -> (value -> m r) -> m r -> m r
 {-# INLINE lookupWithHash #-}
-lookupWithHash HashTable_PP{..} key !hs = do
+lookupWithHash HashTable_PP{..} key !hs onSucc onFail = do
   distArr <- primitive $ \s -> case readMutVar# backingDistRef s of (# s1, arr #) -> (# s1, MutablePrimArray arr #)
   keyArr <- primitive $ \s -> case readMutVar# backingKeyRef s of (# s1, arr #) -> (# s1, MutablePrimArray arr #)
   valArr <- primitive $ \s -> case readMutVar# backingValRef s of (# s1, arr #) -> (# s1, MutablePrimArray arr #)
@@ -102,7 +102,7 @@ lookupWithHash HashTable_PP{..} key !hs = do
     (readPrimArray distArr)
     (readPrimArray keyArr)
     (readPrimArray valArr)
-    capacity key hs
+    capacity key hs onSucc onFail
 
 insert :: (PrimMonad m, Eq key, Hash key, Prim key, Prim value) => HashTable (PrimState m) key value -> key -> value -> m ()
 {-# INLINE insert #-}

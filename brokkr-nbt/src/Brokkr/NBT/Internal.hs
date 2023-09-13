@@ -170,6 +170,7 @@ parseTag 10 = parseCompound
           | otherwise = f mut cap
         {-# INLINE ensure #-}
         -- TODO Try sorting after inserting
+        -- TODO Try branchless version
         insertSorted !mut !sz !name !tag = go 0 sz
           where
             go l u

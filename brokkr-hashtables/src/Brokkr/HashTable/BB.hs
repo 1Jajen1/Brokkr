@@ -76,13 +76,13 @@ new initCap0 hashSalt maxLoadFactor = do
 size :: PrimMonad m => HashTable (PrimState m) key value -> m Int
 size HashTable_BB{..} = fromIntegral <$> readPrimVar sizeRef
 
-lookup :: (PrimMonad m, Eq key, Hash key) => HashTable (PrimState m) key value -> key -> m (Maybe value)
+lookup :: (PrimMonad m, Eq key, Hash key) => HashTable (PrimState m) key value -> key -> (value -> m r) -> m r -> m r
 {-# INLINE lookup #-}
-lookup ht key = lookupWithHash ht key (coerce (hash key) (hashSalt ht))
+lookup ht key onSucc onFail = lookupWithHash ht key (coerce (hash key) (hashSalt ht)) onSucc onFail
 
-lookupWithHash :: (PrimMonad m, Eq key) => HashTable (PrimState m) key value -> key -> Int -> m (Maybe value)
+lookupWithHash :: (PrimMonad m, Eq key) => HashTable (PrimState m) key value -> key -> Int -> (value -> m r) -> m r -> m r
 {-# INLINE lookupWithHash #-}
-lookupWithHash HashTable_BB{..} key !hs = do
+lookupWithHash HashTable_BB{..} key !hs onSucc onFail = do
   distArr <- primitive $ \s -> case readMutVar# backingDistRef s of (# s1, arr #) -> (# s1, MutablePrimArray arr #)
   keyArr <- primitive $ \s -> case readMutVar# backingKeysRef s of (# s1, arr #) -> (# s1, MutableArray arr #)
   valArr <- primitive $ \s -> case readMutVar# backingValRef s of (# s1, arr #) -> (# s1, MutableArray arr #)
@@ -91,7 +91,7 @@ lookupWithHash HashTable_BB{..} key !hs = do
     (readPrimArray @Int8 distArr)
     (readArray keyArr)
     (readArray valArr)
-    capacity key hs
+    capacity key hs onSucc onFail
 
 insert :: (PrimMonad m, Eq key, Hash key) => HashTable (PrimState m) key value -> key -> value -> m ()
 {-# INLINE insert #-}

@@ -1,579 +1,311 @@
-{-# LANGUAGE MagicHash #-}
-{-# LANGUAGE UnliftedNewtypes #-}
-{-# LANGUAGE UnboxedTuples #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UnliftedDatatypes #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE UnliftedDatatypes #-}
+-- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
 module Hecs.Archetype.Internal (
-  ArchetypeEdge(..)
-, Archetype(..)
-, Columns#(..)
-, readComponent
-, writeComponent
-, lookupComponent
-, empty
-, getEdge
-, setEdge
-, moveEntity
-, ArchetypeTy
-, addComponentType
-, removeComponentType
-, getTy
-, createArchetype
-, getColumnSizes
-, addColumnSize
-, iterateComponentIds
-, unsafeGetColumn
-, addEntity
-, showSzs
-, getNumEntities
-, removeEntity
-, removeColumnSize
-, lookupWildcardB
-, lookupWildcardL
-, lookupWildcardR
+  Archetype(..)
+, Archetype#(..)
+, getFlags
+, ArchetypeFlags(..)
+, getNrRows
+, getEntityColumn
+, getColumn, getBitSet
+, lookupColumn, lookupRelationColumns
+, readComponent, writeComponent
+, isComponentEnabled
+, enableComponent, disableComponent
+, addEntity, removeEntity
+, ArchetypeEdge(..)
+, getEdge, setEdge
+, ArchetypeMove(..)
+, moveTo
+, SizesAndAlignment
+, sizesAndAlignment
+, addComponentSizes, removeComponentSizes
+, newWithType
+, newEmpty
 ) where
 
-import Hecs.Component.Internal
-import Hecs.Entity.Internal ( EntityId(..), Entity(..), EntityTag(..), Relation(..) )
 import Brokkr.HashTable qualified as HT
 
-import Data.Hashable qualified as Hashable
+import Control.Monad.Primitive
+import Control.Monad.ST.Strict (runST)
 
-import GHC.Int
-import GHC.Exts
-import GHC.IO
-import Foreign.Storable
-import Unsafe.Coerce (unsafeCoerce)
-import Data.Proxy
 import Data.Bitfield
-import Data.Primitive (Prim)
+import Data.Int
+import Data.Primitive
+import Data.Primitive.PrimVar
+import Data.Proxy
+import Data.Word
 
-type HashTable s k v = HT.HashTable' HT.Prim HT.Boxed s k v
+import Foreign.Storable (Storable)
+import Foreign.Storable qualified as Storable
 
--- TODO This whole file needs a rework once done
--- TODO Add a custom allocator for the pinned aligned column arrays.
+import GHC.Exts
+import GHC.Generics (Generic)
 
-data ArchetypeEdge = ArchetypeEdge !(Maybe Archetype) !(Maybe Archetype)
+import Hecs.Archetype.Storage (Storage(..), SizesAndAlignment(..))
+import Hecs.Archetype.Storage qualified as Storage
+import Hecs.Archetype.Type (ArchetypeType(..), linearSearch)
+import Hecs.Archetype.Type qualified as Type
 
--- Used for component ids. Statics are sequential, rest is dynamic and also relatively sequential
-newtype IntIdHash = IntIdHash Int
-  deriving newtype (Eq, Prim)
+import Hecs.Component.Column
+import Hecs.Component.Internal
+import Hecs.Component.Relation
 
-instance HT.Hash IntIdHash where
-  hash (IntIdHash x) = HT.HashFn (const x)
-  {-# INLINE hash #-}
+import Hecs.Entity.Internal (EntityId(..))
 
--- TODO Make sum type for tags and other non-storage affecting data? I could also just share the column structure as it is entirely mutable
-data Archetype = Archetype {
-  edges        :: {-# UNPACK #-} !(HashTable RealWorld IntIdHash ArchetypeEdge)
-, columns      :: {-# UNPACK #-} !Columns#
-, componentTyB :: ComponentType#
-, componentTyF :: ComponentType#
-, componentTyT :: ComponentType#
+-- TODO Make unlifted
+data Archetype = Archetype Archetype#
+
+data Archetype# :: UnliftedType where
+  Archetype# :: {
+      ty       ::                !ArchetypeType
+    , size     :: {-# UNPACK #-} !(PrimVar RealWorld Int)
+    , flags    :: {-# UNPACK #-} !(PrimVar RealWorld (Bitfield Word32 ArchetypeFlags))
+    , entities ::                 (MutVar# RealWorld (MutableByteArray# RealWorld))
+    , boxed    :: {-# UNPACK #-} !(Storage Boxed RealWorld)
+    , flat     :: {-# UNPACK #-} !(Storage Flat  RealWorld)
+    , tag      :: {-# UNPACK #-} !(Storage Tag   RealWorld)
+    , edges    :: {-# UNPACK #-} !(HT.HashTable' HT.Storable HT.Boxed RealWorld IdInt ArchetypeEdge)
+    } -> Archetype#
+
+-- Bad. Add to Bitfield!
+deriving newtype instance Prim rep => Prim (Bitfield rep a)
+
+data ArchetypeFlags = ArchetypeFlags {
+  hasBitSets :: Bool
 }
+  deriving stock Generic
+
+getFlags :: Archetype -> IO (Bitfield Word32 ArchetypeFlags)
+getFlags (Archetype Archetype#{flags}) = readPrimVar flags
+
+newtype IdInt = IdInt Int
+  deriving newtype (Eq, Storable)
+
+instance HT.Hash IdInt where hash (IdInt x) = HT.HashFn (const x)
 
 instance Eq Archetype where
-  l == r = getTy l == getTy r
+  (Archetype Archetype#{ty = lTy}) == (Archetype Archetype#{ty = rTy}) = lTy == rTy
 
-getTy :: Archetype -> ArchetypeTy
-getTy Archetype{componentTyB, componentTyF, componentTyT} = ArchetypeTy componentTyB componentTyF componentTyT 
+data ArchetypeEdge
+  = ArchetypeEdge
+    {-# UNPACK #-} !Archetype -- destination
+    {-# UNPACK #-} !Int       -- column
 
-getNumEntities :: Archetype -> IO (Int, Int)
-getNumEntities (Archetype{columns = Columns# szRef eidRef _ _ _}) = IO $ \s ->
-  case readIntArray# szRef 0# s of
-    (# s1, i #) -> case readMutVar# eidRef s1 of
-      (# s2, arr #) -> (# s2, (I# i, I# (sizeofMutableByteArray# arr)) #) 
+newEmpty :: IO Archetype
+newEmpty = newWithType (ArchetypeType 0 mempty mempty mempty mempty) (SizesAndAlignment mempty)
 
-data ArchetypeTy = ArchetypeTy ComponentType# ComponentType# ComponentType#
+getNrRows :: Archetype -> IO Int
+{-# INLINE getNrRows #-}
+getNrRows (Archetype Archetype#{size}) = readPrimVar size
 
-iterateComponentIds :: ArchetypeTy -> (forall a . ComponentId a -> Int -> b -> IO b) -> IO b -> IO b
-iterateComponentIds (ArchetypeTy tyB tyF tyT) f z = iterateTy tyB f z >>= \b -> iterateTy tyF f (pure b) >>= \b1 -> iterateTy tyT f (pure b1)
-{-# INLINE iterateComponentIds #-}
+getColumn :: forall c r . Component c => Archetype -> Int -> (Column (ComponentKindFor c) RealWorld c -> IO r) -> IO r
+{-# INLINE getColumn #-}
+getColumn (Archetype Archetype#{boxed,flat,tag}) = backing @_ @c
+  (Storage.getColumn boxed)
+  (Storage.getColumn flat )
+  (Storage.getColumn tag  )
 
-iterateTy :: ComponentType# -> (ComponentId Any -> Int -> b -> IO b) -> IO b -> IO b
-iterateTy (ComponentType# arr) f z = z >>= go 0# 
-  where
-    sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
-    go n b
-      | isTrue# (n >=# sz) = pure b
-      | otherwise = f (coerce $ I# (indexIntArray# arr n)) (I# n) b >>= go (n +# 1#)
-{-# INLINE iterateTy #-}
+getEntityColumn :: Archetype -> (Column Flat RealWorld EntityId -> IO r) -> IO r
+{-# INLINE getEntityColumn #-}
+getEntityColumn (Archetype Archetype#{entities}) cont = do
+  col <- primitive $ \s -> case readMutVar# entities s of (# s', arr #) -> (# s', FlatColumn $ MutableByteArray arr #)
+  cont col
 
-instance Show ArchetypeTy where
-  show (ArchetypeTy b u t) = "ArchetypeTy { boxed = " <> showTy b <> " unboxed = " <> showTy u <> " tag = " <> showTy t <> " }"
+getBitSet :: forall c r . KnownComponentKind c => Archetype -> Int -> (MutablePrimArray RealWorld Word64 -> IO r) -> IO r -> IO r
+{-# INLINE getBitSet #-}
+getBitSet (Archetype Archetype#{boxed,flat,tag}) col = oneShot $ \onSucc -> oneShot $ \onFail -> branchKind @c
+  (Storage.getBitSet boxed)
+  (Storage.getBitSet flat )
+  (Storage.getBitSet tag  )
+  col onSucc onFail
 
-showTy :: ComponentType# -> String
-showTy (ComponentType# arr) = "[" <> dropLast (go 0# "") <> "]"
-  where
-    dropLast [] = []
-    dropLast [_] = []
-    dropLast (x:y:xs) = x : dropLast (y:xs)
-    sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
-    go n b | isTrue# (n >=# sz) = b
-           | otherwise = show (I# (indexIntArray# arr n)) <> "," <> go (n +# 1#) b
+lookupColumn :: forall c r . Component c => Archetype -> ComponentId c -> (Int -> r) -> r -> r
+{-# INLINE lookupColumn #-}
+lookupColumn (Archetype Archetype#{ty}) cid onSucc onFail = Type.findComponent ty cid onSucc onFail
 
-instance Eq ArchetypeTy where
-  ArchetypeTy lB lU lT == ArchetypeTy rB rU rT = eqComponentType lB rB && eqComponentType lU rU && eqComponentType lT rT
-  {-# INLINE (==) #-}
+lookupRelationColumns :: Archetype -> ComponentId (Rel a b) -> (Int -> Int -> r -> r) -> r -> r
+{-# INLINE lookupRelationColumns #-}
+lookupRelationColumns (Archetype Archetype#{ty}) cid onSucc onFail = Type.findRelationMatches ty cid onSucc onFail
 
-instance HT.Hash ArchetypeTy where
-  hash (ArchetypeTy b u t) = hashComponentType b <> hashComponentType u <> hashComponentType t
-  {-# INLINE hash #-}
-  
--- This does not need to be IO, many others don't need to either, move to arbitrary state and use ST?
--- Also if this doesn't inline, the Int will be boxed
-addComponentType :: forall c ty . KnownComponentType ty => Proxy ty -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int)
-addComponentType ty (ArchetypeTy boxedTy unboxedTy tagTy) compId =
-  branchCompType ty
-    (IO $ \s -> case addComponent boxedTy compId s of
-      (# s1, newBoxedTy, ind #) -> (# s1, (ArchetypeTy newBoxedTy unboxedTy tagTy, I# ind) #))
-    (IO $ \s -> case addComponent unboxedTy compId s of
-      (# s1, newUnboxedTy, ind #) -> (# s1, (ArchetypeTy boxedTy newUnboxedTy tagTy, I# ind) #))
-    (IO $ \s -> case addComponent tagTy compId s of
-      (# s1, newTagTy, ind #) -> (# s1, (ArchetypeTy boxedTy unboxedTy newTagTy, I# ind) #))
-{-# INLINE addComponentType #-}
+addEntity :: Archetype -> EntityId -> IO Int
+addEntity (Archetype Archetype#{size,entities,boxed,flat,tag}) entity = do
+  sz <- readPrimVar size
+  eids0 <- primitive $ \s -> case readMutVar# entities s of (# s', arr #) -> (# s', MutablePrimArray arr #)
+  cap <- getSizeofMutablePrimArray eids0
+  eids <- if cap > sz
+    then pure eids0
+    else do
+      let newSz = growFactor cap
+      newPrimArr@(MutablePrimArray new') <- resizeMutablePrimArray eids0 newSz
+      primitive $ \s -> (# writeMutVar# entities new' s, () #)
+      Storage.growStorage boxed newSz
+      Storage.growStorage flat  newSz
+      Storage.growStorage tag   newSz
+      pure newPrimArr
+  writePrimArray @Int eids sz $ coerce entity
+  writePrimVar size $ sz + 1
+  pure sz
 
-removeComponentType :: forall ty . KnownComponentType ty => Proxy ty -> ArchetypeTy -> Int -> IO ArchetypeTy
-removeComponentType ty (ArchetypeTy boxedTy unboxedTy tagTy) col =
-  branchCompType ty
-    (IO $ \s -> case removeComponent boxedTy col s of
-      (# s1, newBoxedTy #) -> (# s1, ArchetypeTy newBoxedTy unboxedTy tagTy #))
-    (IO $ \s -> case removeComponent unboxedTy col s of
-      (# s1, newUnboxedTy #) -> (# s1, ArchetypeTy boxedTy newUnboxedTy tagTy #))
-    (IO $ \s -> case removeComponent tagTy col s of
-      (# s1, newTagTy #) -> (# s1, ArchetypeTy boxedTy unboxedTy newTagTy #))
-{-# INLINE removeComponentType #-}
+-- TODO Remove from storage too!
+removeEntity :: Archetype -> Int -> IO EntityId
+removeEntity (Archetype Archetype#{..}) row = do
+  sz <- readPrimVar size
+  let last = sz - 1
+  eids <- primitive $ \s -> case readMutVar# entities s of (# s', arr #) -> (# s', MutablePrimArray arr #)
+  lastEid :: Int <- readPrimArray eids last
+  writePrimArray eids row lastEid
+  writePrimVar size last
+  pure $ coerce lastEid
 
-removeComponent :: ComponentType# -> Int -> State# RealWorld -> (# State# RealWorld, ComponentType# #)
-removeComponent (ComponentType# arr) (I# col) s0 =
-  case newByteArray# (bSz -# 8#) s0 of
-    (# s1, newArr #) -> case copyByteArray# arr 0# newArr 0# (col *# 8#) s1 of
-      s2 -> case copyByteArray# arr ((col *# 8#) +# 8#) newArr (col *# 8#) (bSz -# 8# -# (col *# 8#)) s2 of
-        s3 -> case unsafeFreezeByteArray# newArr s3 of (# s4, bar #) -> (# s4, ComponentType# bar #)
-  where
-    bSz = sizeofByteArray# arr
+growFactor :: Int -> Int
+-- 1.5 growth factor
+growFactor i = (i * 3) `quot` 2
 
-newtype ComponentType# = ComponentType# ByteArray#
-
-eqComponentType :: ComponentType# -> ComponentType# -> Bool
-eqComponentType (ComponentType# l) (ComponentType# r)
-  | isTrue# (sameByteArray# l r) = True
-  | False <- isTrue# (nL ==# nR) = False
-  | otherwise = EQ == compare (I# (compareByteArrays# l 0# r 0# nL)) 0
-  where
-    nL = sizeofByteArray# l
-    nR = sizeofByteArray# r
-
-hashComponentType :: ComponentType# -> HT.HashFn
-hashComponentType (ComponentType# arr) = HT.HashFn $ \i -> go 0# i
-  where
-    sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
-    go n !h | isTrue# (n >=# sz) = h
-            | otherwise = go (n +# 1#) (Hashable.hashWithSalt h (I# (indexIntArray# arr n)))
-{-# INLINE hashComponentType #-}
-
-addComponent :: ComponentType# -> ComponentId c -> State# RealWorld -> (# State# RealWorld, ComponentType#, Int# #)
-addComponent (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s0 =
-  case newByteArray# (bSz +# 8#) s0 of
-    (# s1, mar #) -> case go mar 0# s1 of
-      (# s2, ind #) -> case writeIntArray# mar ind i s2 of
-        s3 -> case copyByteArray# arr (ind *# 8#) mar (8# *# (ind  +# 1#)) (bSz -# ind *# 8#) s3 of -- TODO Double check bounds
-          s4 -> case unsafeFreezeByteArray# mar s4 of
-            (# s5, newArr #) -> (# s5, ComponentType# newArr, ind #)
-  where
-    go mar n s | isTrue# (n >=# sz) = (# s, sz #)
-               | isTrue# (i ># el) = case writeIntArray# mar n el s of s1 -> go mar (n +# 1#) s1
-               | otherwise = (# s, n #)
-      where el = indexIntArray# arr n
-    sz = uncheckedIShiftRL# bSz 3#
-    bSz = sizeofByteArray# arr
-{-# NOINLINE addComponent #-}
-
--- Linear search for the component
--- Maybe instead use a (storable) hashtable?
--- Use a sorted bytearray and map that into the actual indices?
-indexComponent# :: ComponentType# -> ComponentId c -> (# Int# | (# #) #)
-indexComponent# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) = go 0#
-  where
-    sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
-    go n | isTrue# (n >=# sz) = (# | (# #) #)
-    go n | isTrue# (indexIntArray# arr n ==# i) = (# n | #)
-    go n = go (n +# 1#)
--- Core is much more readable with this not inlined
--- TODO Benchmark this!
-{-# NOINLINE indexComponent# #-}
-
-indexWildcardB# :: ComponentType# -> (# Int# | (# #) #)
-indexWildcardB# (ComponentType# arr) = go 0#
-  where
-    sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
-    go n
-      | isTrue# (n >=# sz) = (# | (# #) #)
-      | (Bitfield @Int @Entity (I# el)).tag.isRelation = (# n | #)
-      | otherwise = go (n +# 1#)
-      where
-        el = indexIntArray# arr n
-{-# NOINLINE indexWildcardB# #-}
-
-indexWildcardL# :: ComponentType# -> ComponentId c -> (# Int# | (# #) #)
-indexWildcardL# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) = go 0#
-  where
-    sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
-    go n
-      | isTrue# (n >=# sz) = (# | (# #) #)
-      | isTrue# (el ==# i) = (# n | #)
-      | otherwise = go (n +# 1#)
-      where
-        el' = indexIntArray# arr n
-        el = if (Bitfield @Int @Entity (I# el')).tag.isRelation
-              then let !(I# sndId) = fromIntegral $ (Bitfield @Int @Relation (I# el')).second in sndId
-              else el'
-{-# NOINLINE indexWildcardL# #-}
-
-indexWildCardR# :: ComponentType# -> ComponentId c -> (# Int# | (# #) #)
-indexWildCardR# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) = go 0#
-  where
-    sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
-    go n
-      | isTrue# (n >=# sz) = (# | (# #) #)
-      | isTrue# (el ==# i) = (# n | #)
-      | otherwise = go (n +# 1#)
-      where
-        el' = indexIntArray# arr n
-        el = if (Bitfield @Int @Entity (I# el')).tag.isRelation
-              then let !(I# firstId) = fromIntegral $ (Bitfield @Int @Relation (I# el')).first in firstId
-              else el'
-{-# NOINLINE indexWildCardR# #-}
-
-numComponents :: ComponentType# -> Int#
-numComponents (ComponentType# arr) = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
-{-# INLINE numComponents #-}
-
--- Holds either boxed Array# or unboxed (pinned) ByteArray#
--- rows - boxed arrs - unboxed arrs
--- All boxed and unboxed arrays have at least rows capacity, but will generally be larger
--- They are also all of the same capacity and are grown together
--- TODO I could use SmallMutableArray# for small capacities, just define some threshold for it and unsafeCoerce# it in?
-data Columns# :: UnliftedType where
-  Columns# ::
-       MutableByteArray# RealWorld                                -- nr of used rows
-    -> MutVar# RealWorld (MutableByteArray# RealWorld)            -- Entity ids
-    -> SmallMutableArray# RealWorld (MutableArray# RealWorld Any) -- array of boxed component arrays
-    -> ColumnSizes#                                               -- ByteSizes and alignment of the following components
-    -> SmallMutableArray# RealWorld (MutableByteArray# RealWorld) -- array of unboxed component arrays
-    -> Columns#
-
-newtype ColumnSizes# = ColumnSizes# ByteArray#
-
-showSzs :: ColumnSizes# -> String
-showSzs (ColumnSizes# arr) = showTy (ComponentType# arr)
-
-addColumnSize :: Int -> Int -> Int -> ColumnSizes# -> State# RealWorld -> (# State# RealWorld, ColumnSizes# #)
-addColumnSize (I# at) (I# bSz) (I# bAl) (ColumnSizes# szs) s0 =
-  case newByteArray# (sz +# 16#) s0 of
-    (# s1, mar #) -> case writeIntArray# mar (at *# 2#) bSz s1 of
-      s2 -> case writeIntArray# mar (at *# 2# +# 1#) bAl s2 of
-        s3 -> case copyByteArray# szs 0# mar 0# (at *# 16#) s3 of -- TODO Double check bounds
-          s4 -> case copyByteArray# szs (at *# 16#) mar (at *# 16# +# 16#) (sz -# at *# 16#) s4 of -- TODO Double check bounds
-            s5 -> case unsafeFreezeByteArray# mar s5 of
-              (# s6, newArr #) -> (# s6, ColumnSizes# newArr #)
-  where
-    sz = sizeofByteArray# szs
-
-removeColumnSize :: Int -> ColumnSizes# -> State# RealWorld -> (# State# RealWorld, ColumnSizes# #)
-removeColumnSize (I# at) (ColumnSizes# szs) s0 =
-  case newByteArray# (sz -# 16#) s0 of
-    (# s1, newArr #) -> case copyByteArray# szs 0# newArr 0# (at *# 16#) s1 of
-      s2 -> case copyByteArray# szs ((at *# 16#) +# 16#) newArr (at *# 16#) (sz -# 16# -# (at *# 16#)) s2 of
-        s3 -> case unsafeFreezeByteArray# newArr s3 of (# s4, bar #) -> (# s4, ColumnSizes# bar #)
-  where
-    sz = sizeofByteArray# szs
-
-empty :: IO Archetype
-empty = do
-  edges <- HT.new 4 0 0.75
-  IO $ \s0 ->
-    case newArray# 0# (error "No") s0 of
-      (# s1, arr #) -> case newSmallArray# 0# arr s1 of
-        (# s2, mar1 #) -> case newByteArray# 0# s2 of
-          (# s3, mbar #) -> case newSmallArray# 0# mbar s3 of
-            (# s4, mar2 #) -> case unsafeFreezeByteArray# mbar s4 of
-              (# s5, bar #) -> case newByteArray# 8# s5 of
-                (# s6, szRef #) -> case writeIntArray# szRef 0# 0# s6 of
-                  s7 -> case newByteArray# 8# s7 of
-                    (# s8, eidArr #) -> case newMutVar# eidArr s8 of
-                      (# s9, eidRef #) ->
-                        (#
-                          s9
-                        , let columns      = Columns# szRef eidRef mar1 (ColumnSizes# bar) mar2
-                              componentTyB = ComponentType# bar
-                              componentTyF = ComponentType# bar
-                              componentTyT = ComponentType# bar
-                          in Archetype{..}
-                        #)
-
--- Note: This performs no bounds checks. At this point we should have already checked if that entity and the component is in this table!
-readComponent :: forall a . Component a => Proxy a -> Archetype -> Int -> Int -> IO a
-readComponent p = backing p
-  readBoxedComponent
-  (\aty row col -> coerce $ readStorableComponent @(Value a) aty row col)
-{-# INLINE readComponent #-}
-
-readStorableComponent :: Storable a => Archetype -> Int -> Int -> IO a
-readStorableComponent Archetype{columns = Columns# _ _ _ _ arrs} row (I# column) = IO $ \s ->
-  case readSmallArray# arrs column s of
-    (# s', colArr #) -> case peekElemOff (Ptr (mutableByteArrayContents# colArr)) row of
-      IO f -> f s'
-{-# INLINE readStorableComponent #-}
-
-readBoxedComponent :: Archetype -> Int -> Int -> IO a
-readBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# column) = IO $ \s ->
-  case readSmallArray# arrs column s of
-    (# s', colArr #) -> case readArray# colArr row s' of
-      (# s'', a #) -> (# s'', unsafeCoerce a #)
-
-writeComponent :: forall a . Component a => Proxy a -> Archetype -> Int -> Int -> a -> IO ()
-writeComponent p = backing p
-  writeBoxedComponent
-  (\aty row col el -> writeStorableComponent @(Value a) aty row col (coerce el))
-{-# INLINE writeComponent #-}
-
-writeStorableComponent :: forall a . Storable a => Archetype -> Int -> Int -> a -> IO ()
-writeStorableComponent Archetype{columns = Columns# _ _ _ _ arrs} row (I# column) el = IO $ \s0 ->
-  case readSmallArray# arrs column s0 of
-    (# s1, colArr #) -> case pokeElemOff (Ptr (mutableByteArrayContents# colArr)) row el of
-      IO f -> f s1
-{-# INLINE writeStorableComponent #-}
-
-writeBoxedComponent :: Archetype -> Int -> Int -> a -> IO ()
-writeBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# column) el = IO $ \s0 ->
-  case readSmallArray# arrs column s0 of
-    (# s1, colArr #) -> case writeArray# colArr row (unsafeCoerce el) s1 of
-      s2 -> (# s2, () #)
-
-lookupComponent :: forall c ty r . KnownComponentType ty => Proxy ty -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
-lookupComponent ty = branchCompType ty
-  (\Archetype{componentTyB} compId s f -> case indexComponent# componentTyB compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-  (\Archetype{componentTyF} compId s f -> case indexComponent# componentTyF compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-  (\Archetype{componentTyT} compId s f -> case indexComponent# componentTyT compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-{-# INLINE lookupComponent #-}
-
-lookupWildcardB :: forall ty r . KnownComponentType ty => Proxy ty -> Archetype -> (Int -> r) -> r -> r
-lookupWildcardB ty = branchCompType ty
-  (\Archetype{componentTyB} s f -> case indexWildcardB# componentTyB of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-  (\Archetype{componentTyF} s f -> case indexWildcardB# componentTyF of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-  (\Archetype{componentTyT} s f -> case indexWildcardB# componentTyT of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-{-# INLINE lookupWildcardB #-}
-
-lookupWildcardL :: forall c ty r . KnownComponentType ty => Proxy ty -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
-lookupWildcardL ty = branchCompType ty
-  (\Archetype{componentTyB} compId s f -> case indexWildcardL# componentTyB compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-  (\Archetype{componentTyF} compId s f -> case indexWildcardL# componentTyF compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-  (\Archetype{componentTyT} compId s f -> case indexWildcardL# componentTyT compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-{-# INLINE lookupWildcardL #-}
-
-lookupWildcardR :: forall c ty r . KnownComponentType ty => Proxy ty -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
-lookupWildcardR ty = branchCompType ty
-  (\Archetype{componentTyB} compId s f -> case indexWildCardR# componentTyB compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-  (\Archetype{componentTyF} compId s f -> case indexWildCardR# componentTyF compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-  (\Archetype{componentTyT} compId s f -> case indexWildCardR# componentTyT compId of (# n | #) -> s (I# n); (# | (# #) #) -> f)
-{-# INLINE lookupWildcardR #-}
-
-unsafeGetColumn :: forall c ty . KnownComponentType ty => Proxy ty -> Archetype -> Int -> IO (Column ty c)
-unsafeGetColumn ty (Archetype{columns = Columns# _ _ boxed _ unboxed}) (I# col) = branchCompType ty
-  (IO $ \s -> case readSmallArray# boxed col s of (# s1, arr #) -> (# s1, ColumnBoxed (unsafeCoerce# arr) #))
-  (IO $ \s -> case readSmallArray# unboxed col s of (# s1, arr #) -> (# s1, ColumnFlat arr #))
-  (error "Tried to get a column for a tag")
-{-# INLINE unsafeGetColumn #-}
-
-grow :: Columns# -> State# RealWorld -> State# RealWorld
-grow (Columns# _ eids boxed (ColumnSizes# szs) unboxed) s = case copyUnboxed 0# (copyBoxed 0# s) of
-  s1 -> case readMutVar# eids s1 of
-    (# s2, eidarr #) -> case newByteArray# (2# *# sizeofMutableByteArray# eidarr) s2 of
-      (# s3, newarr #) -> case copyMutableByteArray# eidarr 0# newarr 0# (sizeofMutableByteArray# eidarr) s3 of
-        s4 -> writeMutVar# eids newarr s4
-  where
-    copyUnboxed n s0 | isTrue# (n >=# numUnboxed) = s0
-    copyUnboxed n s0 =
-      case readSmallArray# unboxed n s0 of
-        (# s1, arr #) -> case newAlignedPinnedByteArray# (2# *# sizeofMutableByteArray# arr) bAl s1 of
-          (# s2, newArr #) -> case copyMutableByteArray# arr 0# newArr 0# (sizeofMutableByteArray# arr) s2 of
-            s3 -> case writeSmallArray# unboxed n newArr s3 of
-              s4 -> copyUnboxed (n +# 1#) s4
-      where bAl = indexIntArray# szs ((n *# 2#) +# 1#)
-    copyBoxed n s0 | isTrue# (n >=# numBoxed) = s0
-    copyBoxed n s0 =
-      case readSmallArray# boxed n s0 of
-        (# s1, arr #) -> case newArray# (2# *# sizeofMutableArray# arr) (error "Hecs.Archetype.Internal:grow Placeholder") s1 of
-          (# s2, newArr #) -> case copyMutableArray# arr 0# newArr 0# (sizeofMutableArray# arr) s2 of
-            s3 -> case writeSmallArray# boxed n newArr s3 of
-              s4 -> copyBoxed (n +# 1#) s4
-    numBoxed = sizeofSmallMutableArray# boxed
-    numUnboxed = sizeofSmallMutableArray# unboxed
-
-getEdge :: Archetype -> ComponentId c -> IO ArchetypeEdge
-getEdge (Archetype{edges}) compId = HT.lookup edges (coerce compId) >>= \case
-  Just x -> pure x
-  Nothing -> pure $ ArchetypeEdge Nothing Nothing
+getEdge :: Archetype -> ComponentId c -> (ArchetypeEdge -> IO r) -> IO r -> IO r
+{-# INLINE getEdge #-}
+getEdge (Archetype Archetype#{edges}) cid = HT.lookup edges (coerce cid)
 
 setEdge :: Archetype -> ComponentId c -> ArchetypeEdge -> IO ()
-setEdge (Archetype{edges}) = HT.insert edges . coerce
+setEdge (Archetype Archetype#{edges}) cid edge = HT.insert edges (coerce cid) edge
 
-getColumnSizes :: Archetype -> ColumnSizes#
-getColumnSizes Archetype{columns = Columns# _ _ _ szs _} = szs
+data ArchetypeMove
+  = ArchetypeMove
+    {-# UNPACK #-} !Int      -- new row in the destination archetype
+    {-# UNPACK #-} !EntityId -- the entity we swapped with in the origin archetype
 
--- It is assumed that the archetype does not already have the component
-createArchetype :: ArchetypeTy -> ColumnSizes# -> IO Archetype
-createArchetype (ArchetypeTy boxedTy unboxedTy tagTy) szs = do
-  -- traceIO $ "New Archetype with type: " <> show (ArchetypeTy boxedTy unboxedTy tagTy)
-  edges <- HT.new 4 0 0.75
-  IO $ \s0 -> case newColumns initSz numBoxed numUnboxed szs s0 of
-    (# s1, cols #) -> (# s1, Archetype edges cols boxedTy unboxedTy tagTy #)
+moveTo :: Archetype -> Archetype -> Int -> IO ArchetypeMove
+moveTo (Archetype origin) (Archetype destination@Archetype#{flags}) !row = do
+  -- calculate the move masks
+  let (!boxedMask, !flatMask, !tagMask) = mkMoveMasks (ty origin) (ty destination)
+
+  -- remove the entity from the current archetype by swapping with the last
+  szOrigin <- readPrimVar (size origin)
+  let lastOrigin = szOrigin - 1
+  writePrimVar (size origin) lastOrigin
+  
+  eidsOrigin <- primitive $ \s -> case readMutVar# (entities origin) s of (# s', arr #) -> (# s', MutablePrimArray arr #)
+  toMove  :: Int <- readPrimArray eidsOrigin row
+  lastEid :: Int <- readPrimArray eidsOrigin lastOrigin
+  writePrimArray eidsOrigin row lastEid
+
+  -- addEntity also takes care of growing all arrays if necessary
+  newRow <- addEntity (Archetype destination) (coerce toMove)
+
+  eidsDestination <- primitive $ \s -> case readMutVar# (entities destination) s of (# s', arr #) -> (# s', MutablePrimArray arr #)
+  toCap <- getSizeofMutablePrimArray @_ @Int eidsDestination
+
+  -- move components
+  let newBitSetCallback = do
+        dstFlags <- readPrimVar flags
+        writePrimVar flags $ set @"hasBitSets" dstFlags True
+  Storage.moveTo (boxed origin) (boxed destination) lastOrigin row newRow toCap boxedMask newBitSetCallback
+  Storage.moveTo (flat  origin) (flat  destination) lastOrigin row newRow toCap flatMask newBitSetCallback
+  Storage.moveTo (tag   origin) (tag   destination) lastOrigin row newRow toCap tagMask newBitSetCallback
+
+  pure $ ArchetypeMove newRow (coerce lastEid)
   where
-    initSz = 4# -- TODO Inits. Update: Fun. This being 4 or 256 does not impact performance at all. So growing really does amortize nicely
-    numBoxed = numComponents boxedTy
-    numUnboxed = numComponents unboxedTy
+    mkMoveMasks (ArchetypeType _ oB oF oT _) (ArchetypeType _ dB dF dT _) = (mkMoveMask oB dB, mkMoveMask oF dF, mkMoveMask oT dT)
+    mkMoveMask oArr dArr = runST $ do
+      let sz = sizeofPrimArray oArr
+      mar <- newPrimArray sz
+      let goMoveMask n
+            | n >= sz   = pure ()
+            | otherwise = do
+              let src = indexPrimArray oArr n
+              case linearSearch dArr src of
+                (# n# | #) -> writePrimArray mar n (I# n#)
+                (# | _ #)  -> writePrimArray mar n (-1)
+      goMoveMask 0
+      unsafeFreezePrimArray mar
 
--- Only for the empty archetype really ...
-addEntity :: Archetype -> EntityId -> IO Int
-addEntity Archetype{columns = c@(Columns# szRef eidRefs _ _ _)} (EntityId (Bitfield (I# eid))) = IO $ \s0 ->
-  case readIntArray# szRef 0# s0 of
-    (# s1, sz #) -> case readMutVar# eidRefs s1 of
-      (# s2, eidArr #) -> case (if isTrue# (sz >=# uncheckedIShiftRL# (sizeofMutableByteArray# eidArr) 3#)
-        then grow c s2
-        else s2) of
-          s3 -> case readMutVar# eidRefs s3 of
-            (# s4, actualEidArr #) -> case writeIntArray# actualEidArr sz eid s4 of
-              s5 -> case writeIntArray# szRef 0# (sz +# 1#) s5 of
-                s6 -> (# s6, I# sz #)
+sizesAndAlignment :: Archetype -> SizesAndAlignment
+sizesAndAlignment (Archetype Archetype#{flat = FlatStorage sz _ _}) = sz
 
-removeEntity :: Archetype -> Int -> IO EntityId
-removeEntity aty@Archetype{columns = Columns# szRef eidRefs _ _ _} (I# row) = IO $ \s0 ->
-  case readIntArray# szRef 0# s0 of
-    (# s1, sz #) -> case readMutVar# eidRefs s1 of
-      (# s2, eidArr #) -> case readIntArray# eidArr (sz -# 1#) s2 of
-        (# s3, moved #) -> case writeIntArray# eidArr row moved s3 of
-          s4 -> case writeIntArray# szRef 0# (sz -# 1#) s4 of
-            s5 -> case removeEntity' aty (sz -# 1#) row s5 of
-              s6 -> (# s6, coerce (I# moved) #)
+addComponentSizes :: forall c . Storable c => Proxy c -> SizesAndAlignment -> SizesAndAlignment
+addComponentSizes _ (SizesAndAlignment bs) = runST $ do
+  let sz = sizeofByteArray bs
+  mba <- newByteArray (sz + 2)
+  copyByteArray mba 0 bs 0 sz
+  writeByteArray @Int8 mba sz       (fromIntegral $ Storable.sizeOf    (undefined :: c))
+  writeByteArray @Int8 mba (sz + 1) (fromIntegral $ Storable.alignment (undefined :: c))
+  SizesAndAlignment <$> unsafeFreezeByteArray mba
 
-removeEntity' :: Archetype -> Int# -> Int# -> State# RealWorld -> State# RealWorld  
-removeEntity' aty lastI row s0 = copyUnboxed 0# (copyBoxed 0# s0)
+removeComponentSizes :: Int -> SizesAndAlignment -> SizesAndAlignment
+removeComponentSizes col (SizesAndAlignment bs) = runST $ do
+  let sz = sizeofByteArray bs
+  mba <- newByteArray (sz + 2)
+  copyByteArray mba 0 bs 0 (col * 2)
+  copyByteArray mba col bs (col * 2 + 2) (sz - col * 2 - 2)
+  SizesAndAlignment <$> unsafeFreezeByteArray mba
+
+newWithType :: ArchetypeType -> SizesAndAlignment -> IO Archetype
+newWithType ty@(ArchetypeType _ b f t _) sizesAndAlign = do
+  size <- newPrimVar 0
+  flags <- newPrimVar $ pack ArchetypeFlags { hasBitSets = False }
+  edges <- HT.new 4 0 0.75 -- We use a precomputed hash, also nothing user defined, so we need no salt
+  boxed <- Storage.newBoxed (sizeofPrimArray b) initSize
+  flat  <- Storage.newFlat  (sizeofPrimArray f) sizesAndAlign initSize
+  tag   <- Storage.newTag   (sizeofPrimArray t) initSize
+  MutablePrimArray eidArr <- newPrimArray @_ @Int initSize
+  primitive $ \s ->
+    case newMutVar# eidArr s of
+      (# s', entities #) -> (# s', Archetype Archetype#{..} #)
   where
-    -- TODO Don't copy around ourselves (row == srcLast) in boxed components because that also leaves gc refs...
-    copyBoxed n s
-      | isTrue# (n >=# numBoxed) = s
-      | otherwise =
-        case readSmallArray# boxed n s of
-          (# s1, srcArr #) -> case readArray# srcArr lastI s1 of
-              (# s2, lastEl #) -> copyBoxed (n +# 1#)
-                ( writeArray# srcArr lastI (error "Hecs.Internal.Archetype.removeEntity' placeholder")
-                  (writeArray# srcArr row lastEl s2)
-                )
+    initSize = 4
 
-    copyUnboxed n s
-      | isTrue# (n >=# numUnboxed) = s
-      | otherwise =
-        case readSmallArray# unboxed n s of
-          (# s1, srcArr #) -> copyUnboxed (n +# 1#)
-            (copyMutableByteArray# srcArr (lastI *# bSz) srcArr (row *# bSz) bSz s1)
-      where
-        bSz = indexIntArray# szs (n *# 2#)
-    !(Columns# _ _ boxed (ColumnSizes# szs) unboxed) = columns aty
-    numBoxed = sizeofSmallMutableArray# boxed
-    numUnboxed = sizeofSmallMutableArray# unboxed
+readComponent :: forall c r . (Component c, Coercible (ComponentValueFor c) c) => Archetype -> Int -> Int -> (c -> IO r) -> IO r
+{-# INLINE readComponent #-}
+readComponent (Archetype Archetype#{boxed,flat,tag}) =
+  backing @_ @c
+    (Storage.readStorage boxed)
+    (Storage.readStorage flat )
+    (Storage.readStorage tag  )
 
-moveEntity :: Archetype -> Int -> Int -> Archetype -> IO (Int, EntityId)
-moveEntity srcAty (I# row) (I# skipColumn) dstAty = IO $ \s ->
-  case readIntArray# dstSzRef 0# s of
-    (# s1, dstSz #) -> case readCap s1 of
-      (# s2, dstCap #) -> case (if isTrue# (dstSz >=# dstCap)
-        then grow (columns dstAty) s2
-        else s2) of
-          s3 -> case readIntArray# srcSzRef 0# s3 of
-            (# s4, srcSz #) -> case writeIntArray# dstSzRef 0# (dstSz +# 1#) s4 of
-              s5 -> case writeIntArray# srcSzRef 0# (srcSz -# 1#) s5 of
-                s6 -> case readMutVar# srcEids s6 of
-                  (# s7, srcEidArr #) -> case readMutVar# dstEids s7 of
-                    (# s8, dstEidArr #) -> case copyMutableByteArray# srcEidArr (row *# 8#) dstEidArr (dstSz *# 8#) 8# s8 of
-                      s9 -> case copyMutableByteArray# srcEidArr (8# *# (srcSz -# 1#)) srcEidArr (row *# 8#) 8# s9 of
-                        s10 -> case readIntArray# srcEidArr row s10 of
-                          (# s11, movedEid #) ->
-                            (# moveEntity' srcAty (srcSz -# 1#) row skipColumn dstAty dstSz s11, (I# dstSz, EntityId $ Bitfield (I# movedEid)) #)
-  where
-    !(Columns# srcSzRef srcEids _ _ _) = columns srcAty
-    !(Columns# dstSzRef dstEids _ _ _) = columns dstAty
-    readCap s = case readMutVar# dstEids s of (# s1, arr #) -> (# s1, uncheckedIShiftRL# (sizeofMutableByteArray# arr) 3# #)
+writeComponent :: forall c . (Component c, Coercible (ComponentValueFor c) c) => Archetype -> Int -> Int -> c -> IO ()
+{-# INLINE writeComponent #-}
+writeComponent (Archetype Archetype#{boxed,flat,tag}) =
+  backing @_ @c
+    (Storage.writeStorage boxed)
+    (Storage.writeStorage flat )
+    (Storage.writeStorage tag  )
 
-moveEntity' :: Archetype -> Int# -> Int# -> Int# -> Archetype -> Int# -> State# RealWorld -> State# RealWorld
-moveEntity' srcAty srcLast row skipColumn dstAty newRow s0 = copyUnboxed 0# 0# (copyBoxed 0# 0# s0)
-  where
-    copyBoxed n m s
-      | isTrue# (n >=# srcNumBoxed) = s
-      | isTrue# (m ==# skipColumn) && changedBoxed && isAdd     = copyBoxed n (m +# 1#) s
-      | isTrue# (n ==# skipColumn) && changedBoxed && not isAdd = copyBoxed (n +# 1#) m s
-      | otherwise =
-        case readSmallArray# srcBoxed n s of
-          (# s1, srcArr #) -> case readArray# srcArr row s1 of
-            (# s2, el #) -> case readArray# srcArr srcLast s2 of
-              (# s3, lastEl #) -> case readSmallArray# dstBoxed m s3 of
-                (# s4, dstArr #) -> copyBoxed (n +# 1#) (m +# 1#)
-                  ( writeArray# srcArr row lastEl
-                    ( writeArray# srcArr srcLast (error "Hecs.Internal.Archetype.removeEntity' placeholder")
-                      (writeArray# dstArr newRow el s4)
-                    )
-                  )
+isComponentEnabled :: forall c . KnownComponentKind c => Proxy c -> Archetype -> Int -> Int -> IO Bool
+isComponentEnabled _ (Archetype Archetype#{flags, boxed,flat,tag}) row col = do
+  archetypeFlags <- readPrimVar flags
+  if get @"hasBitSets" archetypeFlags
+    then do
+      branchKind @c
+        (Storage.isEnabled boxed)
+        (Storage.isEnabled flat )
+        (Storage.isEnabled tag  )
+        row col
+    else pure False
 
-    copyUnboxed n m s
-      | isTrue# (n >=# srcNumUnboxed) = s
-      | isTrue# (m ==# skipColumn) && changedUnboxed && isAdd     = copyUnboxed n (m +# 1#) s
-      | isTrue# (n ==# skipColumn) && changedUnboxed && not isAdd = copyUnboxed (n +# 1#) m s
-      | otherwise =
-        case readSmallArray# srcUnboxed n s of
-          (# s1, srcArr #) -> case readSmallArray# dstUnboxed m s1 of
-              (# s3, dstArr #) ->
-                copyUnboxed (n +# 1#) (m +# 1#)
-                  ( copyMutableByteArray# srcArr (srcLast *# bSz) srcArr (row *# bSz) bSz
-                    (copyMutableByteArray# srcArr (row *# bSz) dstArr (newRow *# bSz) bSz s3)
-                  )
-      where
-        bSz = indexIntArray# srcSzs (n *# 2#)
+enableComponent :: forall c . KnownComponentKind c => Proxy c -> Archetype -> Int -> Int -> IO ()
+enableComponent _ (Archetype Archetype#{flags,boxed,flat,tag}) row col = do
+  archetypeFlags <- readPrimVar flags
+  if get @"hasBitSets" archetypeFlags
+    then do
+      branchKind @c
+        (Storage.enableComponent boxed)
+        (Storage.enableComponent flat )
+        (Storage.enableComponent tag  )
+        row col
+    else pure ()
 
-    !(Columns# _ _ srcBoxed (ColumnSizes# srcSzs) srcUnboxed) = columns srcAty
-    !(Columns# _ _ dstBoxed _ dstUnboxed) = columns dstAty
-    srcNumBoxed = sizeofSmallMutableArray# srcBoxed
-    dstNumBoxed = sizeofSmallMutableArray# dstBoxed
-    srcNumUnboxed = sizeofSmallMutableArray# srcUnboxed
-    dstNumUnboxed = sizeofSmallMutableArray# dstUnboxed
-    changedBoxed = not $ isTrue# (srcNumBoxed ==# dstNumBoxed)
-    changedUnboxed = not $ isTrue# (srcNumUnboxed ==# dstNumUnboxed)
-    isAdd = isTrue# (srcNumBoxed <# dstNumBoxed) || isTrue# (srcNumUnboxed <# dstNumUnboxed)
+disableComponent :: forall c . KnownComponentKind c => Proxy c -> Archetype -> Int -> Int -> IO ()
+disableComponent _ (Archetype Archetype#{flags,entities,boxed,flat,tag}) row col = do
+  arr <- primitive $ \s -> case readMutVar# entities s of (# s', arr #) -> (# s', MutablePrimArray @_ @Int arr #)
+  oldFlags <- readPrimVar flags
+  writePrimVar flags $ set @"hasBitSets" oldFlags True
 
-newColumns :: Int# -> Int# -> Int# -> ColumnSizes# -> State# RealWorld -> (# State# RealWorld, Columns# #) 
-newColumns initCap numBoxed numUnboxed (ColumnSizes# szs) s0 =
-  case newByteArray# 8# s0 of
-    (# s1, szRef #) -> case newArray# initCap (error "Hecs.Archetype.Internal:newColumns placeholder") s1 of
-      (# s2, arr #) -> case newSmallArray# numBoxed arr s2 of
-        (# s3, boxed #) -> case fillBoxed boxed 0# s3 of
-          s4 -> case newByteArray# 0# s4 of
-            (# s5, mar #) -> case newSmallArray# numUnboxed mar s5 of
-              (# s6, unboxed #) -> case fillUnboxed unboxed 0# s6 of
-                s7 -> case newByteArray# (initCap *# 8#) s7 of
-                  (# s8, eidArr #) -> case newMutVar# eidArr s8 of
-                    (# s9, eidRef #) -> case writeIntArray# szRef 0# 0# s9 of
-                      s10 -> (# s10, Columns# szRef eidRef boxed (ColumnSizes# szs) unboxed #)
-  where
-    fillBoxed _ n s | isTrue# (n >=# numBoxed) = s
-    fillBoxed sarr n s =
-      case newArray# initCap (error "Hecs.Archetype.Internal:moveEntity placeholder") s of
-        (# s1, arr #) -> fillBoxed sarr (n +# 1#) (writeSmallArray# sarr n arr s1)
-    fillUnboxed _ n s | isTrue# (n >=# numUnboxed) = s
-    fillUnboxed sarr n s =
-      case newAlignedPinnedByteArray# (initCap *# bSz) bAl s of
-        (# s1, arr #) -> fillUnboxed sarr (n +# 1#) (writeSmallArray# sarr n arr s1)
-      where
-        bSz = indexIntArray# szs (n *# 2#)
-        bAl = indexIntArray# szs ((n *# 2#) +# 1#)
+  cap <- getSizeofMutablePrimArray arr
+  branchKind @c
+    (Storage.disableComponent boxed row col cap)
+    (Storage.disableComponent flat  row col cap)
+    (Storage.disableComponent tag   row col cap)

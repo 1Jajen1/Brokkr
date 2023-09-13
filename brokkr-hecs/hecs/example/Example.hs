@@ -2,22 +2,27 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE TypeFamilies #-}
---{-# OPTIONS_GHC -ddump-splices #-}
---{-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
+{-# LANGUAGE DeriveAnyClass #-}
+-- {-# OPTIONS_GHC -ddump-splices #-}
+-- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
+-- {-# OPTIONS_GHC -ddump-cmm #-}
 module Main (main) where
 
-import Data.Int
-
+import Control.Concurrent
+import Control.Monad
 import Control.Monad.IO.Class
+
+import Data.Int
+import Data.Kind
+import Data.Proxy
+
+import Foreign.Storable
+
+import GHC.Generics
 
 import Hecs
 
-import Data.Kind
-import GHC.Generics
-import Foreign.Storable
-import Control.Monad
-
-import Control.Concurrent
+import System.Mem
 
 data Position = Pos {-# UNPACK #-} !Int {-# UNPACK #-} !Float {-# UNPACK #-} !Int
   deriving stock (Show, Generic)
@@ -29,79 +34,52 @@ newtype Boxed = Boxed1 Int
   deriving Component via (ViaBox Boxed)
 data Color = Red | Green | Blue
   deriving stock (Eq, Show)
-  deriving Component via (ViaBox Color)
+  deriving anyclass Component
+
+deriving anyclass instance Component Red
+deriving anyclass instance Component Green
+deriving anyclass instance Component Blue
 
 makeWorld "World" [
     ''Int
   -- , ''Int8
-  -- , ''Position
+  , ''Position
   -- , ''Test
   , ''Boxed
-  -- , ''Color, 'Red, 'Green, 'Blue
+  , ''Color, 'Red, 'Green, 'Blue
   ]
 
 main :: IO ()
 main = do
   w <- newWorld
   void . runHecsM w $ do
-    eid <- newEntity
-    set @Int eid 100
-    -- set @(Rel Color (Tag Red)) eid $ Rel Red
-    -- set eid $ Pos 30 0.5 2
-    eid2 <- newEntity
-    set @Int eid2 105
+    -- eid <- newEntity
+    -- set @Int eid 100
+    -- add @(Rel Color Red) eid
+    -- add @(Rel Color Green) eid
 
-    get @Int eid2 (liftIO . print) $ liftIO $ putStrLn "No Int"
-
-    remove @Int eid2 
-    -- set eid2 $ Pos 30 0.5 2
-    -- defer $ do
-    --   eid <- newEntity
-    --   set @Boxed eid $ Boxed1 10
-    --   set @Int eid 10
-    --   get @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
-    -- liftIO $ print 1
-    -- get @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     -- e2 <- newEntity
-    -- addTag @Test e2
-    -- set e2 (Rel @Color @(Tag Red) Red)
-    -- liftIO $ putStrLn "Set tag!"
-    -- get @(Rel Color (Tag Red)) e2 (pure . Just) (pure Nothing) >>= liftIO . print
-    -- set @Int e2 100
-    -- set e2 (Pos 10 20 0)
-    -- addTag @Red e2
-    -- hasTag @Red e2 >>= liftIO . print
-    -- removeTag @Red e2
-    -- void . replicateM 65537 $ do
-    --   car <- newEntity
-    --   liftIO $ print car
-    --   set @Int car 100
-    --   get @Int car (liftIO . print) (pure ())
-    --   addTag @Red car
-    --   set @Position car (Pos 10 0 50)
-    --   get @Position car (liftIO . print) (pure ())
-    --   freeEntity car
-    -- liftIO $ putStrLn "Filter"
-    -- Hecs.filter (filterDSL @'[Int, Rel Color WildCard, Or Boxed Position])
-    --   (\aty _ -> do
-    --     x <- getColumn @Int aty
-    --     es <- getEntityColumn aty
-    --     iterateArchetype_ aty $ \n e -> do
-    --       liftIO $ print e
-    --       readColumn x n >>= liftIO . print 
-    --     pure ()
-    --     )
-    --   (pure ())
+    -- add @(Rel Color Blue) e2
 
-    liftIO $ putStrLn "Filter"
-    runFilter_ (filterDSL @'[Int]) $ cmapM_ (\(i :: Int) -> liftIO $ print i)
-    liftIO $ putStrLn "1"
-    liftIO $ putStrLn "2"
-    runFilter_ (filterDSL @'[Int]) $ cmapM_ (\(i :: Int) -> liftIO $ print i)
-    liftIO $ putStrLn "Done"
-    runFilter_ (filterDSL @'[Int]) $ cmap (\(i :: Int, eid :: EntityId) -> i + 1)
+    -- q <- query (filterDSL @'[Rel Color Wildcard])
+    -- runQuery_ q $ cmapM_ (\(relId :: ComponentId (Rel Color Wildcard), eid :: EntityId) -> do
+    --   let (_,snd) = unwrapRelation relId
+    --   liftIO $ putStrLn $ "Match: " <> show eid <> " with rel id " <> show snd
+    --   )
 
-    -- get @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
-    -- get @Int e2 (pure . Just) (pure Nothing) >>= liftIO . print
-    -- hasTag @Red e2 >>= liftIO . print
-  putStrLn "Done"
+    -- runFilter_ (filterDSL @'[Rel Color Wildcard]) $ cmapM_ (\(relId :: ComponentId (Rel Color Wildcard), eid :: EntityId) -> do
+    --   let (_,snd) = unwrapRelation relId
+    --   liftIO $ putStrLn $ "Match: " <> show eid <> " with rel id " <> show snd
+    --   )
+
+    system (Proxy @()) (Proxy @()) (filterDSL @'[Rel Color Red]) (\_ _ -> liftIO $ putStrLn "Match") (pure ()) (\_ -> pure ()) -- $ cmapM_ (\() -> do
+      -- let (_,snd) = unwrapRelation relId
+      -- liftIO $ putStrLn $ "Match: " <> show eid <> " with rel id " <> show snd
+    -- e3 <- newEntity
+    -- add @(Rel Color Red) e3
+    liftIO $ putStrLn "DO IT"
+    liftIO $ performMajorGC
+    liftIO $ putStrLn "DO IT NOW"
+    progress 1
+
+  pure ()

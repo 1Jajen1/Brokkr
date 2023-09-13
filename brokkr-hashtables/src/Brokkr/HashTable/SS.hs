@@ -106,16 +106,16 @@ size HashTable_SS{..} = fromIntegral <$> readPrimVar sizeRef
 
 lookup
   :: ( PrimMonad m, Eq key, Hash key, Storable.Storable key, Storable.Storable value )
-  => HashTable (PrimState m) key value -> key -> m (Maybe value)
+  => HashTable (PrimState m) key value -> key -> (value -> m r) -> m r -> m r
 {-# INLINE lookup #-}
-lookup ht key = lookupWithHash ht key (coerce (hash key) (hashSalt ht))
+lookup ht key onSucc onFail = lookupWithHash ht key (coerce (hash key) (hashSalt ht)) onSucc onFail
 
 lookupWithHash
-  :: forall key value m
+  :: forall key value m r
   . ( PrimMonad m, Eq key, Storable.Storable key, Storable.Storable value )
-  => HashTable (PrimState m) key value -> key -> Int -> m (Maybe value)
+  => HashTable (PrimState m) key value -> key -> Int -> (value -> m r) -> m r -> m r
 {-# INLINE lookupWithHash #-}
-lookupWithHash HashTable_SS{..} key !hs = do
+lookupWithHash HashTable_SS{..} key !hs onSucc onFail = do
   MutablePrimArray backingArr# <- primitive $ \s -> case readMutVar# backingRef s of (# s1, arr #) -> (# s1, MutablePrimArray arr #)
   let backingArr = Ptr (mutableByteArrayContents# backingArr#)
   capacity <- fromIntegral <$> readPrimVar capacityRef
@@ -123,7 +123,7 @@ lookupWithHash HashTable_SS{..} key !hs = do
     (\n -> unsafeIOToPrim $ Storable.peekByteOff backingArr $ n * sizeElement @key @value)
     (\n -> unsafeIOToPrim $ Storable.peekByteOff backingArr $ n * sizeElement @key @value + keyOffset @key)
     (\n -> unsafeIOToPrim $ Storable.peekByteOff backingArr $ n * sizeElement @key @value + valueOffset @key @value)
-    capacity key hs
+    capacity key hs onSucc onFail
 
 insert :: (PrimMonad m, Eq key, Hash key, Storable.Storable key, Storable.Storable value) => HashTable (PrimState m) key value -> key -> value -> m ()
 {-# INLINE insert #-}

@@ -95,13 +95,13 @@ valSize = valSz + getEndPad valSz valAlignment
 size :: PrimMonad m => HashTable (PrimState m) key value -> m Int
 size HashTable_PS{..} = fromIntegral <$> readPrimVar sizeRef
 
-lookup :: (PrimMonad m, Eq key, Hash key, Prim key, Storable.Storable value) => HashTable (PrimState m) key value -> key -> m (Maybe value)
+lookup :: (PrimMonad m, Eq key, Hash key, Prim key, Storable.Storable value) => HashTable (PrimState m) key value -> key -> (value -> m r) -> m r -> m r
 {-# INLINE lookup #-}
-lookup ht key = lookupWithHash ht key (coerce (hash key) (hashSalt ht))
+lookup ht key onSucc onFail = lookupWithHash ht key (coerce (hash key) (hashSalt ht)) onSucc onFail
 
-lookupWithHash :: forall key value m . (PrimMonad m, Eq key, Prim key, Storable.Storable value) => HashTable (PrimState m) key value -> key -> Int -> m (Maybe value)
+lookupWithHash :: forall key value m r . (PrimMonad m, Eq key, Prim key, Storable.Storable value) => HashTable (PrimState m) key value -> key -> Int -> (value -> m r) -> m r -> m r
 {-# INLINE lookupWithHash #-}
-lookupWithHash HashTable_PS{..} key !hs = do
+lookupWithHash HashTable_PS{..} key !hs onSucc onFail = do
   distArr <- primitive $ \s -> case readMutVar# backingDistRef s of (# s1, arr #) -> (# s1, MutablePrimArray arr #)
   keyArr <- primitive $ \s -> case readMutVar# backingKeyRef s of (# s1, arr #) -> (# s1, MutablePrimArray arr #)
   MutableByteArray valArr# <- primitive $ \s -> case readMutVar# backingValRef s of (# s1, arr #) -> (# s1, MutableByteArray arr #)
@@ -111,7 +111,7 @@ lookupWithHash HashTable_PS{..} key !hs = do
     (readPrimArray distArr)
     (readPrimArray keyArr)
     (\n -> unsafeIOToPrim $ Storable.peekByteOff valArr $ n * valSize @value)
-    capacity key hs
+    capacity key hs onSucc onFail
 
 insert :: (PrimMonad m, Eq key, Hash key, Prim key, Storable.Storable value) => HashTable (PrimState m) key value -> key -> value -> m ()
 {-# INLINE insert #-}

@@ -2,6 +2,10 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
+{-# OPTIONS_GHC -ddump-stg-final #-}
+{-# OPTIONS_GHC -ddump-cmm #-}
+{-# OPTIONS_GHC -ddump-asm #-}
 module Main where
 
 import Test.Tasty.Bench
@@ -10,14 +14,19 @@ import System.Random (mkStdGen, randomRs)
 
 import Control.DeepSeq (NFData(..))
 import Control.Monad (replicateM_)
+import Control.Monad.Primitive
 
+import Data.Coerce
 import Data.Foldable (traverse_)
+import Data.Primitive
 
 import Foreign.Storable
 
 import GHC.Generics
+import GHC.Exts (RealWorld)
 
 import Hecs
+import Hecs.Filter.Internal (And)
 import Hecs.Entity.Internal qualified as Hecs.EntityId
 
 data ECSPos = ECSPos {-# UNPACK #-} !Float {-# UNPACK #-} !Float
@@ -34,6 +43,8 @@ makeWorld "World" [''ECSPos, ''ECSVel]
 
 instance NFData World where
   rnf World{} = ()
+instance NFData (Query ty) where
+  rnf !_ = ()
 
 instance NFData (Hecs.EntityId.EntitySparseSet a) where
   rnf Hecs.EntityId.EntitySparseSet{} = () -- this is a lie, the data array is not evaluated
@@ -62,6 +73,24 @@ posVelStrictStep :: HecsM World IO ()
 posVelStrictStep = runFilter_ (filterDSL @'[ECSPos, ECSVel])
   $ cmapM (\(ECSPos x y, ECSVel vx vy) -> let pos = ECSPos (x + vx) (y + vy) in seq pos (pure pos))
 
+posVelBaselineQ :: Query (And ECSPos ECSVel) -> HecsM World IO ()
+posVelBaselineQ q = runQuery_ q
+  $ cmap (\() -> ())
+
+posVelStepQ :: Query (And ECSPos ECSVel) -> HecsM World IO ()
+posVelStepQ q = runQuery_ q
+  $ cmap (\(ECSPos x y, ECSVel vx vy) -> ECSPos (x + vx) (y + vy))
+
+posVelStrictStepQ :: Query (And ECSPos ECSVel) -> HecsM World IO ()
+posVelStrictStepQ q = runQuery_ q
+  $ cmapM (\(ECSPos x y, ECSVel vx vy) -> let pos = ECSPos (x + vx) (y + vy) in seq pos (pure pos))
+
+newFloatArr :: IO (MutablePrimArray RealWorld Float)
+newFloatArr = do
+  arr <- newAlignedPinnedPrimArray 2000
+  setPrimArray arr 0 2000 0
+  pure arr
+
 main :: IO ()
 main = defaultMain
 -- apecs massively cheats in their benchmarks. They use caches specifically of a size that always fits the 1k and 9k writes and reads
@@ -79,15 +108,35 @@ main = defaultMain
     , env (newWorld >>= \w -> runHecsM w posVelInit >> pure w) $ \w -> bench "step (filter) (baseline)" $ whnfIO (runHecsM w posVelBaseline)
     , env (newWorld >>= \w -> runHecsM w posVelInit >> pure w) $ \w -> bench "step (filter) (strict)" $ whnfIO (runHecsM w posVelStrictStep)
     , env (newWorld >>= \w -> runHecsM w posVelInit >> pure w) $ \w -> bench "step (filter) (lazy)" $ whnfIO (runHecsM w posVelStep)
+    , env (newWorld >>= \w -> runHecsM w $ posVelInit >> query (filterDSL @'[ECSPos, ECSVel]) >>= \q -> pure (w,q)) $ \ ~(w,q) ->
+        bench "step (query) (baseline)" $ whnfIO (runHecsM w (posVelBaselineQ q))
+    , env (newWorld >>= \w -> runHecsM w $ posVelInit >> query (filterDSL @'[ECSPos, ECSVel]) >>= \q -> pure (w,q)) $ \ ~(w,q) ->
+        bench "step (query) (strict)" $ whnfIO (runHecsM w (posVelStrictStepQ q))
+    , env (newWorld >>= \w -> runHecsM w $ posVelInit >> query (filterDSL @'[ECSPos, ECSVel]) >>= \q -> pure (w,q)) $ \ ~(w,q) ->
+        bench "step (query) (lazy)" $ whnfIO (runHecsM w (posVelStepQ q))
+    , env ((,) <$> newFloatArr <*> newFloatArr) $ \ ~(l,r) ->
+        bench "step (baseline)" $ whnfIO $ do
+          let ptr1 = mutablePrimArrayContents l
+              ptr2 = mutablePrimArrayContents l
+          let goStep !n
+                | n >= 1000 = pure ()
+                | otherwise = do
+                  ECSPos x y <- peekElemOff (coerce ptr1) n
+                  ECSVel vx vy <- peekElemOff (coerce ptr2) n
+                  pokeElemOff (coerce ptr1) n $ ECSPos (x + vx) (y + vy)
+                  goStep (n + 1)
+          goStep 0
+          touch l
+          touch r
     ]
   , bgroup "hecs"
     [ bench "newWorld" $ whnfIO newWorld
-    , bench "newEntity" $ whnfIO (newWorld >>= \w -> runHecsM w (replicateM_ 9000 newEntity))
+    , bench "newEntity" $ whnfIO (newWorld >>= \w -> runHecsM w (replicateM_ 10000 newEntity))
     ]
   , bgroup "hecs:EntityId"
     [ bgroup "allocateEntityId"
       [ bench "new" $ whnfIO Hecs.EntityId.new
-      , bench "allocateEntityId" $ whnfIO (Hecs.EntityId.new >>= \e -> replicateM_ 9000 (Hecs.EntityId.allocateEntityId e))
+      , bench "allocateEntityId" $ whnfIO (Hecs.EntityId.new >>= \e -> replicateM_ 10000 (Hecs.EntityId.allocateEntityId e))
       ] 
     ]
   ]

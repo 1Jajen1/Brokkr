@@ -31,20 +31,22 @@ lookupWithHash
   -> Int
   -> key
   -> Int
-  -> m (Maybe value)
+  -> (value -> m r)
+  -> m r
+  -> m r
 {-# INLINE lookupWithHash #-}
-lookupWithHash readDistance readKey readValue capacity key !hs = go 0
+lookupWithHash readDistance readKey readValue capacity !key !hs onSucc onFail = go 0
   where
     start = hs .&. (capacity - 1)
     go n = do
       let ind = start + fromIntegral n
       distance <- readDistance ind
       if distance < n
-        then pure Nothing
+        then onFail
         else do
           key' <- readKey ind
           if key == key'
-            then Just <$> readValue ind
+            then readValue ind >>= onSucc
             else go (n + 1)
 
 insertWithHash
@@ -71,7 +73,7 @@ insertWithHash
   incSize
   readDistance readKey readValue
   writeDistance writeKey writeValue
-  !maxLoadFactor !maxDistance !capacity k0 !hs = go start0 0 k0
+  !maxLoadFactor !maxDistance !capacity !k0 !hs = go start0 0 k0
   where
     start0 = hs .&. (capacity - 1)
     go :: Int -> Int8 -> key -> value -> m ()
@@ -125,7 +127,7 @@ deleteWithHash
   readDistance readKey readValue
   writeDistance writeKey writeValue
   delKey delValue
-  !maxDistance !capacity k !hs = goDel 0
+  !maxDistance !capacity !k !hs = goDel 0
   where
     start = hs .&. (capacity - 1)
     goDel n = do

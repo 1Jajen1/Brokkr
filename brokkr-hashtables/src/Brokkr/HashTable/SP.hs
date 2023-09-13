@@ -98,13 +98,13 @@ sizeElement = sizeKey + alignKey + getEndPad (sizeKey + alignKey) alignKey
 size :: PrimMonad m => HashTable (PrimState m) key value -> m Int
 size HashTable_SP{..} = fromIntegral <$> readPrimVar sizeRef
 
-lookup :: (PrimMonad m, Eq key, Hash key, Storable.Storable key, Prim value) => HashTable (PrimState m) key value -> key -> m (Maybe value)
+lookup :: (PrimMonad m, Eq key, Hash key, Storable.Storable key, Prim value) => HashTable (PrimState m) key value -> key -> (value -> m r) -> m r -> m r
 {-# INLINE lookup #-}
-lookup ht key = lookupWithHash ht key (coerce (hash key) (hashSalt ht))
+lookup ht key onSucc onFail = lookupWithHash ht key (coerce (hash key) (hashSalt ht)) onSucc onFail
 
-lookupWithHash :: forall key value m . (PrimMonad m, Eq key, Storable.Storable key, Prim value) => HashTable (PrimState m) key value -> key -> Int -> m (Maybe value)
+lookupWithHash :: forall key value m r . (PrimMonad m, Eq key, Storable.Storable key, Prim value) => HashTable (PrimState m) key value -> key -> Int -> (value -> m r) -> m r -> m r
 {-# INLINE lookupWithHash #-}
-lookupWithHash HashTable_SP{..} key !hs = do
+lookupWithHash HashTable_SP{..} key !hs onSucc onFail = do
   MutablePrimArray distAndKeyArr# <- primitive $ \s -> case readMutVar# backingDistAndKeyRef s of (# s1, arr #) -> (# s1, MutablePrimArray arr #)
   let distAndKeyArr = Ptr (mutableByteArrayContents# distAndKeyArr#)
   valArr <- primitive $ \s -> case readMutVar# backingValRef s of (# s1, arr #) -> (# s1, MutablePrimArray arr #)
@@ -113,7 +113,7 @@ lookupWithHash HashTable_SP{..} key !hs = do
     (\n -> unsafeIOToPrim $ Storable.peekByteOff distAndKeyArr (n * sizeElement @key))
     (\n -> unsafeIOToPrim $ Storable.peekByteOff distAndKeyArr (n * sizeElement @key + Storable.alignment (undefined :: key)))
     (readPrimArray valArr)
-    capacity key hs
+    capacity key hs onSucc onFail
 
 insert :: (PrimMonad m, Eq key, Hash key, Storable.Storable key, Prim value) => HashTable (PrimState m) key value -> key -> value -> m ()
 {-# INLINE insert #-}

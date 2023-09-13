@@ -4,6 +4,8 @@ This package provides flexible mutable hash tables. It supports different storag
 
 It does not require a specific hash function. Instead, a user is asked to provide their own, to more accurately match the performance/distribution trade-off a user needs.
 
+# BIG TODO: Update lookup benchmarks. Turns out using cps makes things a *lot* faster
+
 <!-- MarkdownTOC autolink="true" -->
 
 - [Quickstart](#quickstart)

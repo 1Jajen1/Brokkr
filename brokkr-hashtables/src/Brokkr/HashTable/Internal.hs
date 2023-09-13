@@ -15,6 +15,8 @@ type Salt = Int
 -- this value.
 type MaxLoadFactor = Float
 
+-- TODO Change Boxed to Lifted and add Unlifted
+
 -- | All supported storage backends for keys and values
 --
 -- * Boxed refers to ordinary lifted haskell heap objects.
@@ -52,9 +54,9 @@ class HashTable keyStorage valueStorage key value where
   -- | Lookup the value associated with the key
   --
   -- See 'lookupWithHash' if you already have a precalculated hash.
-  lookup :: (PrimMonad m, Eq key, Hash key) => HashTable' keyStorage valueStorage (PrimState m) key value -> key -> m (Maybe value)
+  lookup :: (PrimMonad m, Eq key, Hash key) => HashTable' keyStorage valueStorage (PrimState m) key value -> key -> (value -> m r) -> m r -> m r 
   -- | Lookup the value associated with the key given a precalculated hash
-  lookupWithHash :: (PrimMonad m, Eq key) => HashTable' keyStorage valueStorage (PrimState m) key value -> key -> Int -> m (Maybe value)
+  lookupWithHash :: (PrimMonad m, Eq key) => HashTable' keyStorage valueStorage (PrimState m) key value -> key -> Int -> (value -> m r) -> m r -> m r
   -- | Insert a key value pair
   --
   -- May grow the table, which is a very expensive operation. If multiple keys

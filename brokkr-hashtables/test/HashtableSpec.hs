@@ -58,9 +58,9 @@ tableSpec genK genV = do
       table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 32 s 0.75
       HT.insert table (ConstSalt k) v
       let kHash = coerce (HT.hash (ConstSalt k)) s
-      HT.lookupWithHash table (ConstSalt k) kHash >>= \case
-        Nothing -> failure
-        Just v' -> v' === v
+      HT.lookupWithHash table (ConstSalt k) kHash
+        (\v' -> v' === v)
+        failure
   describe "grow" $ do
     it "should handle a lot of colliding keys getting inserted" $ property $ do
       s <- forAll $ Gen.int Range.constantBounded
@@ -74,9 +74,9 @@ tableSpec genK genV = do
       table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 32 s 0.75
       traverse_ (\(k,v) -> HT.insert table (ConstSalt k) v) xs
       -- check that the table growth worked and we still have our elements
-      traverse_ (\(k,v) -> HT.lookup table (ConstSalt k) >>= \case
-        Nothing -> failure
-        Just v' -> v' === v
+      traverse_ (\(k,v) -> HT.lookup table (ConstSalt k)
+        (\v' -> v' === v)
+        failure
         ) xs
     it "should handle the load factor being exceeded" $ property $ do
       s <- forAll $ Gen.int Range.constantBounded
@@ -86,9 +86,9 @@ tableSpec genK genV = do
       table <- HT.new @keyStorage @valueStorage @k @v 32 s 0.75
       traverse_ (uncurry $ HT.insert table) xs
       -- check that the table growth worked and we still have our elements
-      traverse_ (\(k,v) -> HT.lookup table k >>= \case
-        Nothing -> failure
-        Just v' -> v' === v
+      traverse_ (\(k,v) -> HT.lookup table k
+        (\v' -> v' === v)
+        failure
         ) xs
   describe "reserve" $ do
     it "should still contain all previously inserted keys" $ property $ do
@@ -106,79 +106,79 @@ tableSpec genK genV = do
       -- not grow
       HT.reserve table 20_000
       -- check that the table resize worked and we still have our elements
-      traverse_ (\(k,v) -> HT.lookup table k >>= \case
-        Nothing -> failure
-        Just v' -> v' === v
+      traverse_ (\(k,v) -> HT.lookup table k
+        (\v' -> v' === v)
+        failure
         ) xs
   describe "lookup/insert" $ do
     it "should be able to lookup a previously inserted key" $ property $ do
       (k,v) <- forAll ((,) <$> genK <*> genV)
       table <- HT.new @keyStorage @valueStorage @k @v 32 0 0.75
       HT.insert table k v
-      HT.lookup table k >>= \case
-        Nothing -> failure
-        Just v' -> v' === v
+      HT.lookup table k
+        (\v' -> v' === v)
+        failure
     it "should be able to lookup a previously inserted key (multiple)" $ property $ do
       kvs0 <- forAll $ Gen.list (Range.linear 1 1_000) ((,) <$> genK <*> genV)
       let kvs = nubOrdOn fst kvs0
       table <- HT.new @keyStorage @valueStorage @k @v 32 0 0.75
       traverse_ (uncurry (HT.insert table)) kvs
-      traverse_ (\(k,v) -> HT.lookup table k >>= \case
-        Nothing -> annotate (show k) >> failure
-        Just v' -> v' === v
+      traverse_ (\(k,v) -> HT.lookup table k
+        (\v' -> v' === v)
+        $ annotate (show k) >> failure
         ) kvs
     it "should be able to handle lookup a previously inserted key which collides with another" $ property $ do
       table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 32 0 0.75
       (k1,k2,v1,v2) <- forAll ((,,,) <$> genK <*> genK <*> genV <*> genV)
       HT.insert table (ConstSalt k1) v1
       HT.insert table (ConstSalt k2) v2
-      HT.lookup table (ConstSalt k1) >>= \case
-        Nothing -> failure
-        Just v' -> v' === v1
-      HT.lookup table (ConstSalt k2) >>= \case
-        Nothing -> failure
-        Just v' -> v' === v2
+      HT.lookup table (ConstSalt k1)
+        (\v' -> v' === v1)
+        failure
+      HT.lookup table (ConstSalt k2)
+        (\v' -> v' === v2)
+        failure
     it "should not be able to lookup a not inserted key" $ property $ do
       k <- forAll genK
       table <- HT.new @keyStorage @valueStorage @k @v 32 0 0.75
-      HT.lookup table k >>= \case
-        Nothing -> pure ()
-        Just _ -> failure
+      HT.lookup table k
+        (\_ -> failure)
+        $ pure ()
     it "should not be able to handle lookup a not inserted key which collides with another inserted key" $ property $ do
       (k1,k2,v1) <- forAll ((,,) <$> genK <*> genK <*> genV)
       table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 32 0 0.75
       HT.insert table (ConstSalt k1) v1
-      HT.lookup table (ConstSalt k1) >>= \case
-        Nothing -> failure
-        Just v' -> v' === v1
-      HT.lookup table (ConstSalt k2) >>= \case
-        Nothing -> pure ()
-        Just _ -> failure
+      HT.lookup table (ConstSalt k1)
+        (\v' -> v' === v1)
+        failure
+      HT.lookup table (ConstSalt k2)
+        (\_ -> failure)
+        $ pure ()
     it "should not be able to lookup a deleted inserted key" $ property $ do
       (k,v) <- forAll ((,) <$> genK <*> genV)
       table <- HT.new @keyStorage @valueStorage @k @v 32 0 0.75
       HT.insert table k v
-      HT.lookup table k >>= \case
-        Nothing -> failure
-        Just v' -> v' === v
+      HT.lookup table k
+        (\v' -> v' === v)
+        failure
       _ <- HT.delete table k
-      HT.lookup table k >>= \case
-        Nothing -> pure ()
-        Just _ -> failure
+      HT.lookup table k
+        (\_ -> failure)
+        $ pure ()
     it "should not be able to handle lookup a not inserted key which collides with another inserted key" $ property $ do
       table <- HT.new @keyStorage @valueStorage @(ConstSalt k) @v 32 0 0.75
       (k1,k2,v1) <- forAll ((,,) <$> genK <*> genK <*> genV)
       HT.insert table (ConstSalt k1) v1
-      HT.lookup table (ConstSalt k1) >>= \case
-        Nothing -> failure
-        Just v' -> v' === v1
-      HT.lookup table (ConstSalt k2) >>= \case
-        Nothing -> pure ()
-        Just _ -> failure
+      HT.lookup table (ConstSalt k1)
+        (\v' -> v' === v1)
+        failure
+      HT.lookup table (ConstSalt k2)
+        (\_ -> failure)
+        $ pure ()
       _ <- HT.delete table (ConstSalt k1)
-      HT.lookup table (ConstSalt k1) >>= \case
-        Nothing -> pure ()
-        Just _ -> failure
-      HT.lookup table (ConstSalt k2) >>= \case
-        Nothing -> pure ()
-        Just _ -> failure
+      HT.lookup table (ConstSalt k1)
+        (\_ -> failure)
+        $ pure ()
+      HT.lookup table (ConstSalt k2)
+        (\_ -> failure)
+        $ pure ()
