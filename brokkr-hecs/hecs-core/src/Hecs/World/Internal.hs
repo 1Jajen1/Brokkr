@@ -3,7 +3,7 @@
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 -- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
-{-# OPTIONS_GHC -ddump-cmm #-}
+-- {-# OPTIONS_GHC -ddump-cmm #-}
 -- {-# OPTIONS_GHC -ddump-stg #-}
 module Hecs.World.Internal (
   WorldImpl(..)

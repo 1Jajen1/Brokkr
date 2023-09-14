@@ -1,5 +1,5 @@
 {-# LANGUAGE DataKinds #-}
-{-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
+-- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
 module Main (main) where
 
 import Brokkr.HashTable qualified as HT
@@ -20,7 +20,7 @@ foo :: IO (HashTable RealWorld IntIdHash String)
 foo = do
   t <- HT.new 32 initialSalt maxLoadFactor
   HT.insert t (IntIdHash 1) "Hello"
-  HT.lookup t (IntIdHash 1) (pure Just) (pure Nothing)
+  HT.lookup t (IntIdHash 1) (pure . Just) (pure Nothing)
   HT.delete t (IntIdHash 1)
   pure t
   where

@@ -30,7 +30,6 @@ List of all libraries currently living in the repository. The status has the fol
 | brokkr-packet        | Datatypes and serialization for the Minecraft protocol                | Work in progress         |
 | brokkr-registry      | Datatypes which encode various parts of Minecraft registries          | Work in progress         |
 | brokkr-concurrent    | Concurrency datastructures and classes                                | Concept                  |
-| brokkr-zlib-ng       | zlib-ng bindings                                                      | Concept                  |
 
 For more information on each library and a detailed status report visit their individual readmes. TODO Link them with the name
 

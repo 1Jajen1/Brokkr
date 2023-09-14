@@ -2,10 +2,10 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
-{-# OPTIONS_GHC -ddump-stg-final #-}
-{-# OPTIONS_GHC -ddump-cmm #-}
-{-# OPTIONS_GHC -ddump-asm #-}
+-- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all #-}
+-- {-# OPTIONS_GHC -ddump-stg-final #-}
+-- {-# OPTIONS_GHC -ddump-cmm #-}
+-- {-# OPTIONS_GHC -ddump-asm #-}
 module Main where
 
 import Test.Tasty.Bench

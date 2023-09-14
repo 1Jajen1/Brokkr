@@ -1,3 +1,0 @@
-[submodule "brokkr-libdeflate/libdeflate"]
-	path = brokkr-libdeflate/libdeflate
-	url = git@github.com:ebiggers/libdeflate.git

@@ -4,7 +4,7 @@
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# OPTIONS_GHC -ddump-cmm #-}
+-- {-# OPTIONS_GHC -ddump-cmm #-}
 module Hecs.Filter.Internal (
   Filter
 , runFilter

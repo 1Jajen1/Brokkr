@@ -1,50 +1,22 @@
 -- mtl 2.3 compat (ghc 9.6)
-source-repository-package
-  type: git
-  location: git@github.com:1Jajen1/sydtest.git
-  tag: 2a7cb0ce093ef1e8c4d5b15cd99860678bef0ac7
-  subdir: sydtest
-
--- uuid
-source-repository-package
-  type: git
-  location: git@github.com:haskell/entropy.git
-  tag: f33d65001e96eb947879eb886840546787d556f3
-
--- nbt comparisons
 -- source-repository-package
 --   type: git
---   location: git@github.com:davidgarland/named-binary-tag.git
---   tag: 2cb7164c82e4d34dabb6301463cc17cfef20a0a6
+--   location: git@github.com:1Jajen1/sydtest.git
+--   tag: 2a7cb0ce093ef1e8c4d5b15cd99860678bef0ac7
+--   subdir: sydtest
 
--- source-repository-package
---   type: git
---   location: git@github.com:1Jajen1/bitfield.git
---   tag: 1678cee3035e0e9aedb264f6dbd8b34354e329c7
-
-packages: ./brokkr/brokkr.cabal
-packages: ./brokkr-nbt/brokkr-nbt.cabal
-packages: ./brokkr-block/brokkr-block.cabal
-packages: ./brokkr-packet/brokkr-packet.cabal
-packages: ./brokkr-varint/brokkr-varint.cabal
 packages: ./brokkr-hashtables/brokkr-hashtables.cabal
-packages: ./brokkr-zlib-ng/brokkr-zlib-ng.cabal
-packages: ./brokkr-libdeflate/brokkr-libdeflate.cabal
-packages: ./brokkr-anvil/brokkr-anvil.cabal
-packages: ./brokkr-registry/brokkr-registry.cabal
-packages: ./brokkr-packed-vector/brokkr-packed-vector.cabal
 packages: ./brokkr-hecs/*/*.cabal
-packages: ./brokkr-concurrent/brokkr-concurrent.cabal
 
-allow-newer: cryptohash-sha1:base
-allow-newer: cryptohash-md5:base
-allow-newer: chronos:base
-allow-newer: wide-word:base
-allow-newer: bytebuild:base
-allow-newer: zigzag:base
-allow-newer: svg-builder:base
-allow-newer: hedgehog:template-haskell
-allow-newer: entropy:setupCabal
+-- allow-newer: cryptohash-sha1:base
+-- allow-newer: cryptohash-md5:base
+-- allow-newer: chronos:base
+-- allow-newer: wide-word:base
+-- allow-newer: bytebuild:base
+-- allow-newer: zigzag:base
+-- allow-newer: svg-builder:base
+-- allow-newer: hedgehog:template-haskell
+-- allow-newer: entropy:setupCabal
 
 tests: true
 test-show-details:   direct

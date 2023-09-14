@@ -34,8 +34,8 @@ common common-options
                        -Wmissing-export-lists
                        -Wpartial-fields
                        -Wmissing-deriving-strategies
-                       --O2
-                       -O0
+                       -O2
+                       --O0
                        -debug
                        -g2
   default-extensions:  DerivingVia
@@ -60,8 +60,8 @@ executable Example
                        --threaded
                        --rtsopts
                        ---with-rtsopts=-N
-                       --O2
-                       -O0
+                       -O2
+                       --O0
                        -debug
                        -g2
 
