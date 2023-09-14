@@ -1,3 +1,4 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 module Hecs.Entity (
   EntityId
 , EntitySparseSet
