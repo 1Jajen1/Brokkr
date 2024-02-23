@@ -63,7 +63,7 @@ static inline int is_valid_modified_utf8_fallback(uint8_t const *const src, size
           }
         } else {
           ptr += (__builtin_ctzl(tmp) >> 3);
-        }      
+        }
       }
     }
     // maybe 2 bytes?

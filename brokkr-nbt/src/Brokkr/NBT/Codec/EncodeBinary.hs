@@ -60,7 +60,7 @@ genBuilder c = [| \a -> Mason.int8 ($(extractTag c) a) <> putNBTString (NBTStrin
           ByteArrayCodec _ -> [| \v -> Mason.int8 7  <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\x -> putArray @Int8 x) v |]
           IntArrayCodec _  -> [| \v -> Mason.int8 11 <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\x -> putArray @(BigEndian Int32) x) v |]
           LongArrayCodec _ -> [| \v -> Mason.int8 12 <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\x -> putArray @(BigEndian Int64) x) v |]
-          ListCodec _ i' -> [| \v -> Mason.int8 9 <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\x -> $(goInner i')) v |]
+          ListCodec _ i' -> [| \v -> Mason.int8 9 <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\x -> $(goInner i') x) v |]
           CompoundCodec _ i' -> [| \v -> Mason.int8 10 <> Mason.int32BE (fromIntegral $ sizeofSmallArray v) <> foldMap (\a -> $(go i') a <> Mason.int8 0) v |]
           TagCodec -> [| \v ->
             let sz = sizeofSmallArray v

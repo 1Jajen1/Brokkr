@@ -148,6 +148,7 @@ main = defaultMain [
     , benchFile "inttest1023.nbt"
     , benchFile "level.dat"
     , benchFile "simple_player.dat"
+    , benchFile "realworld.nbt"
     ]
   , bgroup "Byteswapping" [
       -- Benchmark byteswap in place

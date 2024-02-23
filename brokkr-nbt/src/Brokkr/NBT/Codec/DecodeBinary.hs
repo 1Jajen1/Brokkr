@@ -176,7 +176,7 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> runContParserT ($$(go
         goInner (RmapEitherCodec _ _) = error "ListCodec rmap either inner"
         goInner (LmapCodec _ i) = goInner i
 
-        parseSmallArray inner = [|| \sz@(I# sz#) -> do
+        parseSmallArray (inner :: forall s . Code (FP.ParserT s NBTError a)) = [|| \sz@(I# sz#) -> do
           localST $ do
             -- TODO Check against stupidly large lists
             SmallMutableArray mut <- FP.liftST $ newSmallArray sz (error "parse nbt list")

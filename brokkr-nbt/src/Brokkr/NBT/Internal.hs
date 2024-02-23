@@ -1,5 +1,5 @@
 {-# LANGUAGE DerivingStrategies, MagicHash, UnboxedTuples, UnliftedFFITypes, LambdaCase, DeriveAnyClass #-}
--- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all -fforce-recomp #-}
+{-# OPTIONS_GHC -ddump-simpl -dsuppress-all -fforce-recomp -ddump-cmm #-}
 module Brokkr.NBT.Internal (
   NBT(..)
 , Tag(..)
@@ -46,6 +46,21 @@ data NBT = NBT {-# UNPACK #-} !NBTString !Tag
   deriving stock (Eq, Show, Generic)
   deriving anyclass NFData
 
+-- Note: Parsing performance
+--
+-- Lets first put up some requirements for the parser:
+--
+-- 1. Accept any valid NBT
+-- 2. Reject all invalid NBT
+-- 3. Provide fast key/value access in compounds
+--
+-- 1,2 specifically force handling modified utf8 and nbt of all sizes.
+-- 3 is a requirement to have a *useful* result. NBT is generally queried or transformed. Both of which
+--  require key/value access and whats the point of a fast parse if kv access is slow.
+--
+-- Performance ideas:
+-- - Unlifted NBT. This avoids a pointer tag branch in the sorted insert loop.
+
 -- | The "Tag" portion of Named-Binary-Tag (NBT)
 -- 
 -- Note: End tags are never parsed. This would be pointless and only clutter the datatype needlessly
@@ -65,8 +80,8 @@ data Tag where
   TagByteArray :: {-# UNPACK #-} !(S.Vector Int8)              -> Tag
   TagString    :: {-# UNPACK #-} !NBTString                    -> Tag
   -- It turns out that using a special list type for each kind is a waste
-  TagList      :: {-# UNPACK #-} !(SmallArray Tag)             -> Tag
-  TagCompound  :: {-# UNPACK #-} !(Slice NBT)                  -> Tag
+  TagList      :: {-# UNPACK #-} !(SmallArray Tag)             -> Tag -- TODO This is not parsing critical, but still is better strict
+  TagCompound  :: {-# UNPACK #-} !(Slice NBT)                  -> Tag -- TODO Sorting requires access to the key, so this is a branch on the tag!
   TagIntArray  :: {-# UNPACK #-} !(S.Vector (BigEndian Int32)) -> Tag
   TagLongArray :: {-# UNPACK #-} !(S.Vector (BigEndian Int64)) -> Tag
   deriving stock (Eq, Show, Generic)
@@ -94,10 +109,6 @@ parseNBT = do
   name <- parseNBTString
   tag <- parseTag tagId
   pure $ NBT name tag
-
--- TODO Take advantage of the fact that the foreign pointer contents are always the same!
--- This means we can store all arrays as straight up pointers instead and store the
--- foreign pointer once top level.
 
 -- | Parse a single nbt tag given a tag type
 parseTag :: Word8 -> FP.ParserT st NBTError Tag
@@ -131,7 +142,7 @@ parseTag  9 = parseList
     {-# INLINE parseList #-}
     go _   _ 0# _   = pure ()
     go mut i n  tid = do
-      el <- parseTag (W8# tid)
+      !el <- parseTag (W8# tid)
       FP.liftST $ writeSmallArray (SmallMutableArray mut) (I# i) el
       go mut (i +# 1#) (n -# 1#) tid
 
@@ -171,9 +182,9 @@ parseTag 10 = parseCompound
         {-# INLINE ensure #-}
         -- TODO Try sorting after inserting
         -- TODO Try branchless version
-        insertSorted !mut !sz !name !tag = go 0 sz
+        insertSorted !mut !sz !name !tag = go_insert 0 sz
           where
-            go l u
+            go_insert l u
               | l >= u = do
                 copySmallMutableArray mut (u + 1) mut u (sz - u)
                 writeSmallArray mut u $! NBT name tag
@@ -182,8 +193,8 @@ parseTag 10 = parseCompound
                 NBT k' _ <- readSmallArray mut mid
                 case compare name k' of
                   EQ -> pure ()
-                  LT -> go l mid
-                  GT -> go (mid + 1) u
+                  LT -> go_insert l mid
+                  GT -> go_insert (mid + 1) u
         -- insertSorted !mut !sz !name !tag = go 0
         --   where
         --     go !n

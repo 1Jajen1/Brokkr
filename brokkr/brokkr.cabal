@@ -29,7 +29,7 @@ common common-options
                      , stm-containers
                      , monad-control
                      , primitive
-                     , text ^>= 2.0
+                     , text ^>= 2.1
                      , flatparse
                      , bytestring
                      , mason

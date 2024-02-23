@@ -30,6 +30,7 @@ instance NFData a => NFData (Slice a) where
   rnf = foldr (\el () -> rnf el) ()  
 
 -- | O(n^2) Create a slice from a list
+-- TODO Erm? What? This is not working and not done
 fromList :: [a] -> Slice a
 fromList [] = emptySlice
 fromList xs0 = runST $ ST $ \s0 ->

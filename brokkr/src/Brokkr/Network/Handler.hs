@@ -122,6 +122,7 @@ handlePlay playerUUID playerName cs es = do
 
   comp <- getCompressor
 
+-- TODO another keepalive thread that checks if the client answered in time!
   let send = do
         liftIO $ myThreadId >>= flip labelThread ("Network send for: " <> T.unpack (coerce playerName))
         go

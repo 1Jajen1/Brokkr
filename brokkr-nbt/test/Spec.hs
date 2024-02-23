@@ -87,6 +87,7 @@ testFiles = testGroup "Files"
   , testFile "inttest1023.nbt"
   , testFile "level.dat"
   , testFile "simple_player.dat"
+  , testFile "realworld.nbt"
   ]
 
 testFile :: String -> TestTree
