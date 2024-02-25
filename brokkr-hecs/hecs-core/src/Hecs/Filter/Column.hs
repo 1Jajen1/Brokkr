@@ -91,8 +91,8 @@ withColumn :: forall c r ty n
   -> (Column (ComponentKindFor c) RealWorld c -> IO r)
   -> IO r
 {-# INLINE withColumn #-}
-withColumn (TypedArchetype aty _) onSucc =
-  Archetype.getColumn @c aty n onSucc
+withColumn (TypedArchetype aty inds) onSucc =
+  Archetype.getColumn @c aty (indexPrimArray inds $ n * 2 + 1) onSucc
   where n = fromIntegral $ natVal (Proxy @n)
 
 withComponentId :: forall c ty r n

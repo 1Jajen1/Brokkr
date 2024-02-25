@@ -77,9 +77,6 @@ main = do
       -- liftIO $ putStrLn $ "Match: " <> show eid <> " with rel id " <> show snd
     -- e3 <- newEntity
     -- add @(Rel Color Red) e3
-    liftIO $ putStrLn "DO IT"
-    liftIO $ performMajorGC
-    liftIO $ putStrLn "DO IT NOW"
     progress 1
 
   pure ()
