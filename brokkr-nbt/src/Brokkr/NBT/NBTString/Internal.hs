@@ -75,6 +75,7 @@ instance TH.Lift NBTString where
         in NBTString (BS.BS (ForeignPtr lit FinalPtr) sz) ||]
 
 instance Show NBTString where
+  -- show (NBTString bs) = show bs
   -- TODO Change this to decode to String and use that instead
   --  This is for now mainly for debugging
   show (NBTString bs) = '0' : 'x' : concatMap toHex (BS.unpack bs)

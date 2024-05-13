@@ -54,9 +54,9 @@ library
                        Brokkr.NBT.Internal
                        Brokkr.NBT.NBTString
                        Brokkr.NBT.NBTString.Internal
-                       Brokkr.NBT.Slice
                        Brokkr.NBT.NBTError
                        Brokkr.NBT.Class
+                       Brokkr.NBT.Validate
   other-modules:       Brokkr.NBT.Codec.DecodeBinary
                        Brokkr.NBT.Codec.EncodeBinary
                        Brokkr.NBT.Codec.Show

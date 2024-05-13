@@ -29,7 +29,6 @@ import Mason.Builder qualified as B
 import Brokkr.NBT.ByteOrder
 import Brokkr.NBT.Internal
 import Brokkr.NBT.NBTString.Internal
-import Brokkr.NBT.Slice qualified as Slice
 import Brokkr.NBT.Codec
 
 import Data.Bits
@@ -180,7 +179,7 @@ genNBT = NBT <$> genNBTString <*> genTag
     genCompound = do
       xs0 <- HG.list (HR.linear 0 100) genNBT
       let xs = sortOn (\(NBT k _) -> k) xs0
-      pure . TagCompound $ Slice.fromList xs
+      pure . TagCompound $ compoundFromListAscending xs
 
 genModifiedUtf8 :: HR.Range Int -> H.Gen Char -> H.Gen (BS.ByteString, String)
 genModifiedUtf8 range charGen = do

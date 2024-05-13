@@ -11,7 +11,7 @@ module Brokkr.NBT.Class (
 ) where
 
 import Brokkr.NBT.NBTError
-import Brokkr.NBT.NBTString
+import Brokkr.NBT.NBTString.Internal
 import Brokkr.NBT.Internal
 import Brokkr.NBT.ByteOrder
 
@@ -23,9 +23,7 @@ import Data.Text (Text)
 import Data.Vector qualified as V
 import Data.Vector.Storable qualified as S
 
-import Data.Primitive.SmallArray
-
-import Brokkr.NBT.Slice
+import Data.Primitive
 
 -- | Class based 'NBT' encoding
 --
@@ -80,7 +78,7 @@ instance ToNBT (SmallArray Tag) where
 instance ToNBT a => ToNBT (SmallArray a) where
   toNBT = TagList . fmap toNBT
 
-instance ToNBT (Slice NBT) where
+instance ToNBT Compound where
   toNBT = TagCompound
 
 instance ToNBT a => ToNBT (V.Vector a) where
@@ -202,7 +200,7 @@ instance FromNBT a => FromNBT (SmallArray a) where
 instance FromNBT a => FromNBT (V.Vector a) where
   fromNBT name t = fromNBT name t <&> \xs -> V.fromListN (sizeofSmallArray xs) $ toList xs
 
-instance FromNBT (Slice NBT) where
+instance FromNBT Compound where
   fromNBT name = \case
     TagCompound c -> pure c
     _ -> err $ InvalidType name
@@ -222,26 +220,26 @@ instance FromNBT Tag where
 --      arg2 <- c .:? "arg2"
 --      pure $ MyObj arg1 arg2
 -- @
-withCompound :: Text -> (Slice NBT -> NBTParser a) -> Tag -> NBTParser a
+withCompound :: Text -> (Compound -> NBTParser a) -> Tag -> NBTParser a
 withCompound name f = \case
   TagCompound slice -> f slice
   _ -> err $ InvalidType name
 
 -- | Given a compound slice, a key and a type, parse an object from the 'Tag' with the given required key
-(.:) :: FromNBT a => Slice NBT -> NBTString -> NBTParser a
-!m .: !k = case findWithIndex (\(NBT key _) -> key) k m of
-  (# _, (# NBT _ t | #) #) -> fromNBT (toText k) t
-  (# _, (# | (#  #) #) #) -> err $ MissingKey $ toText k
+(.:) :: FromNBT a => Compound -> NBTString -> NBTParser a
+!m .: !k = case findWithIndex m k of
+  (# NBT _ t | #) -> fromNBT (toText k) t
+  (# | (#  #) #) -> err $ MissingKey $ toText k
 
 -- | Given a compound slice, a key and a type, parse an object from the 'Tag' with the given optional key
-(.:?) :: FromNBT a => Slice NBT -> NBTString -> NBTParser (Maybe a)
-m .:? k = case findWithIndex (\(NBT key _) -> key) k m of
-  (# _, (# NBT _ t | #) #) -> Just <$> fromNBT (toText k) t
-  (# _, (# | _ #) #) -> pure Nothing
+(.:?) :: FromNBT a => Compound -> NBTString -> NBTParser (Maybe a)
+m .:? k = case findWithIndex m k of
+  (# NBT _ t | #) -> Just <$> fromNBT (toText k) t
+  (# | _ #) -> pure Nothing
 
 -- | Create a compound tag from a key value list
 compound :: [(NBTString, Tag)] -> Tag
-compound = TagCompound . fromList . fmap (uncurry NBT)
+compound _ = TagCompound undefined -- . foldCompound . fmap (uncurry NBT)
 
 -- | Create a key value pair with any value that can be converted to 'NBT'
 (.=) :: ToNBT a => NBTString -> a -> (NBTString, Tag)

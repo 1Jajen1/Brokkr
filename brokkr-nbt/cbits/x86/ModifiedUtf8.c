@@ -36,7 +36,7 @@ static inline uint64_t read_uint64(const uint64_t *p) {
 
 static inline int is_valid_modified_utf8_fallback(uint8_t const *const src, size_t len) {
   uint8_t const *ptr = (uint8_t const *)src;
-  
+
   uint8_t const *const end = ptr + len;
   while (ptr < end) {
     uint8_t const byte = *ptr;

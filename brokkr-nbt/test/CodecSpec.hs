@@ -7,8 +7,6 @@ module CodecSpec (
 
 import Brokkr.NBT.Codec
 import Brokkr.NBT.Internal
--- TODO Move this to internal
-import Brokkr.NBT.Slice qualified as Slice
 
 import Data.ByteString qualified as BS
 
@@ -30,7 +28,7 @@ testCodec = testGroup "Codec decoding" [
 testDecodeFromNBT :: TestTree
 testDecodeFromNBT = testCase "Decode from nbt" $ do
   let nbt0 = NBT "Hello" $ toComp [NBT "World" $ TagInt 32, NBT "Fourteen" $ TagShort 13, NBT "No" $ toComp []]
-      toComp = TagCompound . Slice.fromList . sortOn (\(NBT k _) -> k)
+      toComp = TagCompound . compoundFromListAscending . sortOn (\(NBT k _) -> k)
       bs = encodeNBT nbt0
       -- Just nbt = decodeNBT bs
       -- parseCodec = $$(

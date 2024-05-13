@@ -1,7 +1,12 @@
 {-# LANGUAGE DerivingStrategies, MagicHash, UnboxedTuples, UnliftedFFITypes, LambdaCase, DeriveAnyClass #-}
-{-# OPTIONS_GHC -ddump-simpl -dsuppress-all -fforce-recomp -ddump-cmm #-}
+-- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all -fforce-recomp -ddump-cmm #-}
 module Brokkr.NBT.Internal (
   NBT(..)
+, Compound(..)
+, sizeOfCompound
+, foldCompoundSorted
+, findWithIndex
+, compoundFromList, compoundFromListAscending
 , Tag(..)
 , parseNBT
 , parseTag
@@ -15,17 +20,22 @@ module Brokkr.NBT.Internal (
 import Data.ByteString.Internal qualified as BS
 import Data.Coerce
 import Data.Int
+import Data.Foldable
+import Data.List (sortOn)
 import Data.Primitive
 import Data.Vector.Storable qualified as S
 
 import Brokkr.NBT.ByteOrder
 import Brokkr.NBT.NBTString
-import Brokkr.NBT.Slice
 import Brokkr.NBT.NBTError
+import Brokkr.NBT.NBTString.Internal -- TODO
 
 import Control.DeepSeq
+import Control.Monad.Primitive
+import Control.Monad.ST.Strict
 
 import GHC.Exts
+import GHC.ForeignPtr
 import GHC.Float
 import GHC.Word
 import GHC.Generics (Generic)
@@ -81,7 +91,7 @@ data Tag where
   TagString    :: {-# UNPACK #-} !NBTString                    -> Tag
   -- It turns out that using a special list type for each kind is a waste
   TagList      :: {-# UNPACK #-} !(SmallArray Tag)             -> Tag -- TODO This is not parsing critical, but still is better strict
-  TagCompound  :: {-# UNPACK #-} !(Slice NBT)                  -> Tag -- TODO Sorting requires access to the key, so this is a branch on the tag!
+  TagCompound  :: {-# UNPACK #-} !Compound                     -> Tag
   TagIntArray  :: {-# UNPACK #-} !(S.Vector (BigEndian Int32)) -> Tag
   TagLongArray :: {-# UNPACK #-} !(S.Vector (BigEndian Int64)) -> Tag
   deriving stock (Eq, Show, Generic)
@@ -152,61 +162,62 @@ parseTag 10 = parseCompound
     parseCompound :: FP.ParserT st NBTError Tag
     {-# INLINE parseCompound #-}
     parseCompound = localST $ do
-      let initCap = 4#
-      SmallMutableArray mut <- FP.liftST $ newSmallArray (I# initCap) (error "parse nbt comp init")
-      go mut initCap 0#
+      fpco <- FP.ParserT $ \fpco _ curr st -> FP.OK# st fpco curr
+      mut <- FP.liftST $ newCompound 4
+      go fpco mut 0
       where
-        go :: SmallMutableArray# s NBT -> Int# -> Int# -> FP.ParserST s NBTError Tag
-        go mut cap sz = do
+        go :: ForeignPtrContents -> MutCompound s -> Int -> FP.ParserST s NBTError Tag
+        go !fpco !mut !sz = do
           tagId <- FP.anyWord8
           if tagId == 0
             then do
-              (SmallArray arr) <- FP.liftST $ unsafeFreezeSmallArray (SmallMutableArray mut)
-              pure $ TagCompound $ Slice arr sz
+              comp <- FP.liftST $ unsafeFreezeCompound mut sz $ OneKeyFP fpco
+              pure $ TagCompound comp
             else withNBTString $ \name -> do
               tag <- parseTag tagId
               -- grow
-              ensure mut cap sz $ \mut' cap' -> do
-                -- insert sorted
-                FP.liftST $ insertSorted (SmallMutableArray mut') (I# sz) name tag
-                go mut' cap' (sz +# 1#)
-        ensure mut cap sz f
-          | isTrue# (cap <=# sz) =
-            let newCap = cap *# 2#
-            in FP.ParserT $ \fp curr end s ->
-              case newSmallArray# newCap (error "parse nbt comp grow") s of
-                (# s', mut' #) -> case copySmallMutableArray# mut 0# mut' 0# sz s' of
-                  s'' -> case f mut' newCap of
-                    FP.ParserT g -> g fp curr end s''
-          | otherwise = f mut cap
-        {-# INLINE ensure #-}
+              ensureCompound mut sz $ \mut' -> do
+                sz' <- FP.liftST $ insertSortedLinear fpco mut' sz name tag
+                go fpco mut' sz'
+        -- insertUnsorted _ !mut !sz !name !tag = writeToCompound mut sz name tag sz >> pure (sz + 1)
         -- TODO Try sorting after inserting
-        -- TODO Try branchless version
-        insertSorted !mut !sz !name !tag = go_insert 0 sz
-          where
-            go_insert l u
-              | l >= u = do
-                copySmallMutableArray mut (u + 1) mut u (sz - u)
-                writeSmallArray mut u $! NBT name tag
-              | otherwise = do
-                let mid = (u + l) `quot` 2
-                NBT k' _ <- readSmallArray mut mid
-                case compare name k' of
-                  EQ -> pure ()
-                  LT -> go_insert l mid
-                  GT -> go_insert (mid + 1) u
-        -- insertSorted !mut !sz !name !tag = go 0
+        -- TODO Try branchless versions
+        -- insertSortedHybrid :: PrimMonad m => ForeignPtrContents -> MutCompound (PrimState m) -> Int -> NBTString -> Tag -> m ()
+        -- {-# INLINE insertSortedHybrid #-}
+        -- insertSortedHybrid !fpco !mut !sz !name !tag
+        --   | sz < 64   = insertSortedLinear fpco mut sz name tag
+        --   | otherwise = insertSortedBinary fpco mut sz name tag
+        -- insertSortedBinary :: PrimMonad m => ForeignPtrContents -> MutCompound (PrimState m) -> Int -> NBTString -> Tag -> m ()
+        -- {-# INLINE insertSortedBinary #-}
+        -- insertSortedBinary !fpco !mut !sz !name !tag = go_insert 0 sz
         --   where
-        --     go !n
-        --       | n >= sz   = writeSmallArray mut n $! NBT name tag
+        --     go_insert l u
+        --       | l >= u = do
+        --         moveCompound mut u sz
+        --         writeToCompound mut sz name tag u
         --       | otherwise = do
-        --         NBT k' _ <- readSmallArray mut n
+        --         let mid = (u + l) `quot` 2
+        --         k' <- readCompoundKey mut mid fpco
         --         case compare name k' of
         --           EQ -> pure ()
-        --           GT -> go (n + 1)
-        --           LT -> do
-        --             copySmallMutableArray mut (n + 1) mut n (sz - n)
-        --             writeSmallArray mut n $! NBT name tag
+        --           LT -> go_insert l mid
+        --           GT -> go_insert (mid + 1) u
+        insertSortedLinear :: PrimMonad m => ForeignPtrContents -> MutCompound (PrimState m) -> Int -> NBTString -> Tag -> m Int
+        {-# INLINE insertSortedLinear #-}
+        insertSortedLinear !fpco !mut !sz !name !tag = go_insert 0
+          where
+            go_insert !n
+              | n >= sz   = writeToCompound mut sz name tag sz >> pure (sz + 1)
+              | otherwise = do
+                k' <- readCompoundKey mut n fpco
+                case compare name k' of
+                  EQ -> pure sz
+                  GT -> go_insert (n + 1)
+                  LT -> do
+                    moveCompound mut n sz
+                    writeToCompound mut sz name tag n
+                    pure (sz + 1)
+
 -- anything else fails
 -- Note: We don't parse TagEnd, parseCompound and parseList
 -- parse it separately, so a TagEnd here would be invalid nbt
@@ -291,7 +302,7 @@ putTag (TagList arr)
     sz = sizeofSmallArray arr
     t1 = indexSmallArray arr 0
 
-putTag (TagCompound arr) = foldMap (\nbt -> putNBT nbt) arr <> B.int8 0
+putTag (TagCompound arr) = foldCompound (\nbt -> putNBT nbt) arr <> B.int8 0
 
 putArr :: forall a . S.Storable a => S.Vector a -> B.Builder
 {-# INLINE putArr #-}
@@ -299,3 +310,144 @@ putArr v = B.int32BE (fromIntegral sz) <> B.byteString (BS.BS (coerce fp) (sz * 
   where
     szEl = S.sizeOf (undefined :: a)
     !(fp, sz) = S.unsafeToForeignPtr0 v
+
+data Compound = Compound
+  {-# UNPACK #-} !Int               -- Number of elements
+  {-# UNPACK #-} !KeyForeignPtrContents
+  {-# UNPACK #-} !(PrimArray Int)   -- Keys. Stored as Int# + Addr# for size and ptr to data
+  {-# UNPACK #-} !(SmallArray Tag)  -- Actual tags
+  {-# UNPACK #-} !(PrimArray Int32) -- Sorting
+  deriving stock Generic
+
+data KeyForeignPtrContents
+  = OneKeyFP !ForeignPtrContents
+  | ManyKeyFP {-# UNPACK #-} !(SmallArray ForeignPtrContents)
+
+instance Eq Compound where
+  l == r = foldCompoundSorted (pure @[]) l == foldCompoundSorted pure r
+
+instance NFData Compound where
+  {-# INLINE rnf #-}
+  rnf !_ = () -- enough because everything inside is strict. Even the tags are with the writes from this module
+
+instance Show Compound where
+  show c = "Compound " <> show (foldCompoundSorted (pure @[]) c) 
+
+data MutCompound s = MutCompound
+  {-# UNPACK #-} !(MutablePrimArray s Int)
+  {-# UNPACK #-} !(SmallMutableArray s Tag)
+  {-# UNPACK #-} !(MutablePrimArray s Int32)
+
+-- TODO Yeah this one sucks...
+compoundFromList :: [NBT] -> Compound
+{-# INLINE compoundFromList #-}
+compoundFromList = compoundFromListAscending . sortOn (\(NBT k _) -> k)
+
+compoundFromListAscending :: [NBT] -> Compound
+{-# INLINE compoundFromListAscending #-}
+compoundFromListAscending xs0 = runST $ do
+  mut <- newCompound len
+  mutFpcos <- newSmallArray len (error "compoundFromList")
+  forM_ (zip [0..] xs0) $ \(ind, NBT name@(NBTString (BS.BS (ForeignPtr _ fpco) _)) tag) -> do
+    writeSmallArray mutFpcos ind fpco
+    writeToCompound mut ind name tag ind
+  fpcos <- unsafeFreezeSmallArray mutFpcos
+  unsafeFreezeCompound mut len $ ManyKeyFP fpcos
+  where
+    len = length xs0
+
+newCompound :: PrimMonad m => Int -> m (MutCompound (PrimState m))
+{-# INLINE newCompound #-}
+newCompound sz = MutCompound <$> newPrimArray (sz * 2) <*> newSmallArray sz (error "newCompound::empty") <*> newPrimArray sz
+
+readCompoundKey :: PrimMonad m => MutCompound (PrimState m) -> Int -> ForeignPtrContents -> m NBTString
+{-# INLINE readCompoundKey #-}
+readCompoundKey (MutCompound keys _ sorted) i0 fpco = do
+  i <- fromIntegral <$> readPrimArray sorted i0
+  sz <- readPrimArray keys $ i * 2
+  I# arr <- readPrimArray keys $ i * 2 + 1
+  pure $ NBTString $ BS.BS (ForeignPtr (int2Addr# arr) fpco) sz
+
+writeToCompound :: PrimMonad m => MutCompound (PrimState m) -> Int -> NBTString -> Tag -> Int -> m ()
+{-# INLINE writeToCompound #-}
+writeToCompound (MutCompound keys tags sorted) ind (NBTString (BS.BS (ForeignPtr addr _) sz)) !tag !sortInd = do
+  writePrimArray keys (ind * 2    ) sz
+  writePrimArray keys (ind * 2 + 1) $ I# (addr2Int# addr)
+  writeSmallArray tags ind tag
+  writePrimArray sorted sortInd $ fromIntegral ind
+
+ensureCompound :: MutCompound s -> Int -> (MutCompound s -> FP.ParserST s e r) -> FP.ParserST s e r
+{-# INLINE ensureCompound #-}
+ensureCompound old@(MutCompound keys (SmallMutableArray arr) sorted) sz f = do
+  cap <- FP.liftST . primitive $ \s -> case getSizeofSmallMutableArray# arr s of (# s', i #) -> (# s', I# i #)
+  if cap > sz then f old else do
+    let newCap = cap * 2
+
+    keys' <- FP.liftST $ newPrimArray $ newCap * 2
+    FP.liftST $ copyMutablePrimArray keys' 0 keys 0 $ cap * 2
+
+    arr' <- FP.liftST $ newSmallArray newCap (error "ensureCompound::empty")
+    FP.liftST $ copySmallMutableArray arr' 0 (SmallMutableArray arr) 0 cap
+
+    sorted' <- FP.liftST $ newPrimArray newCap
+    FP.liftST $ copyMutablePrimArray sorted' 0 sorted 0 cap
+
+    f $ MutCompound keys' arr' sorted'
+
+moveCompound :: PrimMonad m => MutCompound (PrimState m) -> Int -> Int -> m ()
+{-# INLINE moveCompound #-}
+moveCompound (MutCompound _ _ sorted) from sz = copyMutablePrimArray sorted (from + 1) sorted from (sz - from)
+
+unsafeFreezeCompound :: PrimMonad m => MutCompound (PrimState m) -> Int -> KeyForeignPtrContents -> m Compound
+{-# INLINE unsafeFreezeCompound #-}
+unsafeFreezeCompound (MutCompound keys tags sorted) sz fpcos =
+  Compound sz fpcos <$> unsafeFreezePrimArray keys <*> unsafeFreezeSmallArray tags <*> unsafeFreezePrimArray sorted
+
+foldCompound :: Monoid m => (NBT -> m) -> Compound -> m
+{-# INLINE foldCompound #-}
+foldCompound f (Compound sz fpcos keys tags _) = go 0
+  where
+    go n
+      | n >= sz   = mempty
+      | otherwise =
+        let keySz = indexPrimArray keys $ n * 2
+            !fpco = case fpcos of OneKeyFP x -> x; ManyKeyFP arr -> indexSmallArray arr n
+            !(I# addr) = indexPrimArray keys $ n * 2 + 1
+            tag = indexSmallArray tags n
+        in f (NBT (NBTString (BS.BS (ForeignPtr (int2Addr# addr) fpco) keySz)) tag) <> go (n + 1)
+
+foldCompoundSorted :: Monoid m => (NBT -> m) -> Compound -> m
+{-# INLINE foldCompoundSorted #-}
+foldCompoundSorted f (Compound sz fpcos keys tags sorted) = go 0
+  where
+    go n
+      | n >= sz   = mempty
+      | otherwise =
+        let i = fromIntegral $ indexPrimArray sorted n
+            !fpco = case fpcos of OneKeyFP x -> x; ManyKeyFP arr -> indexSmallArray arr i
+            keySz = indexPrimArray keys $ i * 2
+            !(I# addr) = indexPrimArray keys $ i * 2 + 1
+            tag = indexSmallArray tags i
+        in f (NBT (NBTString (BS.BS (ForeignPtr (int2Addr# addr) fpco) keySz)) tag) <> go (n + 1)
+
+sizeOfCompound :: Compound -> Int
+{-# INLINE sizeOfCompound #-}
+sizeOfCompound (Compound _ _ _ tags _) = sizeofSmallArray tags
+
+findWithIndex :: Compound -> NBTString -> (# NBT | (# #) #)
+{-# INLINE findWithIndex #-}
+findWithIndex (Compound sz fpcos keys tags sorted) key = goFindBinary 0 sz
+  where
+    goFindBinary l u
+      | l >= u = (# | (# #) #)
+      | otherwise =
+        let mid = (l + u) `quot` 2
+            i = fromIntegral $ indexPrimArray sorted mid
+            !fpco = case fpcos of OneKeyFP x -> x; ManyKeyFP arr -> indexSmallArray arr i
+            keySz = indexPrimArray keys $ i * 2
+            !(I# keyAddr) = indexPrimArray keys $ i * 2 + 1
+            key' = NBTString (BS.BS (ForeignPtr (int2Addr# keyAddr) fpco) keySz)
+        in case compare key' key of
+          LT -> goFindBinary (mid + 1) u
+          GT -> goFindBinary l mid
+          EQ -> let tag = indexSmallArray tags i in (# NBT key tag | #)

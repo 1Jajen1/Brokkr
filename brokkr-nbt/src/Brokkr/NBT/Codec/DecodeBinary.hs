@@ -11,17 +11,16 @@ module Brokkr.NBT.Codec.DecodeBinary (
   genParser
 ) where
 
-import Brokkr.NBT.Internal
+import Brokkr.NBT.Internal hiding (Compound)
 import Brokkr.NBT.ByteOrder
 import Brokkr.NBT.NBTError
+import Brokkr.NBT.Validate
 
 import Brokkr.NBT.NBTString.Internal
 
 import Brokkr.NBT.Codec.Internal
 
 import Control.Monad
-
-import Data.Bifunctor (first)
 
 import Data.Bits
 
@@ -504,18 +503,6 @@ parseArray len f = do
 data Trie a = All !Word8 !(Trie a) | Branch [(Word8, Trie a)] | Leaf a | Empty
   deriving stock (Show, Functor)
 
-skipCompound :: FP.ParserT st NBTError ()
-{-# INLINE skipCompound #-}
-skipCompound = do
-  t <- FP.anyWord8
-  if t == 0 then pure () else skipKey $ skipTag t >> skipCompound
-
--- Yes, taking the extra parser as a continuation does improve both code gen
---  and the performance
-skipKey :: FP.ParserT st NBTError () -> FP.ParserT st NBTError ()
-{-# INLINE skipKey #-}
-skipKey f = withNBTString $ \_ -> f
-
 -- Invariant: We have at least sz bytes available
 -- Invariant: addr points to right after the size prefix
 skipKeyWithSizeWithBack :: Int -> Addr# -> FP.ParserT st e r -> FP.ParserT st e r
@@ -538,36 +525,6 @@ takeExtraUnsafe# :: Int# -> FP.ParserT st e BS.ByteString
 {-# INLINE takeExtraUnsafe# #-}
 takeExtraUnsafe# sz = FP.ParserT $ \fp _ s st ->
   FP.OK# st (BS.BS (ForeignPtr s fp) (I# sz)) (plusAddr# s sz)
-
--- TODO I need to perform a heap check here to avoid hogging a thread.
--- This is 100% allocation free and thus very dangerous when applied to
--- user input, especially if that input came compressed.
-skipTag :: Word8 -> FP.ParserT st NBTError ()
-{-# INLINE skipTag #-}
--- int8, int16, int32, int64, float, double
-skipTag 1 = FP.skip 1
-skipTag 2 = FP.skip 2
-skipTag 3 = FP.skip 4
-skipTag 4 = FP.skip 8
-skipTag 5 = FP.skip 4
-skipTag 6 = FP.skip 8
--- byte/int/long array
-skipTag 7  = FP.anyInt32be >>= void . FP.skip . fromIntegral
-skipTag 11 = FP.anyInt32be >>= \sz -> void . FP.skip $ fromIntegral sz * 4
-skipTag 12 = FP.anyInt32be >>= \sz -> void . FP.skip $ fromIntegral sz * 8
--- strings
-skipTag 8 = skipKey (pure ())
--- lists
-skipTag 9 = do
-  t <- FP.anyWord8
-  sz <- FP.anyInt32be
-  let go  0 = pure ()
-      go !n = skipTag t >> go (n - 1)
-  go sz
--- compounds
-skipTag 10 = skipCompound
--- anything else is bad
-skipTag _ = FP.empty
 
 -- TODO remember to yield on skipTag calls to prevent exploits
 

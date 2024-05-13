@@ -27,6 +27,7 @@ import GHC.Generics (Generic)
 import Brokkr.NBT.Codec
 import Brokkr.NBT.Internal
 import Brokkr.NBT.ByteOrder
+import Brokkr.NBT.Validate
 
 import BigTest
 
@@ -68,7 +69,8 @@ benchFile :: String -> Benchmark
 benchFile name =
   env (setupEnv name) $ \ ~Env{..} -> 
   bgroup name $
-    [ bench "decode (brokkr)"  $ nf parseBsNBT envBs
+    [ bench "validate (brokkr)" $ nf validateBsNBT envBs
+    , bench "decode (brokkr)"  $ nf parseBsNBT envBs
     , bench "encode (brokkr)"  $ nf encodeNBT envNBT 
     ]
       -- <> (if includeCmp then
@@ -167,6 +169,11 @@ main = defaultMain [
   , benchRecList
   -- TODO Add modified-utf-8 validation and conversion benchmarks
   ]
+
+validateBsNBT :: BS.ByteString -> ()
+validateBsNBT !bs = case FP.runParser skipNBT bs of
+  FP.OK res "" -> ()
+  _ -> error "Failed to parse NBT"
 
 parseBsNBT :: BS.ByteString -> NBT
 parseBsNBT !bs = case FP.runParser parseNBT bs of
