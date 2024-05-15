@@ -6,6 +6,9 @@
 
 #include <stdio.h>
 
+#define likely(x)      __builtin_expect(!!(x), 1) 
+#define unlikely(x)    __builtin_expect(!!(x), 0) 
+
 static const uint8_t INVALID_FORMAT = 1<<0;
 static const uint8_t TOO_LONG       = 1<<1;
 static const uint8_t CONT           = 1<<2;
@@ -240,7 +243,7 @@ static __inline__ __m256i isComplete_256(const __m256i inp, const __m256i prevIn
 __attribute__((target("avx2")))
 static __inline__ void checkNextBlock_256(struct Checker256 *checker, __m256i *inputPtr) {
   // check if all ascii
-  if (isAscii_256(inputPtr)) {
+  if (likely(isAscii_256(inputPtr))) {
     if (_mm256_testz_si256(checker->prevComplete, checker->prevComplete)) {
       checker->error = _mm256_or_si256(checker->error, checker->prevComplete);
       // printVec_256(checker->error);
@@ -278,7 +281,7 @@ static inline int is_valid_modified_utf8_m256(uint8_t const *const src, size_t l
   }
 
   size_t tailSz = len & 63;
-  if (tailSz > 0) {
+  if (likely(tailSz > 0)) {
     __m256i last[2];
     memset((uint8_t*)last, 0x20, 64);
     memcpy(last, (uint8_t *) inputPtr, tailSz);
@@ -509,7 +512,7 @@ static __inline__ __m128i isComplete_128(const __m128i inp, const __m128i prevIn
 __attribute__((target("sse4.2")))
 static __inline__ void checkNextBlock_128(struct Checker128 *checker, __m128i *inputPtr) {
   // check if all ascii
-  if (isAscii_128(inputPtr)) {
+  if (likely(isAscii_128(inputPtr))) {
     if (_mm_testz_si128(checker->prevComplete, checker->prevComplete)) {
       checker->error = _mm_or_si128(checker->error, checker->prevComplete);
       // printVec(checker->error);
@@ -548,7 +551,7 @@ static inline int is_valid_modified_utf8_m128(uint8_t const *const src, size_t l
   }
 
   size_t tailSz = len & 63;
-  if (tailSz > 0) {
+  if (likely(tailSz > 0)) {
     __m128i last[4];
     memset((uint8_t*)last, 0x20, 64);
     memcpy(last, (uint8_t *) inputPtr, tailSz);
@@ -601,14 +604,14 @@ static inline int is_valid_modified_utf8_fallback(uint8_t const *const src, size
   uint8_t const *ptr = (uint8_t const *)src;
 
   uint8_t const *const end = ptr + len;
-  while (ptr < end) {
+  while (likely(ptr < end)) {
     uint8_t const byte = *ptr;
     // 1 byte. Highest bit == 0
-    if (byte > 0 && byte < 0b10000000) {
+    if (likely(byte > 0 && byte < 0b10000000)) {
       ptr++;
 
       // verify a block of bytes. Validates up to the first non-ascii byte
-      if (ptr + 8 < end && true) {
+      if (likely(ptr + 8 < end && true)) {
         uint64_t const *big_ptr = (uint64_t const *)ptr;
         uint64_t word = to_little_endian(read_uint64(big_ptr));
 
@@ -626,7 +629,8 @@ static inline int is_valid_modified_utf8_fallback(uint8_t const *const src, size
             return 0;
           }
         } else {
-          ptr += (__builtin_ctzl(tmp) >> 3);
+          // printf("Invalid null\n");
+          return 0;
         }
       }
     }
@@ -643,8 +647,11 @@ static inline int is_valid_modified_utf8_fallback(uint8_t const *const src, size
         // Check if we have the null byte
         ((byte == 0b11000000 && *(ptr + 1) == 0b10000000) ||
         // Check if both bytes are valid utf-8
-        (byte >= 0b11000010 && byte <= 0b11011111 && ((int8_t) * (ptr + 1)) <= (int8_t) 0b10111111))) {
-      ptr += 2;
+        (byte >= 0b11000010 && byte <= 0b11011111))) {
+          uint8_t const byte2 = *(ptr + 1);
+          bool byte2Valid = byte2 >= 0b10000000 && byte2 <= 0b10111111;
+          if (!byte2Valid) return 0;
+          ptr += 2;
     }
     // maybe 3 bytes without surrogates?
     // First byte is 0b1110XXXX
@@ -652,12 +659,13 @@ static inline int is_valid_modified_utf8_fallback(uint8_t const *const src, size
     // Second and third bytes are 0b10XXXXXX
     else if (ptr + 2 < end && byte >= 0b11100000 && byte <= 0b11101111) {
       uint8_t const byte2 = *(ptr + 1);
-      bool byte2Valid = (int8_t) byte2 <= (int8_t) 0b10111111;
-      bool byte3Valid = ((int8_t) * (ptr + 2)) <= (int8_t) 0b10111111;
+      uint8_t const byte3 = *(ptr + 2);
+      bool byte2Valid = byte2 >= 0b10000000 && byte2 <= 0b10111111;
+      bool byte3Valid = byte3 >= 0b10000000 && byte3 <= 0b10111111;
       // first accept all 3 byte sequences that are not surrogates
       if (byte2Valid && byte3Valid &&
           // check if overlong
-          (byte == 0b11100000 && byte2 >= 0b10100000) ||
+          ((byte == 0b11100000 && byte2 >= 0b10100000) ||
           // first byte below the surrogate range and not overlong
           (byte >= 0b11100001 && byte  <= 0b11101100) ||
           // first byte indicates surrogates, check next byte
@@ -665,7 +673,7 @@ static inline int is_valid_modified_utf8_fallback(uint8_t const *const src, size
           // non-surrogates here
           (byte == 0b11101101 && byte2 <= 0b10011111) ||
           // above the surrogate range
-          (byte >= 0b11101110 && byte  <= 0b11101111)) {
+          (byte >= 0b11101110 && byte  <= 0b11101111))) {
         ptr += 3;
       }
       // check for surrogate pairs
@@ -674,18 +682,18 @@ static inline int is_valid_modified_utf8_fallback(uint8_t const *const src, size
         bool byte4Valid = *(ptr + 3) == 0b11101101;
         uint8_t const byte5 = *(ptr + 4);
         bool byte5Valid = 0b10110000 <= byte5 && byte5 <= 0b10111111;
-        bool byte6Valid = ((int8_t) * (ptr + 5)) <= (int8_t) 0b10111111;
+        bool byte6Valid = (* (ptr + 5)) <= 0b10111111;
         if (byte2Valid && byte3Valid && byte4Valid && byte5Valid) {
           ptr += 6;
         } else {
           // invalid surrogate pair
-          // printf("Invalid surrogate");
+          // printf("Invalid surrogate\n");
           return 0;
         }
       }
       // invalid 3 byte sequence or missing the second half of a surrogate pair
       else {
-        // printf("Invalid 3 byte or missing second half surrogate");
+        // printf("Invalid 3 byte or missing second half surrogate\n");
         return 0;
       }
     }
@@ -703,10 +711,10 @@ int is_valid_modified_utf8(uint8_t const *const src, size_t len) {
   return is_valid_modified_utf8_fallback(src, len);
 }
 
-int is_valid_modified_utf8_test(uint8_t const *const src, size_t len) {
+int is_valid_modified_utf8_simd(uint8_t const *const src, size_t len) {
   __builtin_cpu_init();
 
-  if (len >= 64) {
+  if (unlikely(len >= 64)) {
     if (__builtin_cpu_supports("avx2")) {
       return is_valid_modified_utf8_m256(src, len);
     } else {
