@@ -14,6 +14,7 @@ import Control.Exception (Exception)
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Word
 
 -- TODO This whole thing is a mess and needs a rework
 
@@ -33,9 +34,24 @@ missingKey :: [Text] -> [Text] -> NBTError
 missingKey path keys = MissingKey $ "Missing keys [" <> T.dropEnd 1 (foldr (\y acc -> y <> "," <> acc) "" keys) <> "]" <> showPath path
 
 -- | Given a path, an invalid type and an optional name create an error message
-invalidType :: [Text] -> Text -> Maybe Text -> NBTError
-invalidType path ty Nothing = InvalidType $ "Invalid type. Expected " <> ty <> "." <> showPath path
-invalidType path ty (Just name) = InvalidType $ "Invalid type for " <> name <> ". Expected " <> ty <> "." <> showPath path
+invalidType :: [Text] -> Text -> Maybe Text -> Word8 -> NBTError
+invalidType path ty Nothing     actual = InvalidType $ "Invalid type. Expected " <> ty <> ". but got " <> tyForTag actual <> ". " <> showPath path
+invalidType path ty (Just name) actual = InvalidType $ "Invalid type for " <> name <> ". but got " <> tyForTag actual <> ". Expected " <> ty <> "." <> showPath path
+
+tyForTag :: Word8 -> Text
+tyForTag 1 = "byte"
+tyForTag 2 = "short"
+tyForTag 3 = "int"
+tyForTag 4 = "long"
+tyForTag 5 = "float"
+tyForTag 6 = "double"
+tyForTag 7 = "byte array"
+tyForTag 8 = "string"
+tyForTag 9 = "list"
+tyForTag 10 = "compound"
+tyForTag 11 = "int array"
+tyForTag 12 = "long array"
+tyForTag _ = error "TODO type"
 
 showPath :: [Text] -> Text
 showPath (Reverse []) = " At path <root>"

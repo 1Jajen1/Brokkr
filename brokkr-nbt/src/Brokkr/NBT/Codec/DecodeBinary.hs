@@ -6,6 +6,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE DeriveAnyClass #-}
 -- {-# OPTIONS_GHC -dsuppress-all -ddump-simpl #-}
 module Brokkr.NBT.Codec.DecodeBinary (
   genParser
@@ -19,7 +20,13 @@ import Brokkr.NBT.Validate
 import Brokkr.NBT.NBTString.Internal
 
 import Brokkr.NBT.Codec.Internal
+    ( NBTCodec(..),
+      ListFor,
+      Code,
+      CodecContext(Value, Compound),
+      simplifyCodec )
 
+import Control.DeepSeq
 import Control.Monad
 
 import Data.Bits
@@ -59,27 +66,27 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> runContParserT ($$(go
     go :: forall i x st . [Text] -> NBTCodec Value i x -> Code (Word8 -> ContParserT st NBTError x)
     go _ TagCodec = [|| \t -> ContParserT $ \f -> parseTag t >>= f ||]
 
-    go path (ByteCodec  name) = [|| \t -> ContParserT $ \f -> if t == 1 then FP.anyInt8    >>= f else FP.err $ invalidType path "byte"  name ||]
-    go path (ShortCodec name) = [|| \t -> ContParserT $ \f -> if t == 2 then FP.anyInt16be >>= f else FP.err $ invalidType path "short" name ||]
-    go path (IntCodec   name) = [|| \t -> ContParserT $ \f -> if t == 3 then FP.anyInt32be >>= f else FP.err $ invalidType path "int"   name ||]
-    go path (LongCodec  name) = [|| \t -> ContParserT $ \f -> if t == 4 then FP.anyInt64be >>= f else FP.err $ invalidType path "long"  name ||]
+    go path (ByteCodec  name) = [|| \t -> ContParserT $ \f -> if t == 1 then FP.anyInt8    >>= f else FP.err $ invalidType path "byte"  name t ||]
+    go path (ShortCodec name) = [|| \t -> ContParserT $ \f -> if t == 2 then FP.anyInt16be >>= f else FP.err $ invalidType path "short" name t ||]
+    go path (IntCodec   name) = [|| \t -> ContParserT $ \f -> if t == 3 then FP.anyInt32be >>= f else FP.err $ invalidType path "int"   name t ||]
+    go path (LongCodec  name) = [|| \t -> ContParserT $ \f -> if t == 4 then FP.anyInt64be >>= f else FP.err $ invalidType path "long"  name t ||]
 
-    go path (FloatCodec  name) = [|| \t -> ContParserT $ \f -> if t == 5 then castWord32ToFloat  <$> FP.anyWord32be >>= f else FP.err $ invalidType path "float"  name ||]
-    go path (DoubleCodec name) = [|| \t -> ContParserT $ \f -> if t == 6 then castWord64ToDouble <$> FP.anyWord64be >>= f else FP.err $ invalidType path "double" name ||]
+    go path (FloatCodec  name) = [|| \t -> ContParserT $ \f -> if t == 5 then castWord32ToFloat  <$> FP.anyWord32be >>= f else FP.err $ invalidType path "float"  name t ||]
+    go path (DoubleCodec name) = [|| \t -> ContParserT $ \f -> if t == 6 then castWord64ToDouble <$> FP.anyWord64be >>= f else FP.err $ invalidType path "double" name t ||]
 
-    go path (ByteArrayCodec name) = [|| \t -> ContParserT $ \f -> if t == 7  then withArray @Int8              f else FP.err $ invalidType path "byte array" name ||]
-    go path (IntArrayCodec name)  = [|| \t -> ContParserT $ \f -> if t == 11 then withArray @(BigEndian Int32) f else FP.err $ invalidType path "int array"  name ||]
-    go path (LongArrayCodec name) = [|| \t -> ContParserT $ \f -> if t == 12 then withArray @(BigEndian Int64) f else FP.err $ invalidType path "long array" name ||]
+    go path (ByteArrayCodec name) = [|| \t -> ContParserT $ \f -> if t == 7  then withArray @Int8              f else FP.err $ invalidType path "byte array" name t ||]
+    go path (IntArrayCodec name)  = [|| \t -> ContParserT $ \f -> if t == 11 then withArray @(BigEndian Int32) f else FP.err $ invalidType path "int array"  name t ||]
+    go path (LongArrayCodec name) = [|| \t -> ContParserT $ \f -> if t == 12 then withArray @(BigEndian Int64) f else FP.err $ invalidType path "long array" name t ||]
 
-    go path (StringCodec name) = [|| \t -> ContParserT $ \f -> if t == 8 then withNBTString f else FP.err $ invalidType path "string" name ||]
+    go path (StringCodec name) = [|| \t -> ContParserT $ \f -> if t == 8 then withNBTString f else FP.err $ invalidType path "string" name t ||]
 
     go path (ListCodec name inner) = [|| \t -> if t == 9
       then $$(goList ("<list" <> maybe "" ("#"<>) name <> ">" : path) inner)
-      else ContParserT $ \_ -> FP.err $ invalidType path "list" name ||]
+      else ContParserT $ \_ -> FP.err $ invalidType path "list" name t ||]
     
     go path (CompoundCodec name inner) = [|| \t -> ContParserT $ \f -> if t == 10
       then $$(goCompound ("<compound" <> maybe "" ("#"<>) name <> ">" : path) inner) >>= f
-      else FP.err $ invalidType path "compound" name
+      else FP.err $ invalidType path "compound" name t
       ||]
 
     go path (RmapCodec f inner) = [|| fmap $$(f) . $$(go path inner) ||]
@@ -124,52 +131,52 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> runContParserT ($$(go
         goInner :: NBTCodec Value i2 x1 -> Code (Int -> Word8 -> ContParserT st NBTError (ListFor x1))
         goInner (ByteCodec name) = [|| \sz -> \case
           1 -> ContParserT $ \f -> parseArray @Int8 sz f
-          _ -> ContParserT $ \_ -> FP.err $ invalidType path "byte" name
+          t -> ContParserT $ \_ -> FP.err $ invalidType path "byte" name t
           ||]
         goInner (ShortCodec name) = [|| \sz -> \case
           2 -> ContParserT $ \f -> parseArray @(BigEndian Int16) sz f
-          _ -> ContParserT $ \_ -> FP.err $ invalidType path "short" name
+          t -> ContParserT $ \_ -> FP.err $ invalidType path "short" name t
           ||]
         goInner (IntCodec name) = [|| \sz -> \case
           3 -> ContParserT $ \f -> parseArray @(BigEndian Int32) sz f
-          _ -> ContParserT $ \_ -> FP.err $ invalidType path "int" name
+          t -> ContParserT $ \_ -> FP.err $ invalidType path "int" name t
           ||]
         goInner (LongCodec name) = [|| \sz -> \case
           4 -> ContParserT $ \f -> parseArray @(BigEndian Int64) sz f
-          _ -> ContParserT $ \_ -> FP.err $ invalidType path "long" name
+          t -> ContParserT $ \_ -> FP.err $ invalidType path "long" name t
           ||]
         goInner (FloatCodec name) = [|| \sz -> \case
           5 -> ContParserT $ \f -> parseArray @(BigEndian Float) sz f
-          _ -> ContParserT $ \_ -> FP.err $ invalidType path "float" name
+          t -> ContParserT $ \_ -> FP.err $ invalidType path "float" name t
           ||]
         goInner (DoubleCodec name) = [|| \sz -> \case
           6 -> ContParserT $ \f -> parseArray @(BigEndian Double) sz f
-          _ -> ContParserT $ \_ -> FP.err $ invalidType path "double" name
+          t -> ContParserT $ \_ -> FP.err $ invalidType path "double" name t
           ||]
         goInner (ByteArrayCodec name) = [|| \sz -> \case
           7 -> ContParserT $ \f -> $$(parseSmallArray [|| takeArray @Int8 ||]) sz >>= f
-          _ -> ContParserT $ \_ -> FP.err $ invalidType path "byte array" name
+          t -> ContParserT $ \_ -> FP.err $ invalidType path "byte array" name t
           ||]
         goInner (IntArrayCodec name) = [|| \sz -> \case
           11 -> ContParserT $ \f -> ($$(parseSmallArray [|| takeArray @(BigEndian Int32) ||]) sz) >>= f
-          _  -> ContParserT $ \_ -> FP.err $ invalidType path "int array" name
+          t  -> ContParserT $ \_ -> FP.err $ invalidType path "int array" name t
           ||]
         goInner (LongArrayCodec name) = [|| \sz -> \case
           12 -> ContParserT $ \f -> ($$(parseSmallArray [|| takeArray @(BigEndian Int64) ||]) sz) >>= f
-          _  -> ContParserT $ \_ -> FP.err $ invalidType path "long array" name
+          t  -> ContParserT $ \_ -> FP.err $ invalidType path "long array" name t
           ||]
         goInner (StringCodec name) = [|| \sz -> \case
           8 -> ContParserT $ \f -> ($$(parseSmallArray [|| parseNBTString ||]) sz) >>= f
-          _  -> ContParserT $ \_ -> FP.err $ invalidType path "string" name
+          t  -> ContParserT $ \_ -> FP.err $ invalidType path "string" name t
           ||]
         goInner TagCodec = [|| \sz t -> ContParserT $ \f -> ($$(parseSmallArray [|| parseTag t ||]) sz) >>= f ||]
         goInner (ListCodec name i) = [|| \sz -> \case
           9  -> ContParserT $ \f -> ($$(parseSmallArray [|| runContParserT ($$(goList ("<list" <> maybe "" ("#"<>) name <> ">" : path) i)) pure ||]) sz) >>= f
-          _  -> ContParserT $ \_ -> FP.err $ invalidType path "list" name
+          t  -> ContParserT $ \_ -> FP.err $ invalidType path "list" name t
           ||]
         goInner (CompoundCodec name i) = [|| \sz -> \case
           10 -> ContParserT $ \f -> ($$(parseSmallArray (goCompound ("<compound" <> maybe "" ("#"<>) name <> ">" : path) i)) sz) >>= f
-          _  -> ContParserT $ \_ -> FP.err $ invalidType path "list" name
+          t  -> ContParserT $ \_ -> FP.err $ invalidType path "list" name t
           ||]
         goInner (RmapCodec _ _) = error "ListCodec rmap inner"
         goInner (RmapEitherCodec _ _) = error "ListCodec rmap either inner"
@@ -234,6 +241,8 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> runContParserT ($$(go
       | otherwise = TH.unsafeCodeCoerce $ do
           funcN <- TH.newName "go"
           bm <- TH.newName "bm"
+          -- TH.runIO $ putStrLn "Start compound"
+          -- TH.runIO $ print path
           -- [(strict?,name)]
           -- If a value is strict, it will get a bang pattern and ghc is likely to unbox it
           varNames' <- traverse (\(_,_,mdef,_) -> (isJust mdef,) <$> TH.newName "x") keysToParsers
@@ -288,6 +297,7 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> runContParserT ($$(go
                               else (i + 1, TH.appE acc (TH.varE x))) (0, TH.varE funcN) $ fmap snd varNames') [| clearBit @Int $(TH.varE bm) ind |])
                         |]) $tagId |]
                       _ -> error "Weird ass trie!"
+                    | otherwise = error "Impossible!"
           TH.letE [
             let bod = [|
                   FP.withAnyWord8 $ \tag -> do
@@ -316,7 +326,7 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> runContParserT ($$(go
                                 $(foldl' (\acc x -> TH.appE acc (TH.varE x)) (TH.varE funcN) $ fmap snd varNames)
                         $(let fb = TH.match TH.wildP (TH.normalB [| validateKey |]) []
                               buildMatch (sz, trie) = TH.match (TH.litP $ TH.IntegerL (fromIntegral sz)) (TH.normalB $ genBranch [| validateKey |] [| tag |] sz trie) []
-                          in TH.caseE [| w' |] $ foldr (\x acc -> buildMatch x : acc) [fb] tries)
+                          in TH.caseE [| w' |] $ foldr (\x acc -> buildMatch x : acc) [fb] $ tries)
                   |]
                 doneBod = [| skipCompound >> $(TH.unTypeCode . fst $ mkFinishFun inner (fmap snd varNames')) |]
             in TH.funD funcN
@@ -403,63 +413,49 @@ genParser c0 = [|| FP.anyWord8 >>= \t -> parseNBTString >> runContParserT ($$(go
         mkFinishFun RequiredKeyCodec{} [] = error "Finish fun had no further arguments!"
         mkFinishFun (RequiredKeyCodec _ _i _) (x:xs) =
           ([|| pure $$(TH.unsafeCodeCoerce (TH.varE x)) ||], xs)
-          -- ([|| $$(TH.unsafeCodeCoerce $ mkValFun i) $$(TH.unsafeCodeCoerce (TH.varE x)) ||], xs)
         mkFinishFun OptionalKeyCodec{} [] = error "Finish fun had no further arguments!"
         mkFinishFun (OptionalKeyCodec _ _i _) (x:xs) =
           ([|| pure $$(TH.unsafeCodeCoerce (TH.varE x)) ||], xs)
-          -- ([|| case $$(TH.unsafeCodeCoerce (TH.varE x)) of
-          --   Nothing -> pure Nothing
-          --   Just x -> Just <$> $$(TH.unsafeCodeCoerce $ mkValFun i) x
-          --   ||], xs)
-
-        mkValFun :: NBTCodec Value i o0 -> TH.Q TH.Exp
-        mkValFun (LmapCodec _ i) = mkValFun i
-        mkValFun (RmapCodec _ i) = mkValFun i
-        mkValFun (RmapEitherCodec f i) = [| $(mkValFun i) >=> (\case
-          Left e -> FP.err e
-          Right a -> pure a) . $(TH.unTypeCode f)
-          |]
-        mkValFun _ = [| pure |]
 
         extractWord64Match :: Trie a -> [(Word64, Trie a)]
-        extractWord64Match t0 = go 0 t0
+        extractWord64Match !t0 = goExtract64 0 t0
           where
-            go n t
+            goExtract64 !n !t
               | n >= 8 = pure (0, t)
               | All w8 t' <- t = do
-                (acc, cont) <- go (n + 1) t'
+                (acc, cont) <- goExtract64 (n + 1) t'
                 pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
               | Branch xs <- t = do
                 (w8, t') <- xs
-                (acc, cont) <- go (n + 1) t'
+                (acc, cont) <- goExtract64 (n + 1) t'
                 pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
               | otherwise = error "extractWord64Match but not 8 bytes worth of stuff!"
         
         extractWord32Match :: Trie a -> [(Word32, Trie a)]
-        extractWord32Match t0 = go 0 t0
+        extractWord32Match !t0 = goExtract32 0 t0
           where
-            go n t
+            goExtract32 !n !t
               | n >= 4 = pure (0, t)
               | All w8 t' <- t = do
-                (acc, cont) <- go (n + 1) t'
+                (acc, cont) <- goExtract32 (n + 1) t'
                 pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
               | Branch xs <- t = do
                 (w8, t') <- xs
-                (acc, cont) <- go (n + 1) t'
+                (acc, cont) <- goExtract32 (n + 1) t'
                 pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
               | otherwise = error "extractWord64Match but not 4 bytes worth of stuff!"
 
         extractWord16Match :: Trie a -> [(Word16, Trie a)]
-        extractWord16Match t0 = go 0 t0
+        extractWord16Match t0 = goExtract16 0 t0
           where
-            go n t
+            goExtract16 n t
               | n >= 2 = pure (0, t)
               | All w8 t' <- t = do
-                (acc, cont) <- go (n + 1) t'
+                (acc, cont) <- goExtract16 (n + 1) t'
                 pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
               | Branch xs <- t = do
                 (w8, t') <- xs
-                (acc, cont) <- go (n + 1) t'
+                (acc, cont) <- goExtract16 (n + 1) t'
                 pure (acc .|. (fromIntegral w8 `unsafeShiftL` (n * 8)), cont)
               | otherwise = error "extractWord64Match but not 2 bytes worth of stuff!"
 
@@ -500,7 +496,7 @@ parseArray len f = do
   BS.BS fp _ <- FP.take (len * szEl)
   f $ S.unsafeFromForeignPtr0 (coerce fp) len
 
-data Trie a = All !Word8 !(Trie a) | Branch [(Word8, Trie a)] | Leaf a | Empty
+data Trie a = All !Word8 !(Trie a) | Branch ![(Word8, Trie a)] | Leaf a | Empty
   deriving stock (Show, Functor)
 
 -- Invariant: We have at least sz bytes available
@@ -527,11 +523,6 @@ takeExtraUnsafe# sz = FP.ParserT $ \fp _ s st ->
   FP.OK# st (BS.BS (ForeignPtr s fp) (I# sz)) (plusAddr# s sz)
 
 -- TODO remember to yield on skipTag calls to prevent exploits
-
-localST :: forall st e a . (forall s . FP.ParserST s e a) -> FP.ParserT st e a
-{-# INLINE localST #-}
-localST p = FP.ParserT $ \fp end curr st -> case runRW# (FP.runParserT# p fp end curr) of
-  (# _, res #) -> (# st, res #)
 
 withAnyWord64Unsafe :: (Word64 -> FP.ParserT st e a) -> FP.ParserT st e a
 {-# INLINE withAnyWord64Unsafe #-}

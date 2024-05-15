@@ -3,10 +3,16 @@
 module Brokkr.NBT.Internal (
   NBT(..)
 , Compound(..)
+, MutCompound(..)
+, newCompound
 , sizeOfCompound
 , foldCompoundSorted
 , findWithIndex
 , compoundFromList, compoundFromListAscending
+, ensureCompound, unsafeFreezeCompound
+, writeToCompound, moveCompound
+, readCompoundKey
+, KeyForeignPtrContents(..)
 , Tag(..)
 , parseNBT
 , parseTag
@@ -15,6 +21,7 @@ module Brokkr.NBT.Internal (
 , takeArray
 , withArray
 , getTagId
+, localST
 ) where
 
 import Data.ByteString.Internal qualified as BS
@@ -163,7 +170,7 @@ parseTag 10 = parseCompound
     {-# INLINE parseCompound #-}
     parseCompound = localST $ do
       fpco <- FP.ParserT $ \fpco _ curr st -> FP.OK# st fpco curr
-      mut <- FP.liftST $ newCompound 4
+      mut <- FP.liftST $ newCompound 8
       go fpco mut 0
       where
         go :: ForeignPtrContents -> MutCompound s -> Int -> FP.ParserST s NBTError Tag

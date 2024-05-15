@@ -74,6 +74,10 @@ test-suite brokkr-nbt-test
                      , hedgehog
   other-modules:       CodecSpec
                        BigTest
+                       ModifiedUtf8Spec
+  ghc-options:         -threaded
+                       -rtsopts
+                       -with-rtsopts=-N
 benchmark brokkr-nbt-benchmark
   import:              common-options
   type:                exitcode-stdio-1.0
@@ -87,3 +91,4 @@ benchmark brokkr-nbt-benchmark
                      -- , named-binary-tag
                      -- , cereal
   other-modules:       BigTest
+                     , Player

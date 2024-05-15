@@ -1,12 +1,13 @@
 {-# LANGUAGE OverloadedStrings#-}
 {-# LANGUAGE TemplateHaskell#-}
+{-# LANGUAGE LambdaCase #-}
 module Main (main) where
 
 import Prelude hiding (readFile)
 
 import BigTest
 
-import Control.Exception
+import Control.Exception hiding (assert)
 import Control.Monad (when)
 import Control.Monad.ST.Strict
 
@@ -31,9 +32,6 @@ import Brokkr.NBT.Internal
 import Brokkr.NBT.NBTString.Internal
 import Brokkr.NBT.Codec
 
-import Data.Bits
-import Data.Char (ord)
-
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.Hedgehog
@@ -43,6 +41,7 @@ import Hedgehog.Gen qualified as HG
 import Hedgehog.Range qualified as HR
 
 import CodecSpec
+import ModifiedUtf8Spec
 
 main :: IO ()
 main = defaultMain tests
@@ -61,7 +60,7 @@ tests = testGroup "NBT"
 testRecursiveNBT :: TestTree
 testRecursiveNBT = testCaseSteps "recursive" $ \out -> do
   let hugeNbt = NBT "" $ nestedList 1000000
-      smallArrEmpty = runST $ newSmallArray 0 (error "SmallArr empty") >>= unsafeFreezeSmallArray
+      -- smallArrEmpty = runST $ newSmallArray 0 (error "SmallArr empty") >>= unsafeFreezeSmallArray
       smallArrSingleton x = runST $ newSmallArray 1 x >>= unsafeFreezeSmallArray
       nestedList :: Int -> Tag
       nestedList 0 = TagList emptySmallArray
@@ -90,7 +89,7 @@ testFiles = testGroup "Files"
   ]
 
 testFile :: String -> TestTree
-testFile name = testCaseSteps name $ \out ->do
+testFile name = testCaseSteps name $ \out -> do
   fileBS <- readFile name
   
   nbt0 <- case decodeNBT fileBS of
@@ -123,13 +122,6 @@ testFile name = testCaseSteps name $ \out ->do
   -- when (name == "simple_player.dat") $ error $ show nbt0
 
   assertEqual "Roundtrip: NBT -> Bytestring -> NBT" nbt0 nbt1
-
-testModifiedUtf8 :: TestTree
-testModifiedUtf8 = testGroup "modified utf-8"
-  [ testProperty "valid" . H.property $ do
-      (valid,_) <- H.forAll (genModifiedUtf8 (HR.exponential 0 4096) HG.unicode)
-      H.assert $ isValidModifiedUtf8 valid
-  ]
 
 genNBT :: H.Gen NBT
 genNBT = NBT <$> genNBTString <*> genTag
@@ -167,43 +159,19 @@ genNBT = NBT <$> genNBTString <*> genTag
       i <- HG.int (HR.constant 0 numGens)
       xs <- HG.list (HR.linear 0 100) (allGens !! i)
       let smallArrFromList [] = runST $ newSmallArray 0 (error "SmallArray empty") >>= unsafeFreezeSmallArray
-          smallArrFromList xs =
-            let len = length xs
+          smallArrFromList xs' =
+            let len = length xs'
             in runST $ do
               mar <- newSmallArray len (error "SmallArray fromList init")
               let go !_ [] = pure ()
                   go !n (y:ys) = writeSmallArray mar n y >> go (n + 1) ys
-              go 0 xs
+              go 0 xs'
               unsafeFreezeSmallArray mar
       pure . TagList $ smallArrFromList xs
     genCompound = do
       xs0 <- HG.list (HR.linear 0 100) genNBT
       let xs = sortOn (\(NBT k _) -> k) xs0
       pure . TagCompound $ compoundFromListAscending xs
-
-genModifiedUtf8 :: HR.Range Int -> H.Gen Char -> H.Gen (BS.ByteString, String)
-genModifiedUtf8 range charGen = do
-  chars <- HG.list range charGen
-  pure (BS.pack $ concatMap encodeChar chars, chars)
-  where
-    encodeChar c
-      | cp == 0       = [ 0xC0, 0x80 ]
-      | cp <= 127     = [ fromIntegral cp ]
-      | cp <= 2047    = [ 0xC0 .|. fromIntegral (cp `unsafeShiftR` 6)
-                        , 0x80 .|. fromIntegral (cp .&. 0x3F)
-                        ]
-      | cp <= 0xD7FF  = [ 0xE0 .|. fromIntegral (cp `unsafeShiftR` 12)
-                        , 0x80 .|. fromIntegral ((cp `unsafeShiftR` 6) .&. 0x3F)
-                        , 0x80 .|. fromIntegral (cp .&. 0x3F)
-                        ]
-      | cp >= 0xE000 && cp <= 0xFFFF
-                      = [ 0xE0 .|. fromIntegral (cp `unsafeShiftR` 12), 0x80 .|. fromIntegral ((cp `unsafeShiftR` 6) .&. 0x3F), 0x80 .|. fromIntegral (cp .&. 0x3F)
-                        ]
-      | cp >= 0x10000 = [ 0xED, 0xA0 .|. fromIntegral ((cp `unsafeShiftR` 16) - 1)   , 0x80 .|. fromIntegral ((cp `unsafeShiftR` 10) .&. 0x3F)
-                        , 0xED, 0xB0 .|. fromIntegral ((cp `unsafeShiftR` 6) .&. 0x7), 0x80 .|. fromIntegral (cp .&. 0x3F)
-                        ]
-      | otherwise     = error $ "invalid unicode code point " <> show cp
-      where cp = ord c
 
 encodeNBT :: NBT -> BS.ByteString
 encodeNBT nbt = B.toStrictByteString (putNBT nbt)

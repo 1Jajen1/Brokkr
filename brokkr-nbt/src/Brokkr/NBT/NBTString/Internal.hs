@@ -3,8 +3,11 @@ module Brokkr.NBT.NBTString.Internal (
   NBTString(..)
 , parseNBTString
 , withNBTString
+, unsafeParseNBTString
+, unsafeWithNBTString
 , putNBTString
 , isValidModifiedUtf8
+, isValidModifiedUtf8SIMD
 , fromText
 , fromUtf8
 , toText
@@ -120,7 +123,7 @@ parseNBTString = withAnyWord16be $ \len -> do
   -- This specific conversion from W16 -> Int cannot be negative, so
   -- the check on FP.take makes no sense
   bs <- FP.takeUnsafe# len#
-  unless (isValidModifiedUtf8 bs) . FP.err $ InvalidStringEncoding bs
+  unless (isValidModifiedUtf8SIMD bs) . FP.err $ InvalidStringEncoding bs
   pure $ NBTString bs
 {-# INLINE parseNBTString #-}
 
@@ -142,7 +145,47 @@ withNBTString f = withAnyWord16be $ \len -> do
   -- This specific conversion from W16 -> Int cannot be negative, so
   -- the check on FP.take makes no sense
   bs <- FP.takeUnsafe# len#
-  unless (isValidModifiedUtf8 bs) . FP.err $ InvalidStringEncoding bs
+  unless (isValidModifiedUtf8SIMD bs) . FP.err $ InvalidStringEncoding bs
+  f (NBTString bs)
+
+-- | Parse a NBT-String, which is in modified utf8
+--
+-- Expects a short in big-endian format and then n bytes of valid
+-- modified utf-8.
+--
+-- Returns a slice of the original input, which
+-- means the inputs lifetime is bound to this string.
+--
+-- Either use 'Data.ByteString.copy' or any of the
+-- utf8 conversion methods that always copy to release
+-- the original input.
+unsafeParseNBTString :: FP.ParserT st NBTError NBTString
+unsafeParseNBTString = withAnyWord16be $ \len -> do
+  let !(I# len#) = fromIntegral len
+  -- This specific conversion from W16 -> Int cannot be negative, so
+  -- the check on FP.take makes no sense
+  bs <- FP.takeUnsafe# len#
+  pure $ NBTString bs
+{-# INLINE unsafeParseNBTString #-}
+
+-- | CPS version of 'parseNBTString'. Can help GHC avoid an allocation of the 'NBTString'
+--
+-- Expects a short in big-endian format and then n bytes of valid
+-- modified utf-8.
+--
+-- Returns a slice of the original input, which
+-- means the inputs lifetime is bound to this string.
+--
+-- Either use 'Data.ByteString.copy' or any of the
+-- utf8 conversion methods that always copy to release
+-- the original input.
+unsafeWithNBTString :: (NBTString -> FP.ParserT st NBTError a) -> FP.ParserT st NBTError a
+{-# INLINE unsafeWithNBTString #-}
+unsafeWithNBTString f = withAnyWord16be $ \len -> do
+  let !(I# len#) = fromIntegral len
+  -- This specific conversion from W16 -> Int cannot be negative, so
+  -- the check on FP.take makes no sense
+  bs <- FP.takeUnsafe# len#
   f (NBTString bs)
 
 withAnyWord16be :: (Word16 -> FP.ParserT st e a) -> FP.ParserT st e a
@@ -171,6 +214,13 @@ isValidModifiedUtf8 (BS.BS fptr len) = BS.accursedUnutterablePerformIO $ BS.unsa
   i <- c_is_valid_modified_utf8 ptr (fromIntegral len)
   pure $ i /= 0
 {-# INLINE isValidModifiedUtf8 #-}
+
+-- | Check if a bytestring is valid java modified utf8
+isValidModifiedUtf8SIMD :: ByteString -> Bool
+isValidModifiedUtf8SIMD (BS.BS fptr len) = BS.accursedUnutterablePerformIO $ BS.unsafeWithForeignPtr fptr $ \ptr -> do
+  i <- c_is_valid_modified_utf8_simd ptr (fromIntegral len)
+  pure $ i /= 0
+{-# INLINE isValidModifiedUtf8SIMD #-}
 
 -- | Convert a utf-8 'Text' into a modified utf-8 'NBTString'
 --
@@ -210,31 +260,29 @@ encodeChar ::
   -> Char -> m
 {-# INLINE encodeChar #-}
 encodeChar onOne onTwo onThree onPair c
-  | cp == 0       = onTwo 0xC0 0x80
-  | cp <= 127     = onOne $ fromIntegral cp
-  | cp <= 2047    = onTwo
-                      (0xC0 .|. fromIntegral (cp `unsafeShiftR` 6))
-                      (0x80 .|. fromIntegral (cp .&. 0x3F))
-  | cp <= 0xD7FF  = onThree 
-                      (0xE0 .|. fromIntegral (cp `unsafeShiftR` 12))
-                      (0x80 .|. fromIntegral ((cp `unsafeShiftR` 6) .&. 0x3F))
-                      (0x80 .|. fromIntegral (cp .&. 0x3F))
-  | cp >= 0xE000 && cp <= 0xFFFF
-                  = onThree
-                      (0xE0 .|. fromIntegral (cp `unsafeShiftR` 12))
-                      (0x80 .|. fromIntegral ((cp `unsafeShiftR` 6) .&. 0x3F))
-                      (0x80 .|. fromIntegral (cp .&. 0x3F))
-  | cp >= 0x10000 = onPair
-                      0xED
-                      (0xA0 .|. fromIntegral ((cp `unsafeShiftR` 16) - 1))
-                      (0x80 .|. fromIntegral ((cp `unsafeShiftR` 10) .&. 0x3F))
-                      0xED
-                      (0xB0 .|. fromIntegral ((cp `unsafeShiftR` 6) .&. 0x7))
-                      (0x80 .|. fromIntegral (cp .&. 0x3F))
+  | cp == 0    = onTwo 0xC0 0x80
+  | cp <= 127  = onOne $ fromIntegral cp
+  | cp <= 2047 = onTwo
+                  (0xC0 .|. fromIntegral (cp `unsafeShiftR` 6))
+                  (0x80 .|. fromIntegral (cp .&. 0x3F))
+  | cp <= 0xD7FF || (cp >= 0xE000 && cp <= 0xFFFF)
+               = onThree 
+                  (0xE0 .|. fromIntegral (cp `unsafeShiftR` 12))
+                  (0x80 .|. fromIntegral ((cp `unsafeShiftR` 6) .&. 0x3F))
+                  (0x80 .|. fromIntegral (cp .&. 0x3F))
+  | cp >= 0x10000 && cp <= 0x10FFFF
+               = onPair
+                  0xED
+                  (0xA0 .|. fromIntegral ((cp `unsafeShiftR` 16) - 1))
+                  (0x80 .|. fromIntegral ((cp `unsafeShiftR` 10) .&. 0x3F))
+                  0xED
+                  (0xB0 .|. fromIntegral ((cp `unsafeShiftR` 6) .&. 0x7))
+                  (0x80 .|. fromIntegral (cp .&. 0x3F))
   | otherwise     = error $ "invalid unicode code point " <> show cp
   where cp = ord c
 
 -- TODO Also return if this is valid utf-8. A bytestring is both valid modified-utf-8 and utf-8 if it has no surrogates
 -- Maybe rewrite is_valid_modified_utf8 in cmm, to make the c-call basically free
 foreign import ccall unsafe "is_valid_modified_utf8" c_is_valid_modified_utf8 :: Ptr Word8 -> CSize -> IO CInt
+foreign import ccall unsafe "is_valid_modified_utf8_simd" c_is_valid_modified_utf8_simd :: Ptr Word8 -> CSize -> IO CInt
 foreign import ccall unsafe "memcmp" c_memcmp :: Ptr Word8 -> Ptr Word8 -> CSize -> IO CInt

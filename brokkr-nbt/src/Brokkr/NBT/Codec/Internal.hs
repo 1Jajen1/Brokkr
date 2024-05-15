@@ -195,6 +195,10 @@ instance HasCodec (ViaList (S.Vector (BigEndian Int32))) where
   codec = dimapCodec [|| ViaList ||] [|| \(ViaList v) -> v ||] $ ListCodec Nothing (codec @Int32)
 instance HasCodec (ViaList (S.Vector (BigEndian Int64))) where
   codec = dimapCodec [|| ViaList ||] [|| \(ViaList v) -> v ||] $ ListCodec Nothing (codec @Int64)
+instance HasCodec (ViaList (S.Vector (BigEndian Float))) where
+  codec = dimapCodec [|| ViaList ||] [|| \(ViaList v) -> v ||] $ ListCodec Nothing (codec @Float)
+instance HasCodec (ViaList (S.Vector (BigEndian Double))) where
+  codec = dimapCodec [|| ViaList ||] [|| \(ViaList v) -> v ||] $ ListCodec Nothing (codec @Double)
 
 -- TODO ViaList instances for byteswapped
 
