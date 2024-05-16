@@ -1,13 +1,13 @@
 {-# LANGUAGE CPP, DerivingStrategies, LambdaCase, TemplateHaskellQuotes, MagicHash #-}
 module Brokkr.NBT.NBTString.Internal (
   NBTString(..)
+, ModifiedUtf8(..) -- Only export from internal
 , parseNBTString
 , withNBTString
 , unsafeParseNBTString
 , unsafeWithNBTString
 , putNBTString
 , isValidModifiedUtf8
-, isValidModifiedUtf8SIMD
 , fromText
 , fromUtf8
 , toText
@@ -18,8 +18,6 @@ import Brokkr.NBT.NBTError
 
 import Control.DeepSeq
 import Control.Monad
-
-import Data.Char (ord)
 
 import Data.Bits
 
@@ -46,6 +44,8 @@ import Language.Haskell.TH.Syntax qualified as TH
 
 import Mason.Builder qualified as B
 
+import Brokkr.ModifiedUtf8.Internal
+
 -- | Modified utf-8 bytestring
 --
 -- Differences to utf-8:
@@ -53,12 +53,12 @@ import Mason.Builder qualified as B
 -- no 4 byte sequences, surrogates instead
 --
 -- https://docs.oracle.com/javase/8/docs/api/java/io/DataInput.html#modified-utf-8
-newtype NBTString = NBTString ByteString
-  deriving newtype (Eq, NFData)
+newtype NBTString = NBTString ModifiedUtf8
+  deriving newtype (Eq, IsString, NFData)
 
--- This is strictly faster than Ord ByteString
+-- This is strictly faster than Ord ByteString when used in maps
 instance Ord NBTString where
-  compare (NBTString (BS.BS f1 l1)) (NBTString (BS.BS f2 l2)) =
+  compare (NBTString (ModifiedUtf8 (BS.BS f1 l1))) (NBTString (ModifiedUtf8 (BS.BS f2 l2))) =
     case compare l1 l2 of
       EQ -> BS.accursedUnutterablePerformIO $ do
         BS.unsafeWithForeignPtr f1 $ \p1 ->
@@ -68,20 +68,16 @@ instance Ord NBTString where
       x -> x
   {-# INLINE compare #-}
 
-instance IsString NBTString where
-  fromString [] = NBTString BS.empty
-  fromString xs = NBTString . BS.pack $ concatMap (encodeChar (\x -> [x]) (\x y -> [x,y]) (\x y z -> [x,y,z]) (\x1 y1 z1 x2 y2 z2 -> [x1,y1,z1,x2,y2,z2])) xs
-
 instance TH.Lift NBTString where
-  liftTyped (NBTString (BS.BS fptr sz)) =
+  liftTyped (NBTString (ModifiedUtf8 (BS.BS fptr sz))) =
     [|| let !(lit :: Addr#) = $$(TH.unsafeCodeCoerce . TH.litE . TH.bytesPrimL $ TH.mkBytes fptr 0 (fromIntegral sz))
-        in NBTString (BS.BS (ForeignPtr lit FinalPtr) sz) ||]
+        in NBTString (ModifiedUtf8 (BS.BS (ForeignPtr lit FinalPtr) sz)) ||]
 
 instance Show NBTString where
   -- show (NBTString bs) = show bs
   -- TODO Change this to decode to String and use that instead
   --  This is for now mainly for debugging
-  show (NBTString bs) = '0' : 'x' : concatMap toHex (BS.unpack bs)
+  show (NBTString (ModifiedUtf8 bs)) = '0' : 'x' : concatMap toHex (BS.unpack bs)
     where
       toHex x = [toHexNibble hi, toHexNibble lo]
         where
@@ -123,8 +119,8 @@ parseNBTString = withAnyWord16be $ \len -> do
   -- This specific conversion from W16 -> Int cannot be negative, so
   -- the check on FP.take makes no sense
   bs <- FP.takeUnsafe# len#
-  unless (isValidModifiedUtf8SIMD bs) . FP.err $ InvalidStringEncoding bs
-  pure $ NBTString bs
+  unless (isValidModifiedUtf8 bs) . FP.err $ InvalidStringEncoding bs
+  pure . NBTString $ ModifiedUtf8 bs
 {-# INLINE parseNBTString #-}
 
 -- | CPS version of 'parseNBTString'. Can help GHC avoid an allocation of the 'NBTString'
@@ -145,8 +141,8 @@ withNBTString f = withAnyWord16be $ \len -> do
   -- This specific conversion from W16 -> Int cannot be negative, so
   -- the check on FP.take makes no sense
   bs <- FP.takeUnsafe# len#
-  unless (isValidModifiedUtf8SIMD bs) . FP.err $ InvalidStringEncoding bs
-  f (NBTString bs)
+  unless (isValidModifiedUtf8 bs) . FP.err $ InvalidStringEncoding bs
+  f (NBTString $ ModifiedUtf8 bs)
 
 -- | Parse a NBT-String, which is in modified utf8
 --
@@ -165,7 +161,7 @@ unsafeParseNBTString = withAnyWord16be $ \len -> do
   -- This specific conversion from W16 -> Int cannot be negative, so
   -- the check on FP.take makes no sense
   bs <- FP.takeUnsafe# len#
-  pure $ NBTString bs
+  pure . NBTString $ ModifiedUtf8 bs
 {-# INLINE unsafeParseNBTString #-}
 
 -- | CPS version of 'parseNBTString'. Can help GHC avoid an allocation of the 'NBTString'
@@ -186,7 +182,7 @@ unsafeWithNBTString f = withAnyWord16be $ \len -> do
   -- This specific conversion from W16 -> Int cannot be negative, so
   -- the check on FP.take makes no sense
   bs <- FP.takeUnsafe# len#
-  f (NBTString bs)
+  f (NBTString $ ModifiedUtf8 bs)
 
 withAnyWord16be :: (Word16 -> FP.ParserT st e a) -> FP.ParserT st e a
 {-# INLINE withAnyWord16be #-}
@@ -205,22 +201,8 @@ withAnyWord16be f = FP.withAnyWord16 (f . byteSwap16)
 -- Produces a big endian short as a length prefix and directly
 -- writes the bytestring.
 putNBTString :: NBTString -> B.Builder
-putNBTString (NBTString bs) = B.int16BE (fromIntegral $ BS.length bs) <> B.byteString bs
+putNBTString (NBTString (ModifiedUtf8 bs)) = B.int16BE (fromIntegral $ BS.length bs) <> B.byteString bs
 {-# INLINE putNBTString #-}
-
--- | Check if a bytestring is valid java modified utf8
-isValidModifiedUtf8 :: ByteString -> Bool
-isValidModifiedUtf8 (BS.BS fptr len) = BS.accursedUnutterablePerformIO $ BS.unsafeWithForeignPtr fptr $ \ptr -> do
-  i <- c_is_valid_modified_utf8 ptr (fromIntegral len)
-  pure $ i /= 0
-{-# INLINE isValidModifiedUtf8 #-}
-
--- | Check if a bytestring is valid java modified utf8
-isValidModifiedUtf8SIMD :: ByteString -> Bool
-isValidModifiedUtf8SIMD (BS.BS fptr len) = BS.accursedUnutterablePerformIO $ BS.unsafeWithForeignPtr fptr $ \ptr -> do
-  i <- c_is_valid_modified_utf8_simd ptr (fromIntegral len)
-  pure $ i /= 0
-{-# INLINE isValidModifiedUtf8SIMD #-}
 
 -- | Convert a utf-8 'Text' into a modified utf-8 'NBTString'
 --
@@ -242,7 +224,7 @@ fromUtf8 = fromString . T.unpack . T.decodeUtf8
 -- Always copies.
 toText :: NBTString -> Text
 -- TODO Actual decoding
-toText (NBTString bs) = T.decodeUtf8 bs
+toText (NBTString (ModifiedUtf8 bs)) = T.decodeUtf8 bs
 
 -- | Convert a modified utf-8 'NBTString' into a utf-8 'ByteString'
 --
@@ -252,37 +234,4 @@ toUtf8 :: NBTString -> ByteString
 -- TODO
 toUtf8 = error "TODO"
 
-encodeChar ::
-     (Word8 -> m)
-  -> (Word8 -> Word8 -> m)
-  -> (Word8 -> Word8 -> Word8 -> m)
-  -> (Word8 -> Word8 -> Word8 -> Word8 -> Word8 -> Word8 -> m)
-  -> Char -> m
-{-# INLINE encodeChar #-}
-encodeChar onOne onTwo onThree onPair c
-  | cp == 0    = onTwo 0xC0 0x80
-  | cp <= 127  = onOne $ fromIntegral cp
-  | cp <= 2047 = onTwo
-                  (0xC0 .|. fromIntegral (cp `unsafeShiftR` 6))
-                  (0x80 .|. fromIntegral (cp .&. 0x3F))
-  | cp <= 0xD7FF || (cp >= 0xE000 && cp <= 0xFFFF)
-               = onThree 
-                  (0xE0 .|. fromIntegral (cp `unsafeShiftR` 12))
-                  (0x80 .|. fromIntegral ((cp `unsafeShiftR` 6) .&. 0x3F))
-                  (0x80 .|. fromIntegral (cp .&. 0x3F))
-  | cp >= 0x10000 && cp <= 0x10FFFF
-               = onPair
-                  0xED
-                  (0xA0 .|. fromIntegral ((cp `unsafeShiftR` 16) - 1))
-                  (0x80 .|. fromIntegral ((cp `unsafeShiftR` 10) .&. 0x3F))
-                  0xED
-                  (0xB0 .|. fromIntegral ((cp `unsafeShiftR` 6) .&. 0x7))
-                  (0x80 .|. fromIntegral (cp .&. 0x3F))
-  | otherwise     = error $ "invalid unicode code point " <> show cp
-  where cp = ord c
-
--- TODO Also return if this is valid utf-8. A bytestring is both valid modified-utf-8 and utf-8 if it has no surrogates
--- Maybe rewrite is_valid_modified_utf8 in cmm, to make the c-call basically free
-foreign import ccall unsafe "is_valid_modified_utf8" c_is_valid_modified_utf8 :: Ptr Word8 -> CSize -> IO CInt
-foreign import ccall unsafe "is_valid_modified_utf8_simd" c_is_valid_modified_utf8_simd :: Ptr Word8 -> CSize -> IO CInt
 foreign import ccall unsafe "memcmp" c_memcmp :: Ptr Word8 -> Ptr Word8 -> CSize -> IO CInt

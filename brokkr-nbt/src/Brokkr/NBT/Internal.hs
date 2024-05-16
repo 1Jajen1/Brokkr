@@ -355,7 +355,7 @@ compoundFromListAscending :: [NBT] -> Compound
 compoundFromListAscending xs0 = runST $ do
   mut <- newCompound len
   mutFpcos <- newSmallArray len (error "compoundFromList")
-  forM_ (zip [0..] xs0) $ \(ind, NBT name@(NBTString (BS.BS (ForeignPtr _ fpco) _)) tag) -> do
+  forM_ (zip [0..] xs0) $ \(ind, NBT name@(NBTString (ModifiedUtf8 (BS.BS (ForeignPtr _ fpco) _))) tag) -> do
     writeSmallArray mutFpcos ind fpco
     writeToCompound mut ind name tag ind
   fpcos <- unsafeFreezeSmallArray mutFpcos
@@ -373,11 +373,11 @@ readCompoundKey (MutCompound keys _ sorted) i0 fpco = do
   i <- fromIntegral <$> readPrimArray sorted i0
   sz <- readPrimArray keys $ i * 2
   I# arr <- readPrimArray keys $ i * 2 + 1
-  pure $ NBTString $ BS.BS (ForeignPtr (int2Addr# arr) fpco) sz
+  pure . NBTString . ModifiedUtf8 $ BS.BS (ForeignPtr (int2Addr# arr) fpco) sz
 
 writeToCompound :: PrimMonad m => MutCompound (PrimState m) -> Int -> NBTString -> Tag -> Int -> m ()
 {-# INLINE writeToCompound #-}
-writeToCompound (MutCompound keys tags sorted) ind (NBTString (BS.BS (ForeignPtr addr _) sz)) !tag !sortInd = do
+writeToCompound (MutCompound keys tags sorted) ind (NBTString (ModifiedUtf8 (BS.BS (ForeignPtr addr _) sz))) !tag !sortInd = do
   writePrimArray keys (ind * 2    ) sz
   writePrimArray keys (ind * 2 + 1) $ I# (addr2Int# addr)
   writeSmallArray tags ind tag
@@ -421,7 +421,7 @@ foldCompound f (Compound sz fpcos keys tags _) = go 0
             !fpco = case fpcos of OneKeyFP x -> x; ManyKeyFP arr -> indexSmallArray arr n
             !(I# addr) = indexPrimArray keys $ n * 2 + 1
             tag = indexSmallArray tags n
-        in f (NBT (NBTString (BS.BS (ForeignPtr (int2Addr# addr) fpco) keySz)) tag) <> go (n + 1)
+        in f (NBT (NBTString (ModifiedUtf8 (BS.BS (ForeignPtr (int2Addr# addr) fpco) keySz))) tag) <> go (n + 1)
 
 foldCompoundSorted :: Monoid m => (NBT -> m) -> Compound -> m
 {-# INLINE foldCompoundSorted #-}
@@ -435,7 +435,7 @@ foldCompoundSorted f (Compound sz fpcos keys tags sorted) = go 0
             keySz = indexPrimArray keys $ i * 2
             !(I# addr) = indexPrimArray keys $ i * 2 + 1
             tag = indexSmallArray tags i
-        in f (NBT (NBTString (BS.BS (ForeignPtr (int2Addr# addr) fpco) keySz)) tag) <> go (n + 1)
+        in f (NBT (NBTString (ModifiedUtf8 (BS.BS (ForeignPtr (int2Addr# addr) fpco) keySz))) tag) <> go (n + 1)
 
 sizeOfCompound :: Compound -> Int
 {-# INLINE sizeOfCompound #-}
@@ -453,7 +453,7 @@ findWithIndex (Compound sz fpcos keys tags sorted) key = goFindBinary 0 sz
             !fpco = case fpcos of OneKeyFP x -> x; ManyKeyFP arr -> indexSmallArray arr i
             keySz = indexPrimArray keys $ i * 2
             !(I# keyAddr) = indexPrimArray keys $ i * 2 + 1
-            key' = NBTString (BS.BS (ForeignPtr (int2Addr# keyAddr) fpco) keySz)
+            key' = NBTString (ModifiedUtf8 (BS.BS (ForeignPtr (int2Addr# keyAddr) fpco) keySz))
         in case compare key' key of
           LT -> goFindBinary (mid + 1) u
           GT -> goFindBinary l mid

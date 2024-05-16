@@ -1,8 +1,8 @@
 cabal-version:       3.0
-name:                brokkr-nbt
+name:                brokkr-cesu8
 version:             0.0.0.0
-synopsis:            NBT parser
-description:         NBT parser
+synopsis:            Library for dealing with cesu8 and modified utf8 data
+description:         Library for dealing with cesu8 and modified utf8 data
 license:             MIT
 license-file:        LICENSE
 author:              Jannis
@@ -16,13 +16,7 @@ tested-with:         GHC == 9.4.4
 
 common common-options
   build-depends:       base >= 4.17 && < 5
-                     , brokkr-cesu8
-                     , primitive
                      , bytestring
-                     , flatparse
-                     , vector
-                     , mason
-                     , text
                      , deepseq
                      , template-haskell
   
@@ -42,52 +36,39 @@ common common-options
 library
   import:              common-options
   hs-source-dirs:      src
-  --if (arch(x86_64) || arch(i386))
-  c-sources:           cbits/x86/VecByteswap.c
---else
-  --c-sources:         cbits/basic.c
+  exposed-modules:     Brokkr.Cesu8
+                     , Brokkr.Cesu8.Internal
+                     , Brokkr.ModifiedUtf8
+                     , Brokkr.ModifiedUtf8.Internal
+  other-modules:       Brokkr.Common
+  include-dirs:        cbits
+  if (arch(x86_64) || arch(i386))
+    c-sources:         cbits/x86/ModifiedUtf8.c
+                       cbits/x86/Cesu8.c
+  else
+    c-sources:         cbits/Fallback.c
   cc-options:          -O3
-  exposed-modules:     Brokkr.NBT
-                       Brokkr.NBT.ByteOrder
-                       Brokkr.NBT.Codec
-                       Brokkr.NBT.Codec.Internal
-                       Brokkr.NBT.Internal
-                       Brokkr.NBT.NBTString
-                       Brokkr.NBT.NBTString.Internal
-                       Brokkr.NBT.NBTError
-                       Brokkr.NBT.Class
-                       Brokkr.NBT.Validate
-  other-modules:       Brokkr.NBT.Codec.DecodeBinary
-                       Brokkr.NBT.Codec.EncodeBinary
-                       Brokkr.NBT.Codec.Show
-test-suite brokkr-nbt-test
+test-suite brokkr-cesu8-test
   import:              common-options
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  build-depends:       brokkr-nbt
-                     , deepseq
-                     , zlib
-                     , tasty
-                     , tasty-hunit
-                     , tasty-hedgehog
+  build-tool-depends:  sydtest-discover:sydtest-discover
+  build-depends:       brokkr-cesu8
+                     , sydtest
+                     , sydtest-hedgehog
                      , hedgehog
-  other-modules:       CodecSpec
-                       BigTest
+                     , text
   ghc-options:         -threaded
                        -rtsopts
                        -with-rtsopts=-N
-benchmark brokkr-nbt-benchmark
+  other-modules:       ModifiedUtf8Spec
+                       Cesu8Spec
+benchmark brokkr-cesu8-benchmark
   import:              common-options
   type:                exitcode-stdio-1.0
   hs-source-dirs:      benchmark
   main-is:             Main.hs
   build-depends:       tasty-bench
-                     , brokkr-nbt
-                     , deepseq
-                     , zlib
-                     , hedgehog
-                     -- , named-binary-tag
-                     -- , cereal
-  other-modules:       BigTest
-                     , Player
+                     , brokkr-cesu8
+                     , text

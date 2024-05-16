@@ -132,7 +132,6 @@ benchByteSwap n f = bgroup n
 mkRecList :: (NBT, BS.ByteString)
 mkRecList =
   let hugeNbt = NBT "" $ nestedList 1000000
-      smallArrEmpty = runST $ newSmallArray 0 (error "SmallArr empty") >>= unsafeFreezeSmallArray
       smallArrSingleton x = runST $ newSmallArray 1 x >>= unsafeFreezeSmallArray
       nestedList :: Int -> Tag
       nestedList 0 = TagList emptySmallArray
@@ -174,31 +173,6 @@ main = defaultMain [
     , benchByteSwap @Int64 "bswap64" arrSwapBE
     ]
   , benchRecList
-  -- download https://archives.haskell.org/projects.haskell.org/text/text-testdata.tar.bz2 and extract to benchmark/data. Then remove the intermediate folders
-  -- to run these tests
-  -- , bgroup "modified utf8" [
-  --     benchModUtf8 "ascii.txt"
-  --   , benchModUtf8 "bmp.txt"
-  --   , benchModUtf8 "japanese.txt"
-  --   , benchModUtf8 "korean.txt"
-  --   ]
-  -- TODO Add modified-utf-8 conversion benchmarks
-  ]
-
-benchModUtf8 :: String -> Benchmark
-benchModUtf8 name = env (BS.readFile ("benchmark/data/" ++ name) >>= evaluate . force) $ \ ~bs -> bgroup name
-  [ bench "isValid" $ nf isValidModifiedUtf8 bs
-  , bench "isValidSimd" $ nf isValidModifiedUtf8SIMD bs
-  , bench "isValid (64b)" $ nf isValidModifiedUtf8 (BS.take 64 bs)
-  , bench "isValidSimd (64b)" $ nf isValidModifiedUtf8SIMD (BS.take 64 bs)
-  , bench "isValid (32b)" $ nf isValidModifiedUtf8 (BS.take 32 bs)
-  , bench "isValidSimd (32b)" $ nf isValidModifiedUtf8SIMD (BS.take 32 bs)
-  , bench "isValid (16b)" $ nf isValidModifiedUtf8 (BS.take 16 bs)
-  , bench "isValidSimd (16b)" $ nf isValidModifiedUtf8SIMD (BS.take 16 bs)
-  , bench "isValid (8b)" $ nf isValidModifiedUtf8 (BS.take 8 bs)
-  , bench "isValidSimd (8b)" $ nf isValidModifiedUtf8SIMD (BS.take 8 bs)
-  , bench "isValid (4b)" $ nf isValidModifiedUtf8 (BS.take 4 bs)
-  , bench "isValidSimd (4b)" $ nf isValidModifiedUtf8SIMD (BS.take 4 bs)
   ]
 
 validateBsNBT :: BS.ByteString -> ()

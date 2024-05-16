@@ -15,6 +15,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 
 import Data.Coerce
+import Data.String
 import Data.List (sortOn)
 
 import Data.Primitive
@@ -41,7 +42,6 @@ import Hedgehog.Gen qualified as HG
 import Hedgehog.Range qualified as HR
 
 import CodecSpec
-import ModifiedUtf8Spec
 
 main :: IO ()
 main = defaultMain tests
@@ -49,7 +49,6 @@ main = defaultMain tests
 tests :: TestTree
 tests = testGroup "NBT"
   [ testFiles
-  , testModifiedUtf8
   , testProperty "NBT roundtrips" . H.property $ do
       nbt <- H.forAll genNBT
       H.tripping nbt encodeNBT decodeNBT
@@ -172,6 +171,11 @@ genNBT = NBT <$> genNBTString <*> genTag
       xs0 <- HG.list (HR.linear 0 100) genNBT
       let xs = sortOn (\(NBT k _) -> k) xs0
       pure . TagCompound $ compoundFromListAscending xs
+
+genModifiedUtf8 :: HR.Range Int -> H.Gen Char -> H.Gen (ModifiedUtf8, String)
+genModifiedUtf8 range charGen = do
+  chars <- HG.list range charGen
+  pure (fromString chars, chars)
 
 encodeNBT :: NBT -> BS.ByteString
 encodeNBT nbt = B.toStrictByteString (putNBT nbt)

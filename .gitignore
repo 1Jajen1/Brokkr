@@ -3,6 +3,7 @@
 /server
 /brokkr/test/world
 /brokkr-nbt/benchmark/data
+/brokkr-cesu8/benchmark/data
 
 /.git
 /.vscode
