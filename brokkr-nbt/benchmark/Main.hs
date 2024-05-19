@@ -30,6 +30,8 @@ import Brokkr.NBT.ByteOrder
 import Brokkr.NBT.NBTString.Internal
 import Brokkr.NBT.Validate
 import Brokkr.NBT.NBTError
+import Brokkr.NBT.Tape
+
 import GHC.Word
 import GHC.Exts
 import GHC.ForeignPtr
@@ -38,6 +40,13 @@ import Control.Monad.Primitive
 
 import BigTest
 import Player
+
+import Debug.Trace
+import Data.ByteString.Internal qualified as BS
+import Data.ByteString.Unsafe qualified as BS
+import Foreign.Ptr
+import Data.Bits
+import Foreign.Storable
 
 -- import qualified Data.Serialize as Serialize
 -- import qualified Data.Nbt as NBT2
@@ -52,6 +61,7 @@ data Env = Env {
   -- , envNBT2    :: !NBT2.Nbt'
   , envBigTest :: !BigTest
   , envPlayer :: !Player
+  , envParser :: !NBTParser
   }
   deriving stock Generic
   deriving anyclass NFData
@@ -79,6 +89,8 @@ setupEnv name = do
       -- envNBT2 = case Serialize.decode envBs of
       --   Left _ -> error "Failed to parse nbt using named-binary-tag"
       --   Right n -> n
+  
+  envParser <- newNBTParser $ BS.length envBs
 
   return $ Env{..}
 
@@ -91,6 +103,7 @@ benchFile name =
     , bench "decode (brokkr | no mod utf8)"  $ nf parseBsNBTNoModUtf8 envBs
     , bench "decode (brokkr | no sorting)"  $ nf parseBsNBTUnsorted envBs
     , bench "decode (brokkr)"  $ nf parseBsNBT envBs
+    , bench "decode (brokkr) (tape)" $ nf (parseNBTTape envParser) envBs
     , bench "encode (brokkr)"  $ nf encodeNBT envNBT 
     ]
       -- <> (if includeCmp then
@@ -141,7 +154,7 @@ mkRecList =
 
 benchRecList :: Benchmark
 benchRecList = env (evaluate . force $ mkRecList) $ \ ~(hugeNbt, hugeBs) -> bgroup "huge recursive list"
-  [ bench "decode" $ nf parseBsNBT hugeBs
+  [ bench "decode (brokkr)" $ nf parseBsNBT hugeBs
   , bench "encode" $ nf encodeNBT hugeNbt
   ]
 
@@ -157,6 +170,7 @@ main = defaultMain [
     , benchFile "level.dat"
     , benchFile "simple_player.dat"
     , benchFile "realworld.nbt"
+    -- , benchFile "random_nbt.nbt"
     ]
   , bgroup "Byteswapping" [
       -- Benchmark byteswap in place
@@ -182,6 +196,11 @@ validateBsNBT !bs = case FP.runParser skipNBT bs of
 
 parseBsNBT :: BS.ByteString -> NBT
 parseBsNBT !bs = case FP.runParser parseNBT bs of
+  FP.OK res "" -> res
+  _ -> error "Failed to parse NBT"
+
+parseNBTTape :: NBTParser -> BS.ByteString -> NBTTape
+parseNBTTape !parser !bs = case FP.runParser (parseTape parser) bs of
   FP.OK res "" -> res
   _ -> error "Failed to parse NBT"
 

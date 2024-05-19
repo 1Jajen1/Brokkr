@@ -44,9 +44,10 @@ library
   hs-source-dirs:      src
   --if (arch(x86_64) || arch(i386))
   c-sources:           cbits/x86/VecByteswap.c
+                       cbits/Tape.c
 --else
   --c-sources:         cbits/basic.c
-  cc-options:          -O3
+  cc-options:          -O3 -march=native
   exposed-modules:     Brokkr.NBT
                        Brokkr.NBT.ByteOrder
                        Brokkr.NBT.Codec
@@ -55,6 +56,7 @@ library
                        Brokkr.NBT.NBTString
                        Brokkr.NBT.NBTString.Internal
                        Brokkr.NBT.NBTError
+                       Brokkr.NBT.Tape
                        Brokkr.NBT.Class
                        Brokkr.NBT.Validate
   other-modules:       Brokkr.NBT.Codec.DecodeBinary

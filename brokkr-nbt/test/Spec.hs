@@ -32,6 +32,7 @@ import Brokkr.NBT.ByteOrder
 import Brokkr.NBT.Internal
 import Brokkr.NBT.NBTString.Internal
 import Brokkr.NBT.Codec
+import Brokkr.NBT.Tape
 
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -85,11 +86,18 @@ testFiles = testGroup "Files"
   , testFile "level.dat"
   , testFile "simple_player.dat"
   , testFile "realworld.nbt"
+  -- , testFile "random_nbt.nbt"
   ]
 
 testFile :: String -> TestTree
 testFile name = testCaseSteps name $ \out -> do
   fileBS <- readFile name
+
+  parser <- newNBTParser $ BS.length fileBS
+
+  -- case FP.runParser (parseTape parser) fileBS of
+  --     FP.OK res remBs | BS.null remBs -> evaluate res >> error (show res)
+  --     _ -> assertFailure "Failed to parse tape"
   
   nbt0 <- case decodeNBT fileBS of
     Just x -> pure x
@@ -104,7 +112,7 @@ testFile name = testCaseSteps name $ \out -> do
   nbt1@(NBT _ t1) <- case decodeNBT encodedBS of
     Just x -> pure x
     Nothing -> assertFailure "Invalid nbt (parse from encoded)"
-  
+    
   when (name == "bigtest.nbt") $ do
     bt <- case FP.runParser ($$(genParser bigTestCodec)) fileBS of
       FP.OK res remBs | BS.null remBs -> evaluate res
